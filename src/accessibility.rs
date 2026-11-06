@@ -97,6 +97,9 @@ pub fn attr(element: Cf, key: &str) -> Option<Owned> {
     };
     if code == 0 { Owned::new(result) } else { None }
 }
+pub fn equals_text(value: Cf, text: &str) -> bool {
+    !value.is_null() && unsafe { CFEqual(value, cf(&NSString::from_str(text))) }
+}
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }

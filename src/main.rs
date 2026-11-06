@@ -7,6 +7,7 @@ mod instance;
 mod model;
 mod native;
 mod space_style;
+mod space_switch;
 mod spaces;
 mod ui;
 mod updater;

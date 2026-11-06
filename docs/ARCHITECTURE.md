@@ -1,7 +1,8 @@
 # Arquitectura
 
 ```text
-NSStatusItem ─── clic ─── NSPanel de ajustes
+NSStatusItem ─── clic izquierdo ─── cambio de escritorio
+             └─ clic derecho ───── NSPanel de ajustes
      │                        │
      ├── NSWorkspace ── Spaces (SkyLight, lectura)
      │                        │
@@ -17,6 +18,7 @@ NSStatusItem ─── clic ─── NSPanel de ajustes
 | Módulo | Responsabilidad |
 |---|---|
 | `focus.rs` | Activación del teclado por ID de ventana, separada de AXRaise; protocolo documentado por yabai (MIT) |
+| `space_switch.rs` | Cambio directo asíncrono mediante gestos nativos de escritorio |
 | `space_style.rs` | Texto atribuido y SF Symbols; color activo/inactivo y preferencias por ID de escritorio |
 | `model.rs` | Presentación del indicador y normalización de preferencias |
 | `spaces.rs` | Resolución opcional de SkyLight, lectura y selección de pantalla activa |
@@ -78,3 +80,11 @@ Snapshot incluye IDs y el índice activo de la pantalla actual. space_style cons
 ## Instancia única
 
 Un bloqueo advisory flock en Application Support permanece abierto durante la vida del proceso. Una segunda apertura sale sin crear otro indicador ni otro temporizador. El descriptor se libera al terminar; la comprobación de diagnóstico puede ejecutarse simultáneamente. La carpeta no contiene contenidos de ventanas ni datos de actividad.
+
+## Cambio de escritorio
+
+El NSStatusItem contiene botones nativos independientes de 24 pt con etiquetas AX por escritorio. Su acción izquierda conserva el ManagedSpaceID; la derecha abre ajustes sin ejecutar la selección. Los botones se conservan cuando solo cambia el estado activo. Con más de nueve escritorios, un menú nativo conserva el acceso a todos los destinos sin ensanchar indefinidamente la barra. El menú se presenta fuera del préstamo de App para que sus callbacks puedan ejecutarse.
+
+La selección vuelve a consultar la pantalla, el ID y la posición real del destino, incluyendo las posiciones de espacios a pantalla completa. Se resuelve CGDisplayID a partir del UUID de pantalla. `space_switch` envía una secuencia nativa de gesto horizontal sin abrir Mission Control. macOS 27 exige un payload IOHID serializado y orientado según la preferencia de desplazamiento natural. El protocolo está adaptado de [iss](https://github.com/joshuarli/iss) y [strafe](https://github.com/rileycx/strafe); se incluyen sus licencias. No hay interceptores globales de gestos.
+
+Solo durante una petición hay un temporizador de 50 ms, registrado en los modos comunes del run loop. Cada salto debe confirmar su ID real antes del siguiente: dos segundos de plazo por salto y ocho para la operación completa, sin bloquear el hilo principal. Se concede un margen de 180 ms al asentarse cada salto. Un clic nuevo sustituye el destino pendiente, conservando el salto que ya está en curso. Un cambio inesperado de escritorio cancela la petición. La operación no modifica preferencias, atajos ni propiedades de SkyLight y no desactiva SIP. El borde y el foco automático se suspenden durante el cambio. Al terminar se libera el estado pendiente; no queda sondeo de escritorios en reposo.

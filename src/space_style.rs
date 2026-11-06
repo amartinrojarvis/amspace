@@ -75,6 +75,16 @@ pub fn icon(defaults: Obj, id: u64, index: usize) -> usize {
     }
 }
 pub fn render(snapshot: &Snapshot, defaults: Obj) -> Retained<AnyObject> {
+    render_selection(snapshot, defaults, None)
+}
+pub fn render_desktop(snapshot: &Snapshot, defaults: Obj, index: usize) -> Retained<AnyObject> {
+    render_selection(snapshot, defaults, Some(index))
+}
+fn render_selection(
+    snapshot: &Snapshot,
+    defaults: Obj,
+    only: Option<usize>,
+) -> Retained<AnyObject> {
     unsafe {
         let result: Allocated<AnyObject> = msg_send![class!(NSMutableAttributedString), alloc];
         let result: Retained<AnyObject> =
@@ -82,7 +92,7 @@ pub fn render(snapshot: &Snapshot, defaults: Obj) -> Retained<AnyObject> {
         let style = mode(defaults);
         let font: Obj =
             msg_send![class!(NSFont), monospacedDigitSystemFontOfSize:13f64, weight:0.23f64];
-        if snapshot.active.is_none() || snapshot.desktops.len() > 9 {
+        if only.is_none() && (snapshot.active.is_none() || snapshot.desktops.len() > 9) {
             let part: Allocated<AnyObject> = msg_send![class!(NSAttributedString), alloc];
             let part: Retained<AnyObject> =
                 msg_send![part, initWithString:&*NSString::from_str(&snapshot.title)];
@@ -90,6 +100,9 @@ pub fn render(snapshot: &Snapshot, defaults: Obj) -> Retained<AnyObject> {
             return result;
         }
         for (index, id) in snapshot.desktops.iter().enumerate() {
+            if only.is_some_and(|selected| selected != index) {
+                continue;
+            }
             let active = snapshot.active == Some(index);
             let base: Obj = msg_send![class!(NSColor), labelColor];
             let color: Obj =
@@ -97,7 +110,7 @@ pub fn render(snapshot: &Snapshot, defaults: Obj) -> Retained<AnyObject> {
             let attrs: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
             let _: () = msg_send![&attrs, setObject:color, forKey:&*NSString::from_str("NSColor")];
             let _: () = msg_send![&attrs, setObject:font, forKey:&*NSString::from_str("NSFont")];
-            if index > 0 {
+            if only.is_none() && index > 0 {
                 let gap: Allocated<AnyObject> = msg_send![class!(NSAttributedString), alloc];
                 let gap: Retained<AnyObject> =
                     msg_send![gap, initWithString:&*NSString::from_str("  "), attributes:&*attrs];

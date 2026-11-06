@@ -1,12 +1,12 @@
 //! AppKit and AX run on the main thread. Idle mode has no recurring timer.
 use crate::{
-    accessibility as ax, focus, model, native::*, space_style, spaces, updater::Updater,
-    window_server as ws,
+    accessibility as ax, focus, model, native::*, space_style, space_switch, spaces,
+    updater::Updater, window_server as ws,
 };
 use objc2::{
     class, msg_send,
     rc::{Allocated, Retained, autoreleasepool},
-    runtime::{AnyObject, Bool, ClassBuilder, Sel},
+    runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
     sel,
 };
 use objc2_foundation::{NSPoint, NSRect, NSString};
@@ -34,6 +34,10 @@ struct PendingFocus {
 struct App {
     target: Retained<AnyObject>,
     status: Retained<AnyObject>,
+    status_buttons: Vec<Retained<AnyObject>>,
+    status_ids: Vec<u64>,
+    switching: Option<space_switch::Switch>,
+    hover_resume: Instant,
     border: Retained<AnyObject>,
     defaults: Retained<AnyObject>,
     settings: Option<Retained<AnyObject>>,
@@ -180,6 +184,7 @@ impl App {
             let _: () = msg_send![b, setFont:font];
             let _: () = msg_send![b, setTarget:&*target];
             let _: () = msg_send![b, setAction:sel!(settings:)];
+            let _: usize = msg_send![b, sendActionOn:((1usize << 2) | (1usize << 4))];
             let _: () =
                 msg_send![b, setAccessibilityLabel:&*NSString::from_str("AMSpace · abrir ajustes")];
             let border = window(rect(0., 0., 100., 100.), 128);
@@ -219,6 +224,10 @@ impl App {
                 defaults,
                 target,
                 status,
+                status_buttons: vec![],
+                status_ids: vec![],
+                switching: None,
+                hover_resume: Instant::now(),
                 border,
                 settings: None,
                 about: None,
@@ -284,15 +293,145 @@ impl App {
             let s = spaces::snapshot();
             let b: Obj = msg_send![&self.status, button];
             let title = space_style::render(&s, Retained::as_ptr(&self.defaults) as Obj);
-            let _: () = msg_send![b, setAttributedTitle:&*title];
+            self.refresh_status_buttons(&s);
             self.last_title = s.title;
             let _: () = msg_send![b, setToolTip:&*NSString::from_str(&s.detail)];
-            let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · abrir ajustes", s.detail))];
+            let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · clic derecho para ajustes", s.detail))];
             if !self.preview.is_null() {
                 let _: () = msg_send![self.preview, setAttributedStringValue:&*title];
             }
             if !self.space_scroll.is_null() && self.space_ids != s.desktops {
                 self.rebuild_space_rows();
+            }
+        }
+    }
+    fn refresh_status_buttons(&mut self, snapshot: &spaces::Snapshot) {
+        unsafe {
+            let parent: Obj = msg_send![&self.status, button];
+            let compact = snapshot.desktops.len() > 9 || snapshot.desktops.is_empty();
+            let count = if compact { 1 } else { snapshot.desktops.len() };
+            let width = if compact { 70. } else { 24. };
+            let frame: NSRect = msg_send![parent, bounds];
+            if self.status_ids != snapshot.desktops || self.status_buttons.len() != count {
+                for button in self.status_buttons.drain(..) {
+                    let _: () = msg_send![&button, removeFromSuperview];
+                }
+                self.status_ids = snapshot.desktops.clone();
+                let _: () = msg_send![parent, setTitle:&*NSString::from_str("")];
+                let _: () = msg_send![&self.status, setLength:width * count as f64];
+                for index in 0..count {
+                    let button = alloc_view(
+                        desktop_button_class(),
+                        rect(index as f64 * width, 0., width, frame.size.height.max(22.)),
+                    );
+                    let _: () = msg_send![&button, setBordered:false];
+                    let _: () = msg_send![&button, setRefusesFirstResponder:true];
+                    let _: () = msg_send![&button, setFocusRingType:1usize];
+                    let _: () = msg_send![&button, setAutoresizingMask:16usize];
+                    let _: () = msg_send![&button, setTarget:&*self.target];
+                    let _: () = msg_send![&button, setAction:if compact {sel!(desktopMenu:)} else {sel!(selectDesktop:)}];
+                    let _: () = msg_send![&button, setTag:if compact {0isize} else {snapshot.desktops[index] as isize}];
+                    let _: () = msg_send![parent, addSubview:&*button];
+                    self.status_buttons.push(button);
+                }
+            }
+            for (index, button) in self.status_buttons.iter().enumerate() {
+                let title = if compact {
+                    space_style::render(snapshot, Retained::as_ptr(&self.defaults) as Obj)
+                } else {
+                    space_style::render_desktop(
+                        snapshot,
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        index,
+                    )
+                };
+                let _: () = msg_send![button, setAttributedTitle:&*title];
+                let label = if compact {
+                    "Elegir escritorio".into()
+                } else {
+                    format!(
+                        "Ir al escritorio {}{}",
+                        index + 1,
+                        if snapshot.active == Some(index) {
+                            ", activo"
+                        } else {
+                            ""
+                        }
+                    )
+                };
+                let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(&label)];
+                let _: () = msg_send![button, setToolTip:&*NSString::from_str(&format!("{label} · clic derecho para ajustes"))];
+            }
+        }
+    }
+    fn desktop_menu(&self) -> Retained<AnyObject> {
+        unsafe {
+            let menu: Retained<AnyObject> = msg_send![class!(NSMenu), new];
+            let snapshot = spaces::snapshot();
+            for (index, id) in snapshot.desktops.iter().enumerate() {
+                let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
+                let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&format!("Escritorio {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
+                let _: () = msg_send![&item, setTarget:&*self.target];
+                let _: () = msg_send![&item, setTag:*id as isize];
+                let _: () = msg_send![&item, setState:if snapshot.active == Some(index) {1isize} else {0isize}];
+                let _: () = msg_send![&menu, addItem:&*item];
+            }
+            let settings: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
+            let settings: Retained<AnyObject> = msg_send![settings, initWithTitle:&*NSString::from_str("Ajustes…"), action:sel!(settings:), keyEquivalent:&*NSString::from_str("")];
+            let _: () = msg_send![&settings, setTarget:&*self.target];
+            let _: () = msg_send![&menu, addItem:&*settings];
+            menu
+        }
+    }
+    fn select_desktop(&mut self, id: u64) {
+        if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
+            eprintln!("spaces: click={id} pending={}", self.switching.is_some());
+        }
+        if let Some(switch) = self.switching.as_mut() {
+            if let Err(error) = switch.retarget(id) {
+                self.feedback(error);
+            }
+            return;
+        }
+        if spaces::destination(id).is_some_and(|d| d.current == id) {
+            return;
+        }
+        match space_switch::Switch::start(id) {
+            Ok(switch) => {
+                self.switching = Some(switch);
+                self.pending_focus = None;
+                self.focus_target = None;
+                self.border_suppressed = true;
+                self.hide_border();
+                self.schedule_switch_step();
+            }
+            Err(error) => {
+                self.show_settings();
+                self.feedback(error);
+            }
+        }
+    }
+    fn schedule_switch_step(&self) {
+        schedule_switch_timer(Retained::as_ptr(&self.target) as Obj);
+    }
+    fn step_switch(&mut self) {
+        let Some(switch) = self.switching.as_mut() else {
+            return;
+        };
+        match switch.step() {
+            Ok(space_switch::Progress::Waiting) => self.schedule_switch_step(),
+            result => {
+                self.switching = None;
+                self.hover_resume = Instant::now() + Duration::from_millis(400);
+                self.refresh_spaces();
+                self.update_window();
+                if let Err(error) = result {
+                    if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
+                        eprintln!("spaces: {error}");
+                    }
+                    self.show_settings();
+                    self.feedback(error);
+                }
             }
         }
     }
@@ -302,6 +441,10 @@ impl App {
         }
     }
     fn update_window(&mut self) {
+        if self.switching.is_some() {
+            self.hide_border();
+            return;
+        }
         self.update_queued = false;
         self.border_suppressed = false;
         if self.sleeping || !self.border_enabled || !ax::trusted() {
@@ -424,6 +567,9 @@ impl App {
         }
     }
     fn hover(&mut self) {
+        if self.switching.is_some() || Instant::now() < self.hover_resume {
+            return;
+        }
         unsafe {
             let point: NSPoint = msg_send![class!(NSEvent), mouseLocation];
             let buttons: usize = msg_send![class!(NSEvent), pressedMouseButtons];
@@ -494,7 +640,9 @@ impl App {
             let point: NSPoint = msg_send![class!(NSEvent), mouseLocation];
             let buttons: usize = msg_send![class!(NSEvent), pressedMouseButtons];
             let flags: usize = msg_send![class!(NSEvent), modifierFlags];
-            if !self.hover_enabled
+            if self.switching.is_some()
+                || Instant::now() < self.hover_resume
+                || !self.hover_enabled
                 || self.sleeping
                 || point != pending.point
                 || buttons != 0
@@ -1229,8 +1377,98 @@ extern "C-unwind" fn settle(_: Obj, _: Sel, _: Obj) {
         a.update_window();
     });
 }
+fn desktop_button_class() -> &'static AnyClass {
+    if let Some(class) = AnyClass::get(c"AMSpaceDesktopButton") {
+        return class;
+    }
+    unsafe {
+        let mut builder = ClassBuilder::new(c"AMSpaceDesktopButton", class!(NSButton)).unwrap();
+        builder.add_method(
+            sel!(rightMouseDown:),
+            desktop_right_down as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(rightMouseUp:),
+            settings as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.register()
+    }
+}
+extern "C-unwind" fn desktop_right_down(_: Obj, _: Sel, _: Obj) {}
+extern "C-unwind" fn select_desktop(_: Obj, _: Sel, sender: Obj) {
+    let id: isize = unsafe { msg_send![sender, tag] };
+    unsafe {
+        // AXPress on a submenu item can leave AppKit tracking the parent menu.
+        // End tracking before the deferred desktop switch is sent.
+        let is_menu_item: bool = msg_send![sender, isKindOfClass:class!(NSMenuItem)];
+        if is_menu_item {
+            let mut menu: Obj = msg_send![sender, menu];
+            while !menu.is_null() {
+                let _: () = msg_send![menu, cancelTracking];
+                menu = msg_send![menu, supermenu];
+            }
+        }
+    }
+    if id > 0 {
+        with_app(|a| a.select_desktop(id as u64));
+    }
+}
+fn schedule_switch_timer(target: Obj) {
+    unsafe {
+        let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.05f64, target:target, selector:sel!(switchStep:), userInfo:ptr::null::<AnyObject>(), repeats:false];
+        let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+        add_common_timer(run, &timer);
+    }
+}
+extern "C-unwind" fn switch_step(target: Obj, _: Sel, _: Obj) {
+    let delivered = APP.with(|cell| {
+        let Ok(mut app) = cell.try_borrow_mut() else {
+            return false;
+        };
+        if let Some(app) = app.as_mut() {
+            app.step_switch();
+        }
+        true
+    });
+    if !delivered {
+        schedule_switch_timer(target);
+    }
+}
+extern "C-unwind" fn desktop_menu(target: Obj, _: Sel, _: Obj) {
+    unsafe {
+        let _: () = msg_send![target, performSelector:sel!(showDesktopMenu:), withObject:ptr::null::<AnyObject>(), afterDelay:0f64];
+    }
+}
+extern "C-unwind" fn show_desktop_menu(_: Obj, _: Sel, _: Obj) {
+    let mut menu = None;
+    let mut parent: Obj = ptr::null_mut();
+    with_app(|a| {
+        menu = Some(a.desktop_menu());
+        parent = unsafe { msg_send![&a.status, button] };
+    });
+    if let Some(menu) = menu {
+        unsafe {
+            let _: bool = msg_send![&menu, popUpMenuPositioningItem:ptr::null::<AnyObject>(), atLocation:NSPoint::new(0., 0.), inView:parent];
+        }
+    }
+}
 extern "C-unwind" fn settings(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.show_settings());
+}
+extern "C-unwind" fn desktop_menu_update(target: Obj, _: Sel, menu: Obj) {
+    unsafe {
+        let _: () = msg_send![menu, removeAllItems];
+        let snapshot = spaces::snapshot();
+        for (index, id) in snapshot.desktops.iter().enumerate() {
+            let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
+            let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&format!("Escritorio {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
+            let _: () = msg_send![&item, setTarget:target];
+            let _: () = msg_send![&item, setTag:*id as isize];
+            let _: () =
+                msg_send![&item, setState:if snapshot.active == Some(index) {1isize} else {0isize}];
+            let _: () = msg_send![menu, addItem:&*item];
+        }
+    }
 }
 extern "C-unwind" fn about(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.show_about());
@@ -1299,6 +1537,7 @@ unsafe fn make_menu(app: Obj, target: Obj) {
         let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
         let submenu: Retained<AnyObject> = msg_send![class!(NSMenu), new];
         for (title, action, key) in [
+            ("Ir al escritorio…", sel!(desktopMenu:), ""),
             ("Acerca de AMSpace", sel!(about:), ""),
             ("Buscar actualizaciones…", sel!(checkUpdates:), ""),
             ("Ajustes…", sel!(settings:), ","),
@@ -1309,6 +1548,16 @@ unsafe fn make_menu(app: Obj, target: Obj) {
             let command: Retained<AnyObject> = msg_send![command, initWithTitle:&*NSString::from_str(title), action:action, keyEquivalent:&*NSString::from_str(key)];
             if key != "w" {
                 let _: () = msg_send![&command, setTarget:target];
+            }
+            if action == sel!(desktopMenu:) {
+                let desktops: Retained<AnyObject> = msg_send![class!(NSMenu), new];
+                let _: () = msg_send![&desktops, setDelegate:target];
+                desktop_menu_update(
+                    target,
+                    sel!(menuNeedsUpdate:),
+                    Retained::as_ptr(&desktops) as Obj,
+                );
+                let _: () = msg_send![&command, setSubmenu:&*desktops];
             }
             let _: () = msg_send![&submenu, addItem:&*command];
         }
@@ -1327,6 +1576,11 @@ pub fn run() {
                 sel!(settings:),
                 settings as extern "C-unwind" fn(Obj, Sel, Obj),
             ),
+            (sel!(selectDesktop:), select_desktop),
+            (sel!(menuNeedsUpdate:), desktop_menu_update),
+            (sel!(desktopMenu:), desktop_menu),
+            (sel!(showDesktopMenu:), show_desktop_menu),
+            (sel!(switchStep:), switch_step),
             (sel!(about:), about),
             (sel!(checkUpdates:), check_updates),
             (sel!(change:), change),

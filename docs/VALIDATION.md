@@ -1,3 +1,12 @@
+# Validación de 0.4.0
+
+- Diez pruebas correctas; fmt, Clippy sin warnings, plist y compilación universal verificados.
+- Confirmado en macOS 27.2 el cambio real 1 → 2 (vacío) → 1 desde la acción nativa de selección. El diagnóstico de SkyLight confirmó los IDs 5 y 1 tras las dos acciones, sin abrir Mission Control.
+- El equipo tiene desplazamiento natural desactivado. Las pruebas cubren los signos para ambas preferencias, ambas direcciones y el protocolo anterior a macOS 27; también validan longitudes, fases y velocidad con signo del payload IOHID.
+- El usuario confirmó el clic derecho para ajustes. La selección conserva el ID real del escritorio; la prueba de orden cubre espacios a pantalla completa intermedios, reordenación y eliminación del destino.
+- Una petición mantiene como máximo un salto en curso; los clics nuevos actualizan el destino. Cada salto y la operación completa tienen plazo límite, y el temporizador desaparece al terminar.
+- Pendiente de prueba física: varios monitores, selección de más de nueve escritorios, destinos separados por espacios a pantalla completa, cambios rápidos durante una transición y hardware Intel. No se ha cambiado la preferencia de desplazamiento natural del usuario para probarla físicamente.
+
 # Validación de 0.3.1
 
 - Siete pruebas correctas. La prueba de instancia única comprueba exclusión entre dos manejadores y disponibilidad después de liberar el primero.
