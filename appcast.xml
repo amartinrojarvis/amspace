@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.2.0</title><pubDate>Fri, 06 Nov 2026 14:45:50 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.2.0 — actualizaciones y autoría.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.3.0</title><pubDate>Fri, 06 Nov 2026 15:04:29 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.3.0 — foco independiente e iconos de escritorio.
 
-- Actualizaciones dentro de AMSpace: búsqueda, novedades, descarga verificada, instalación y reinicio.
-- Avisos diarios opcionales, desactivados inicialmente. Tú decides cuándo instalar.
-- Catálogo y paquetes firmados con Ed25519; clave privada fuera del repositorio.
-- Acerca de con Alberto Martín, Instagram y X @amartinro e historial de versiones.
-- Ajustado el espaciado del panel Acerca de.
-- Corregido el foco al salir con el cursor de los ajustes activos y la comparación entre ventanas de la misma aplicación.
-- Incluye las correcciones del temporizador del cursor y del borde en Mission Control de 0.1.1.
+- Foco del teclado por ventana, separado de su orden visual; corrección para ventanas hermanas de Ghostty.
+- Nuevo ajuste «Traer al primer plano», opcional e independiente del foco.
+- Corregida la detección bajo una capa transparente del Dock.
+- Tres modos del indicador: Puntos, Números e Iconos; activo destacado y demás atenuados.
+- 30 iconos: vídeo, fotografía, comunicaciones, audio, trabajo, código, calendario, tareas y más. Selección por escritorio, con opción de mantener su número.
+- Ajustes compactos en Ventanas, Escritorios y Aplicación.
+- Acerca de con Alberto Martín, Instagram y X @amartinro, con espaciado revisado.
+- Actualizaciones firmadas dentro de la app, búsqueda diaria opcional e historial de versiones.
 
-Paquete universal Apple Silicon + Intel. La firma ad hoc puede requerir renovar Accesibilidad después de actualizar. No se necesita iniciar sesión en GitHub.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.2.0/AMSpace-universal.zip" length="2435854" type="application/octet-stream" sparkle:version="3" sparkle:shortVersionString="0.2.0" sparkle:edSignature="l1brKWXxDbhs0pn5MkgJJ/yNvwCW2tSuw786PKG+l8vKp7rbDaA8/6A3+LTYPaskn0jy9JJrK7UMRHNENSQ6CA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 1UULQx+srRln2EsMCh7e/TU/bOBtWHBNO6KAkI4eYUmGP1mzEOgZApCKPQRmTx/sp530w84erdkGuuPkQ2LXBQ==
-length: 1878
+Universal Apple Silicon + Intel. La distribución ad hoc puede requerir renovar Accesibilidad al actualizar; la app no evita ese control de macOS.
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.3.0/AMSpace-universal.zip" length="2457958" type="application/octet-stream" sparkle:version="4" sparkle:shortVersionString="0.3.0" sparkle:edSignature="Nv9QGOfJ1/UXFuilbwweANIDV/G3Z1FxQNjVFKB8ckS251a9IyFBqS5O9+k4MyeibSD1cVbWXVkow58cmfToCg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: aOwpTNd8vCrQAwc1bnpcI6r/arUSw746IIyWB3EMVpb+J8Qw3HydsQ5DBgpCPCHaTIWunfRwz2tgtP6bGchnDw==
+length: 2003
 -->
