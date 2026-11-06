@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.3.1</title><pubDate>Fri, 06 Nov 2026 15:10:01 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.3.1 — acabado y actualizaciones.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.4.0</title><pubDate>Fri, 06 Nov 2026 17:03:14 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.4.0 — escritorios interactivos.
 
-- Diálogos del actualizador adaptados al idioma del sistema, incluido español.
-- Instancia única: evita procesos duplicados ante aperturas o relanzamientos simultáneos.
-- Incluye el foco del teclado independiente de «Traer al primer plano» y la corrección entre ventanas de Ghostty.
-- 30 iconos configurables por escritorio, con el activo destacado y los demás atenuados; también modos Puntos y Números.
-- Ajustes compactos y Acerca de con Alberto Martín y @amartinro.
+- Clic izquierdo en un número, punto o icono de la barra para cambiar a ese escritorio.
+- Clic derecho para abrir ajustes, sin cambiar de escritorio ni añadir otro icono.
+- Pulsar el escritorio actual no provoca ninguna transición.
+- El indicador compacto de más de nueve escritorios abre una lista de destinos.
+- Cambio directo, sin abrir Mission Control, también a escritorios vacíos.
+- Compatible con desplazamiento natural activado o desactivado.
+- Confirmación del destino real, clics consecutivos y pausa del borde y del foco durante la transición.
 
-Universal Apple Silicon + Intel. La distribución ad hoc puede requerir renovar Accesibilidad al actualizar; la app no evita ese control de macOS.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.3.1/AMSpace-universal.zip" length="2464330" type="application/octet-stream" sparkle:version="5" sparkle:shortVersionString="0.3.1" sparkle:edSignature="c4JBKwWEMMzQQvoCuHGBe/LtZYxvbmkxuP5jVyLOBXzDLdvZNzX1YIp2sd6pSCFzCSn/k38mUIzr2DXWqmMLBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: AWvcheaNmlhNpcEI5eFBDuoK0uSG/F0z4yfgRltLfzxJqELSs45F1T+g3qhtBX9OHWEdgUfDxaiwkoSm9forBw==
-length: 1722
+El cambio requiere Accesibilidad. La distribución ad hoc puede requerir renovar el permiso al actualizar.
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.4.0/AMSpace-universal.zip" length="2487271" type="application/octet-stream" sparkle:version="6" sparkle:shortVersionString="0.4.0" sparkle:edSignature="b0CcxoIm6Y5dTE9EpeHsaO0sasgBFg7W7xZu0Lm/6dcZRLuatIcbGGNav1T42gRW+eb7ZKVrpzk9HJ59yBaTDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 34B2dSg8lfdbI9vRTS6LCKI9h3Gq8E+H0ogAD6G0nV46DkXoK+jgIE4ZZ5MnY7Db9bu7BneCh/gWzRf641EVBg==
+length: 1764
 -->
