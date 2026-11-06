@@ -1,15 +1,12 @@
-AMSpace 0.6.0 — selector de distribuciones y estabilidad entre monitores.
+AMSpace 0.6.1 — colocación y animación del selector corregidas.
 
-- Nuevo selector semitransparente mediante ⌃⌥Espacio, configurable en Tiling → Plantillas y atajo…
-- Previsualización en el monitor del cursor, selección con ratón, números o flechas, Intro para aplicar y Escape para cancelar.
-- Seis plantillas: Dwindle, Espiral, Cuadrícula, Principal y divisiones de 3 o 4. Estas últimas muestran columnas en pantallas horizontales y filas en verticales.
-- Preferencias de plantilla independientes por monitor y escritorio, también cuando comparten un Space.
-- Corrige la interpretación de cambios automáticos de tamaño al trasladar ventanas a pantallas verticales.
-- Estabiliza la pertenencia al monitor de destino ante posiciones atrasadas de WindowServer y evita animar el traslado entre pantallas.
-- Verifica la geometría después de asentarse y permite un único reintento antes de registrar una restricción de la aplicación.
+- Evita dejar ventanas a medio camino cuando falla una escritura intermedia de la animación: conserva y verifica el destino final.
+- Los clics en el selector y los ajustes ya no cancelan las transiciones. Un movimiento o redimensionado real mantiene la prioridad del ratón.
+- Coordina temporalmente la animación de Accesibilidad de cada aplicación para evitar que compita con la de AMSpace; restaura su estado al terminar o cancelar.
+- Comparte esa coordinación entre las ventanas de una misma aplicación.
+- Usa geometría final entera por bordes compartidos y reduce consultas AX durante cada fotograma.
+
+Validación: 59 pruebas automatizadas. Prueba real con cuatro ventanas de Finder y una de Ghostty: las distribuciones de tres columnas y cuadrícula alcanzan las posiciones y tamaños previstos. Duración programada de 120 ms; no se han medido FPS ni consumo. Sigue pendiente la validación física con dos monitores de distinta orientación.
 
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
-
-Validación: 58 pruebas automatizadas y revisión interactiva del selector. Pendiente la validación física de monitores horizontal y vertical y del atajo global con teclado físico. Finder mostró algunas discrepancias entre la geometría solicitada y la real; no se consideran resueltos todos los casos de colocación.
-
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

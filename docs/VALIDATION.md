@@ -1,3 +1,12 @@
+# Corrección de animación y destino del selector (desarrollo posterior a 0.6.0)
+
+- 59 pruebas correctas; fmt, Clippy y plist sin errores. Build universal y firma estricta verificados; instalada la compilación local con respaldo en `.cache/AMSpace-before-template-animation-fix.zip`.
+- Una escritura intermedia rechazada ya no abandona el destino final. Los clics de ajustes/selector no cancelan las animaciones; se interrumpen al detectar movimiento o redimensionado real de una ventana.
+- Fotogramas y destino AX usan coordenadas enteras calculadas por bordes compartidos. La animación usa una sola lista de ventanas visibles de WindowServer, eliminando dos consultas AX por ventana/fotograma.
+- Sesión de geometría compartida por aplicación mediante Rc/Weak: suspende temporalmente AXEnhancedUserInterface solo cuando estaba activo y lo restaura al finalizar/cancelar la última transición de esa aplicación. Evita que AppKit interpole otra vez las escrituras del gestor. No solicita permisos ni cambia preferencias persistentes.
+- Prueba interactiva: cuatro ventanas de Finder y una de Ghostty. Antes de la sesión de geometría, dos ventanas permanecían desplazadas. Con la corrección, tres columnas terminaron en x=10/568/1122 con las subdivisiones previstas; cuadrícula terminó en tres ventanas superiores y dos inferiores, con gaps de 10 pt, verificadas por WindowServer. Se aplicó la cuadrícula haciendo clic en el selector. Se restauró Espiral y se cerraron las dos ventanas temporales creadas para la prueba.
+- No se han medido FPS ni consumo ni se ha probado en dos monitores físicos en este entorno. La duración programada sigue siendo 120 ms y la verificación final es independiente de la animación.
+
 # Publicación de 0.6.0
 
 - Versión 0.6.0, build 9. 58 pruebas, fmt, Clippy y plist correctos. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42305489910) finalizada correctamente sobre `4424b323dd7c6ff39902c5379afe61b28cb7f7d4`.

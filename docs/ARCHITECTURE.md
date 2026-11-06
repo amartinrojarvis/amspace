@@ -167,3 +167,10 @@ Después de confirmar una transferencia, la propiedad del monitor se retiene dur
 
 
 Las escrituras finales AX se verifican después de un margen de 120 ms, mediante WindowServer. Si la geometría no ha llegado, se permite un único reintento y otro margen de 120 ms antes de registrar un límite estable. Durante la verificación no se inician animaciones repetidas hacia el mismo destino. Un nuevo gesto, una transferencia o la cancelación elimina escrituras diferidas antiguas.
+
+
+### Escrituras AX durante las animaciones
+
+La geometría final se redondea por bordes para conservar gaps. Un fallo intermedio no cancela la escritura final. Solo un gesto real de movimiento/tamaño interrumpe las transiciones; un clic en el selector no invalida el destino. La visibilidad se consulta en lote a WindowServer durante la animación, sin leer AXFullScreen/AXMinimized por ventana y fotograma.
+
+`GeometrySession` conserva temporalmente el estado app-level AXEnhancedUserInterface. Las transiciones de una misma aplicación comparten la sesión; la última referencia restaura el valor original, también al cancelar. Las escrituras finales y los reintentos adquieren la misma sesión. La motivación y el antecedente técnico se documentan en [Rectangle PR #285](https://github.com/rxhanson/Rectangle/pull/285). No se copió código de Rectangle.

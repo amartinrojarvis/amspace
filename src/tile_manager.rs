@@ -254,6 +254,7 @@ impl Verification {
     }
 }
 struct Transition {
+    _geometry_session: Option<std::rc::Rc<ax::GeometrySession>>,
     from: NSRect,
     to: NSRect,
     started: Instant,
@@ -420,6 +421,10 @@ impl Manager {
         self.transitions.insert(
             id,
             Transition {
+                _geometry_session: self
+                    .windows
+                    .get(&id)
+                    .and_then(|w| ax::GeometrySession::shared(w.element.0)),
                 from,
                 to,
                 started: Instant::now(),
@@ -428,6 +433,11 @@ impl Manager {
         );
     }
     fn animate(&mut self, active: &[(Workspace, NSRect)]) {
+        if self.transitions.is_empty() {
+            return;
+        }
+        // One compositor snapshot replaces synchronous AX flag reads per frame/window.
+        let visible: HashSet<_> = ws::tile_windows().iter().map(|(_, id, _)| *id).collect();
         let mut done = vec![];
         let now = Instant::now();
         for (id, t) in &mut self.transitions {
@@ -437,8 +447,7 @@ impl Manager {
             };
             if !active.iter().any(|(space, _)| *space == w.space)
                 || spaces::window_space(*id) != Some(w.space.1)
-                || ax::flag(w.element.0, "AXFullScreen")
-                || ax::flag(w.element.0, "AXMinimized")
+                || !visible.contains(id)
             {
                 done.push(*id);
                 continue;
@@ -451,13 +460,14 @@ impl Manager {
                 frame.size.width = frame.size.width.round();
                 frame.size.height = frame.size.height.round();
             }
-            let ok = if progress >= 1. {
-                ax::set_frame(w.element.0, frame)
+            if progress >= 1. {
+                ax::set_frame(w.element.0, frame);
             } else {
-                ax::set_frame_step(w.element.0, t.last, frame)
-            };
+                ax::set_frame_step(w.element.0, t.last, frame);
+            }
             t.last = frame;
-            if !ok || progress >= 1. {
+            // A rejected intermediate sample must not abandon the final destination.
+            if progress >= 1. {
                 self.verifications.insert(*id, Verification::new(t.to));
                 done.push(*id);
             }
@@ -703,9 +713,6 @@ impl Manager {
         });
         if down && !self.pressed {
             self.pending_drop = None;
-            self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
-            self.transitions.clear();
-            self.verifications.clear();
             // A click inside content is not a drag until native window geometry moves.
             let handle = unsafe {
                 let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -796,6 +803,11 @@ impl Manager {
                 }
                 if let Some(frame) = ws::bounds(drag.id) {
                     drag.observe(frame, pointer_workspace);
+                }
+                if drag.moved || drag.resized {
+                    self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
+                    self.transitions.clear();
+                    self.verifications.clear();
                 }
                 if drag.moved
                     && !drag.resized
@@ -1466,6 +1478,7 @@ mod tests {
         manager.transitions.insert(
             1,
             Transition {
+                _geometry_session: None,
                 from,
                 to,
                 last: from,
@@ -1489,6 +1502,7 @@ mod tests {
         manager.transitions.insert(
             1,
             Transition {
+                _geometry_session: None,
                 from,
                 to,
                 last: from,
@@ -1538,6 +1552,7 @@ mod tests {
         manager.transitions.insert(
             1,
             Transition {
+                _geometry_session: None,
                 from,
                 to,
                 started: Instant::now(),

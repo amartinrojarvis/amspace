@@ -22,6 +22,7 @@ unsafe extern "C" {
     fn CFRunLoopRemoveSource(loop_: Cf, source: Cf, mode: Cf);
     static kCFRunLoopCommonModes: Cf;
     static kCFBooleanTrue: Cf;
+    static kCFBooleanFalse: Cf;
 }
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -317,6 +318,74 @@ pub fn tileable(window: Cf) -> bool {
         }
     })
 }
+/// Temporarily suppress AppKit's own AX geometry animation, restoring the exact
+/// app attribute when this transaction ends (Rectangle PR #285).
+pub struct GeometrySession(Option<Owned>);
+impl GeometrySession {
+    pub fn shared(window: Cf) -> Option<std::rc::Rc<Self>> {
+        thread_local! {static SESSIONS: std::cell::RefCell<std::collections::HashMap<i32,std::rc::Weak<GeometrySession>>> = std::cell::RefCell::new(std::collections::HashMap::new());}
+        let mut pid = 0;
+        if unsafe { AXUIElementGetPid(window, &mut pid) } != 0 {
+            return None;
+        }
+        SESSIONS.with(|sessions| {
+            let mut sessions = sessions.borrow_mut();
+            if let Some(session) = sessions.get(&pid).and_then(std::rc::Weak::upgrade) {
+                return Some(session);
+            }
+            sessions.retain(|_, session| session.strong_count() > 0);
+            let session = std::rc::Rc::new(Self::new(window));
+            sessions.insert(pid, std::rc::Rc::downgrade(&session));
+            Some(session)
+        })
+    }
+    pub fn new(window: Cf) -> Self {
+        let mut pid = 0;
+        if unsafe { AXUIElementGetPid(window, &mut pid) } != 0 {
+            return Self(None);
+        }
+        let Some(app) = application(pid) else {
+            return Self(None);
+        };
+        if flag(app.0, "AXEnhancedUserInterface")
+            && unsafe {
+                AXUIElementSetAttributeValue(
+                    app.0,
+                    cf(&NSString::from_str("AXEnhancedUserInterface")),
+                    kCFBooleanFalse,
+                )
+            } == 0
+        {
+            Self(Some(app))
+        } else {
+            Self(None)
+        }
+    }
+}
+impl Drop for GeometrySession {
+    fn drop(&mut self) {
+        if let Some(app) = &self.0 {
+            unsafe {
+                AXUIElementSetAttributeValue(
+                    app.0,
+                    cf(&NSString::from_str("AXEnhancedUserInterface")),
+                    kCFBooleanTrue,
+                );
+            }
+        }
+    }
+}
+/// Keep shared edges aligned and never pass fractional AX geometry to apps.
+fn integral_frame(frame: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
+    let x = frame.origin.x.round();
+    let y = frame.origin.y.round();
+    crate::native::rect(
+        x,
+        y,
+        (frame.origin.x + frame.size.width).round() - x,
+        (frame.origin.y + frame.size.height).round() - y,
+    )
+}
 pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
     unsafe extern "C" {
         fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
@@ -330,6 +399,8 @@ pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
     {
         return false;
     }
+    let _session = GeometrySession::shared(window);
+    let frame = integral_frame(frame);
     let Some(p) = Owned::new(unsafe { AXValueCreate(1, (&frame.origin as *const NSPoint).cast()) })
     else {
         return false;
@@ -360,6 +431,8 @@ pub fn set_frame_step(
     unsafe extern "C" {
         fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
     }
+    let previous = integral_frame(previous);
+    let next = integral_frame(next);
     let (size, position) = frame_changes(previous, next);
     let mut ok = true;
     if size {
@@ -403,6 +476,23 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn fractional_tiles_have_integer_final_geometry_and_shared_edges() {
+        let a = integral_frame(crate::native::rect(-900., 41., 1660. / 3., 947.));
+        let b = integral_frame(crate::native::rect(
+            -900. + 1660. / 3. + 10.,
+            41.,
+            1660. / 3.,
+            947.,
+        ));
+        assert_eq!(a.origin.x + a.size.width + 10., b.origin.x);
+        for r in [a, b] {
+            for value in [r.origin.x, r.origin.y, r.size.width, r.size.height] {
+                assert_eq!(value, value.round());
+            }
+        }
+    }
+
     #[test]
     fn animation_writes_only_changed_attributes() {
         let a = crate::native::rect(0., 0., 600., 400.);
