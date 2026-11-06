@@ -2,8 +2,10 @@
 
 - Siete pruebas correctas. La prueba de instancia única comprueba exclusión entre dos manejadores y disponibilidad después de liberar el primero.
 - Realizada actualización completa desde una copia de 0.2.0: búsqueda en la app, oferta 0.3.0, descarga, validación, instalación y reinicio. Verificada versión 0.3.0 del bundle instalado y su firma estricta; las preferencias se conservaron.
-- Declarada localización española para que los diálogos nativos de Sparkle sigan el idioma del sistema.
-- Añadido bloqueo de instancia para impedir dos procesos de AMSpace ante relanzamientos simultáneos.
+- Localización española verificada en la app instalada: «¡Estás al día! AMSpace 0.3.1 es la versión más nueva disponible».
+- Añadido bloqueo de instancia para impedir dos procesos de AMSpace ante relanzamientos simultáneos. Comprobado además con una segunda ejecución real: permanece un único PID.
+- Versión final abierta normalmente desde Aplicaciones, con Accesibilidad renovada y estado «Accesibilidad concedida» observado en sus ajustes.
+- El usuario confirmó que el borde desaparece al abrir Mission Control y vuelve correctamente al salir.
 
 # Validación de 0.3.0
 
