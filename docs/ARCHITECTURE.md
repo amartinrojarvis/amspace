@@ -16,6 +16,8 @@ NSStatusItem ─── clic ─── NSPanel de ajustes
 
 | Módulo | Responsabilidad |
 |---|---|
+| `focus.rs` | Activación del teclado por ID de ventana, separada de AXRaise; protocolo documentado por yabai (MIT) |
+| `space_style.rs` | Texto atribuido y SF Symbols; color activo/inactivo y preferencias por ID de escritorio |
 | `model.rs` | Presentación del indicador y normalización de preferencias |
 | `spaces.rs` | Resolución opcional de SkyLight, lectura y selección de pantalla activa |
 | `accessibility.rs` | RAII de CoreFoundation, consultas AX, observador de foco y ciclo de vida, respaldo de geometría |
@@ -44,7 +46,11 @@ No se modifica ni se inyecta código en la ventana objetivo. Es un overlay exter
 
 ## Foco y permisos
 
-El temporizador se registra con la constante exportada `NSRunLoopCommonModes` de Foundation, nunca con una cadena inventada. Existe únicamente si el usuario activa el foco y AX está autorizado. Consulta posición, botones y modificadores. Descarta arrastre y ⌥, exige 240 ms de reposo y realiza un único hit-test por posición. Antes de activar valida `AXStandardWindow`, descarta el propio proceso y evita repetir el foco actual. El hit-test excluye las ventanas propias; mantener abiertos o activos los ajustes no bloquea enfocar otra app al salir con el cursor. El ID real de WindowServer decide si la ventana ya está delante, evitando un AXFocusedWindow obsoleto entre ventanas de la misma app. Para enfocar otra aplicación se solicita activación y después se establecen `AXFrontmost`, `AXMain` y `AXFocused` antes de elevar la ventana. El sistema decide qué ventanas son accesibles.
+El temporizador se registra con la constante exportada NSRunLoopCommonModes de Foundation. Solo existe con foco habilitado y permiso AX vigente. Consulta cursor, botones y modificadores; descarta arrastre y ⌥, exige 240 ms de reposo y realiza una consulta por posición. AX valida que el puntero pertenece a una ventana estándar (excluyendo menús y Mission Control); WindowServer identifica la ventana visible exacta. Esto evita tanto un AX hit-test obsoleto entre ventanas hermanas como la capa transparente de pantalla completa que publica Dock.
+
+La activación utiliza GetProcessForPID, _SLPSSetFrontProcessWithOptions y registros de activación por ID de ventana. El formato está adaptado de yabai (MIT; licencia incluida). Entre ventanas del mismo proceso se separan desactivación y activación por 40 ms mediante un selector diferido, sin bloquear el hilo principal. La operación se cancela si el cursor se mueve, se pulsa un botón, se mantiene ⌥ o se desactiva la función antes de completarse. AXRaise solo se ejecuta si el usuario activa Traer al primer plano. No se inyecta código ni se sintetiza un clic de ratón.
+
+El objetivo de foco se conserva para que el borde siga la ventana que recibe el teclado aunque no sea la primera en la pila. Se descarta al pulsar el ratón, cambiar de proceso o detectarse otro foco AX después del periodo de asentamiento. El borde se ordena justo encima de su objetivo; las ventanas que lo cubren siguen por encima.
 
 La app no concede permisos por sí misma. El botón Accesibilidad solicita al sistema el diálogo correspondiente y abre su panel de ajustes. Se vuelve a comprobar la autorización cuando la app recibe foco. Los errores del registro de inicio de sesión se muestran y se consulta el estado real de `SMAppService` para no dejar un interruptor engañoso.
 
@@ -64,3 +70,7 @@ Las cabeceras del SDK de macOS son la referencia para los selectores, las firmas
 El bundle incorpora Sparkle 2.10.1, cargado mediante NSBundle desde Contents/Frameworks. Todos sus objetos permanecen en el hilo principal. SPUStandardUpdaterController ofrece los diálogos nativos y SPUUpdater persiste la preferencia de búsqueda. Se verifica la firma Ed25519 del feed y la del ZIP antes de extraerlo. No se envía perfil del sistema y las instalaciones automáticas están deshabilitadas. El modo cargo run funciona sin el framework, con los controles de actualización deshabilitados.
 
 El empaquetador fija versión y SHA-256 de Sparkle. El script prepare-release.py comprueba coherencia de versiones, firma ZIP y feed con la clave del Llavero y genera sumas SHA-256. El feed público se actualiza después de publicar el archivo, evitando anunciar una descarga inexistente.
+
+## Estilos de escritorio
+
+Snapshot incluye IDs y el índice activo de la pantalla actual. space_style construye una cadena atribuida con NSColor semántico, opacidad 1/0,38 y SF Symbols nativos. No hay redibujado periódico. Los cambios de escritorio/app/pantalla y las preferencias refrescan el indicador. Los iconos se guardan por ManagedSpaceID en NSUserDefaults; el panel reconstruye sus filas al cambiar la lista de escritorios y admite desplazamiento. Las preferencias desconocidas se normalizan a números legibles.

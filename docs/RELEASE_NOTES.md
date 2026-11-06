@@ -1,11 +1,12 @@
-AMSpace 0.2.0 — actualizaciones y autoría.
+AMSpace 0.3.0 — foco independiente e iconos de escritorio.
 
-- Actualizaciones dentro de AMSpace: búsqueda, novedades, descarga verificada, instalación y reinicio.
-- Avisos diarios opcionales, desactivados inicialmente. Tú decides cuándo instalar.
-- Catálogo y paquetes firmados con Ed25519; clave privada fuera del repositorio.
-- Acerca de con Alberto Martín, Instagram y X @amartinro e historial de versiones.
-- Ajustado el espaciado del panel Acerca de.
-- Corregido el foco al salir con el cursor de los ajustes activos y la comparación entre ventanas de la misma aplicación.
-- Incluye las correcciones del temporizador del cursor y del borde en Mission Control de 0.1.1.
+- Foco del teclado por ventana, separado de su orden visual; corrección para ventanas hermanas de Ghostty.
+- Nuevo ajuste «Traer al primer plano», opcional e independiente del foco.
+- Corregida la detección bajo una capa transparente del Dock.
+- Tres modos del indicador: Puntos, Números e Iconos; activo destacado y demás atenuados.
+- 30 iconos: vídeo, fotografía, comunicaciones, audio, trabajo, código, calendario, tareas y más. Selección por escritorio, con opción de mantener su número.
+- Ajustes compactos en Ventanas, Escritorios y Aplicación.
+- Acerca de con Alberto Martín, Instagram y X @amartinro, con espaciado revisado.
+- Actualizaciones firmadas dentro de la app, búsqueda diaria opcional e historial de versiones.
 
-Paquete universal Apple Silicon + Intel. La firma ad hoc puede requerir renovar Accesibilidad después de actualizar. No se necesita iniciar sesión en GitHub.
+Universal Apple Silicon + Intel. La distribución ad hoc puede requerir renovar Accesibilidad al actualizar; la app no evita ese control de macOS.

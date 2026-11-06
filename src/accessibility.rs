@@ -29,8 +29,8 @@ unsafe extern "C" {
     fn AXIsProcessTrustedWithOptions(options: Cf) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> Cf;
     fn AXUIElementCreateSystemWide() -> Cf;
-    fn AXUIElementCopyAttributeValue(element: Cf, name: Cf, result: *mut Cf) -> i32;
     fn AXUIElementCopyElementAtPosition(element: Cf, x: f32, y: f32, result: *mut Cf) -> i32;
+    fn AXUIElementCopyAttributeValue(element: Cf, name: Cf, result: *mut Cf) -> i32;
     fn AXUIElementGetPid(element: Cf, pid: *mut i32) -> i32;
     fn AXUIElementSetMessagingTimeout(element: Cf, seconds: f32) -> i32;
     fn AXUIElementSetAttributeValue(element: Cf, name: Cf, value: Cf) -> i32;
@@ -126,6 +126,12 @@ pub fn window_id(window: Cf) -> Option<u32> {
     let mut id = 0;
     (unsafe { get_id(window, &mut id) } == 0 && id != 0).then_some(id)
 }
+pub fn focused_id(pid: i32) -> Option<u32> {
+    window_id(attr(application(pid)?.0, "AXFocusedWindow")?.0)
+}
+pub fn raise(window: Cf) -> bool {
+    unsafe { AXUIElementPerformAction(window, cf(&NSString::from_str("AXRaise"))) == 0 }
+}
 pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
     for window in array(windows.0) {
@@ -164,6 +170,9 @@ pub fn geometry(window: Cf) -> Option<(NSPoint, NSSize)> {
         .then_some((point, size))
 }
 pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
+    // AX knows which overlays actually receive input (the Dock also publishes
+    // a transparent full-screen window). Use it to reject menus/Mission Control,
+    // then use compositor geometry to distinguish sibling application windows.
     let root = Owned::new(unsafe { AXUIElementCreateSystemWide() })?;
     unsafe {
         AXUIElementSetMessagingTimeout(root.0, 0.08);
@@ -173,10 +182,23 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         return None;
     }
     let hit = Owned::new(hit)?;
-    let window = attr(hit.0, "AXWindow").or_else(|| {
+    let hit_window = attr(hit.0, "AXWindow").or_else(|| {
         let role = attr(hit.0, "AXRole")?;
         unsafe { CFEqual(role.0, cf(&NSString::from_str("AXWindow"))) }.then_some(hit)
     })?;
+    let role = attr(hit_window.0, "AXSubrole")?;
+    if !unsafe { CFEqual(role.0, cf(&NSString::from_str("AXStandardWindow"))) } {
+        return None;
+    }
+    let mut hit_pid = 0;
+    if unsafe { AXUIElementGetPid(hit_window.0, &mut hit_pid) } != 0 {
+        return None;
+    }
+    let (owner, id) = crate::window_server::window_at(NSPoint::new(x, y))?;
+    if hit_pid != owner {
+        return None;
+    }
+    let window = window_for_id(owner, id)?;
     let role = attr(window.0, "AXSubrole")?;
     if !unsafe { CFEqual(role.0, cf(&NSString::from_str("AXStandardWindow"))) } {
         return None;

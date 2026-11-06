@@ -129,6 +129,9 @@ fn valid(frame: NSRect) -> bool {
 /// The compositor returns front-to-back order. A normal window of the active
 /// process wins even when AXFocus incorrectly continues reporting another one.
 pub fn front_window(pid: i32) -> Option<Window> {
+    window_for_focus(pid, None)
+}
+pub fn window_for_focus(pid: i32, focused: Option<u32>) -> Option<Window> {
     ENABLED.store(true, Ordering::Release);
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
     let mut ids = Vec::new();
@@ -151,7 +154,7 @@ pub fn front_window(pid: i32) -> Option<Window> {
             continue;
         }
         ids.push(id);
-        if front.is_none() {
+        if front.is_none() || focused == Some(id) {
             front = Some(Window {
                 id,
                 frame,
@@ -161,6 +164,38 @@ pub fn front_window(pid: i32) -> Option<Window> {
     }
     watch(ids, front.map_or(0, |w| w.id));
     front
+}
+/// Find the visible window at the pointer, independently of stale AX hit tests.
+/// Our click-through border is ignored; menus and own settings block targeting.
+pub fn window_at(point: NSPoint) -> Option<(i32, u32)> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    for info in array(list.0) {
+        let id = number(get(info, "kCGWindowNumber"))? as u32;
+        if id == BORDER.load(Ordering::Acquire) {
+            continue;
+        }
+        let mut frame = NSRect::ZERO;
+        if !unsafe {
+            CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+        } || point.x < frame.origin.x
+            || point.y < frame.origin.y
+            || point.x >= frame.origin.x + frame.size.width
+            || point.y >= frame.origin.y + frame.size.height
+        {
+            continue;
+        }
+        let pid = number(get(info, "kCGWindowOwnerPID"))? as i32;
+        if number(get(info, "kCGWindowLayer")) != Some(0) {
+            continue;
+        }
+        if pid == std::process::id() as i32 {
+            return None;
+        }
+        if valid(frame) {
+            return Some((pid, id));
+        }
+    }
+    None
 }
 pub fn bounds(id: u32) -> Option<NSRect> {
     let api = api()?;

@@ -2,13 +2,14 @@
 <h1 align="center">amspace</h1>
 <p align="center">Tu espacio. Tu foco.<br>Un compañero discreto para la barra de menús de macOS, escrito en Rust.</p>
 
-AMSpace muestra dónde estás con un vistazo: **`1 · ·`**, **`· 2 ·`**, **`· · 3`**. Haz clic en el indicador para abrir unos ajustes nativos, compactos y adaptados al aspecto claro u oscuro del sistema.
+AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escritorio. El activo destaca y los demás aparecen atenuados. Haz clic en el indicador para abrir unos ajustes nativos, compactos y adaptados al aspecto claro u oscuro del sistema.
 
 ## Funciones
 
-- **Escritorio actual.** Número activo y puntos medios para los demás escritorios de la pantalla activa. A partir de diez escritorios se compacta a `3 / 12`.
+- **Escritorio actual.** Tres modos: Puntos, Números e Iconos. 30 iconos nativos (trabajo, código, vídeo, fotografía, comunicaciones, audio, tareas, etc.) y la opción de mantener un número en cada escritorio. El activo destaca en blanco en modo oscuro; el color se adapta al aspecto del sistema. A partir de diez escritorios se compacta a `3 / 12`.
 - **Borde de la ventana activa.** Contorno interior sin separación, con radio de esquina leído del sistema, transparente al ratón, color libre o cuatro paletas y grosor de 1 a 6 puntos, en pasos de 0,5.
-- **Foco bajo el cursor.** Activa y eleva la ventana tras detener el ratón unos 240–350 ms. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
+- **Foco bajo el cursor.** Activa el teclado de la ventana tras detener el ratón unos 240–390 ms, incluso entre ventanas de una misma aplicación, sin cambiar su orden. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
+- **Traer al primer plano.** Ajuste independiente y desactivado inicialmente: además de enfocar, eleva la ventana sobre las demás.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
 - **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.
@@ -34,7 +35,7 @@ La distribución actual está firmada **ad hoc**, sin certificado Developer ID n
 
 ## Actualizar desde AMSpace
 
-En ajustes, pulsa **Buscar…**, revisa las novedades y elige **Instalar actualización**. AMSpace descarga, comprueba la firma, sustituye su paquete y se reinicia conservando tus preferencias. Si no hay novedades, lo indica. Puedes activar **Buscar actualizaciones automáticamente** para recibir avisos diarios; no se instala sin tu intervención.
+En ajustes → **Aplicación**, pulsa **Buscar…**, revisa las novedades y elige **Instalar actualización**. AMSpace descarga, comprueba la firma, sustituye su paquete y se reinicia conservando tus preferencias. Si no hay novedades, lo indica. Puedes activar **Buscar actualizaciones automáticamente** para recibir avisos diarios; no se instala sin tu intervención.
 
 El menú **Acerca de…** incluye la versión, autoría y el historial de versiones. La firma Ed25519 protege tanto el catálogo como los archivos; la clave privada permanece en el Llavero del desarrollador. Es independiente de la firma de Apple: mientras los paquetes sean ad hoc, macOS puede exigir renovar Accesibilidad tras actualizarlos.
 
@@ -63,6 +64,10 @@ Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certific
 
 ## Uso y comportamiento
 
+Los ajustes se organizan en **Ventanas**, **Escritorios** y **Aplicación**. En Escritorios elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
+
+En Ventanas, **El foco sigue al cursor** mueve el foco del teclado; **Traer al primer plano** controla por separado la elevación. Una ventana parcialmente cubierta puede recibir el teclado al pasar por su parte visible sin apartar las ventanas que la cubren.
+
 | Estado | Indicador |
 |---|---|
 | Escritorio 1 de 3 | `1 · ·` |
@@ -73,7 +78,7 @@ Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certific
 
 Los números son relativos a los escritorios normales de la pantalla activa, en el orden de Mission Control. Las ventanas a pantalla completa no se cuentan como escritorios normales. El orden puede cambiar si macOS tiene activado reordenar Spaces por uso reciente.
 
-El borde se aplica a la ventana normal visible situada delante de las demás en la aplicación activa; distingue ventanas de una misma app y recibe eventos de creación y cierre. No rodea la propia ventana de ajustes de AMSpace.
+El borde sigue la ventana enfocada por AMSpace y respeta su posición en la pila; fuera de ese seguimiento, usa la ventana normal delantera de la aplicación activa; distingue ventanas de una misma app y recibe eventos de creación y cierre. No rodea la propia ventana de ajustes de AMSpace.
 
 Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la app activa: `⌘,` abre ajustes, `⌘W` cierra su ventana y `⌘Q` sale. Cerrar los ajustes deja el indicador en funcionamiento.
 
@@ -82,7 +87,7 @@ Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la
 - Sin sondeo de ventanas con el foco automático desactivado. La búsqueda automática de versiones, opcional y desactivada inicialmente, se programa una vez al día.
 - Spaces se consulta al cambiar de escritorio, aplicación o pantalla y al abrir ajustes.
 - El borde identifica la ventana por su ID de WindowServer. El movimiento se aplica directamente desde la notificación del compositor, sin redibujar ni esperar a Accesibilidad. El tamaño se actualiza en el siguiente turno del hilo principal, sin demora artificial; no hay un bucle de animación permanente.
-- El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
+- El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX y de WindowServer después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
 - Se suspende el foco y se oculta el borde al dormir la pantalla, suspender el equipo o desactivar la sesión.
 - Compilación optimizada con LTO, eliminación de símbolos y un único codegen unit.
 
@@ -94,7 +99,7 @@ macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spa
 
 - Al añadir, eliminar o reordenar escritorios sin cambiar de Space, el indicador puede actualizarse en el siguiente cambio de aplicación/escritorio o al abrir sus ajustes.
 - La geometría y el orden del borde se leen de WindowServer, con notificaciones AX como respaldo si la API privada no está disponible. Algunas apps y versiones de macOS pueden exponer metadatos o notificaciones incompletos. El código limita los tiempos de espera AX.
-- El foco se aplica solo a ventanas estándar; se omiten diálogos, menús, escritorio y ventanas de AMSpace. Activar implica elevar la ventana.
+- El foco se aplica solo a ventanas estándar; se omiten diálogos, menús, escritorio y ventanas de AMSpace. Activación y elevación son independientes. La activación sin elevar usa símbolos opcionales de SkyLight y puede no estar disponible si Apple los modifica; no requiere desactivar SIP.
 - El borde es un panel independiente: no se inyecta dentro de otras apps. El movimiento usa una ruta directa del compositor y el redimensionado es reactivo; no se garantiza sincronía atómica con todos los fotogramas de otra aplicación. Mission Control, Stage Manager, apps de ventanas flotantes y animaciones de pantalla completa pueden presentar transiciones visuales. El borde no intenta integrarse con sus animaciones privadas.
 - El inicio de sesión requiere un paquete `.app` instalado. `cargo run` no es un método de instalación.
 - Tras recompilar con firma ad hoc, macOS puede requerir **eliminar AMSpace de la lista de Accesibilidad y añadir de nuevo la copia de Aplicaciones**. Apagar y encender el interruptor no siempre renueva la firma guardada. En versiones recientes del sistema el panel puede llamarse «Control de dispositivos y acceso a datos».
@@ -116,4 +121,4 @@ Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSU
 
 Creado por **Alberto Martín** · [Instagram @amartinro](https://www.instagram.com/amartinro/) · [X @amartinro](https://x.com/amartinro).
 
-[Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt)
+[Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt) · [Atribución del protocolo de foco de yabai](docs/YABAI-LICENSE.txt)

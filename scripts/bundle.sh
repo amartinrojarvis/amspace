@@ -18,6 +18,7 @@ else
   cp target/release/amspace "$APP/Contents/MacOS/amspace"
 fi
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+cp docs/YABAI-LICENSE.txt "$APP/Contents/Resources/YABAI-LICENSE.txt"
 cp docs/SPARKLE-LICENSE.txt "$APP/Contents/Resources/SPARKLE-LICENSE.txt"
 cp assets/Info.plist "$APP/Contents/Info.plist"
 if [[ ! -f assets/AMSpace.icns ]]; then ./scripts/make-icon.sh; fi

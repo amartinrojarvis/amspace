@@ -2,8 +2,10 @@
 compile_error!("AMSpace requires macOS 13 or later.");
 
 mod accessibility;
+mod focus;
 mod model;
 mod native;
+mod space_style;
 mod spaces;
 mod ui;
 mod updater;

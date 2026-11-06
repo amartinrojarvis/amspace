@@ -51,10 +51,14 @@ fn api() -> Option<&'static Api> {
 pub struct Snapshot {
     pub title: String,
     pub detail: String,
+    pub desktops: Vec<u64>,
+    pub active: Option<usize>,
 }
 pub fn snapshot() -> Snapshot {
     read().unwrap_or_else(|| Snapshot {
         title: "—".into(),
+        desktops: vec![],
+        active: None,
         detail: "Escritorios no disponibles en esta versión de macOS".into(),
     })
 }
@@ -81,6 +85,11 @@ fn read() -> Option<Snapshot> {
         {
             return Some(Snapshot {
                 title: indicator(i + 1, desktops.len()),
+                desktops: desktops
+                    .iter()
+                    .filter_map(|s| number(get(*s, "ManagedSpaceID")).map(|id| id as u64))
+                    .collect(),
+                active: Some(i),
                 detail: format!(
                     "Escritorio {} de {} · pantalla activa",
                     i + 1,
@@ -90,6 +99,11 @@ fn read() -> Option<Snapshot> {
         }
         return Some(Snapshot {
             title: "▣".into(),
+            desktops: desktops
+                .iter()
+                .filter_map(|s| number(get(*s, "ManagedSpaceID")).map(|id| id as u64))
+                .collect(),
+            active: None,
             detail: format!("Pantalla completa · {} escritorios", desktops.len()),
         });
     }
