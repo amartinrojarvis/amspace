@@ -1,3 +1,10 @@
+# Publicación de 0.6.1
+
+- Versión 0.6.1, build 10. 59 tests, fmt, Clippy y plist correctos. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42307264810) correcta sobre `41d2a4df3910370364c21b4ec0006b99be682814`.
+- [Release v0.6.1](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.1) pública con ZIP universal, catálogo firmado y SHA256SUMS. Descarga anónima del ZIP idéntica al artefacto local; feed público idéntico al firmado y firma verificada.
+- Actualización real desde 0.6.0 mediante Buscar… e Instalar actualización: descarga, extracción, instalación y reinicio correctos. UI confirma Versión 0.6.1. Preferencias de usuario conservadas; se excluyen claves internas de Sparkle/AppKit/WebKit de la comparación.
+- La UI pide renovar Accesibilidad para la nueva firma ad hoc; no se modificó el permiso. Respaldo previo en `.cache/AMSpace-before-0.6.1.zip`.
+
 # Corrección de animación y destino del selector (desarrollo posterior a 0.6.0)
 
 - 59 pruebas correctas; fmt, Clippy y plist sin errores. Build universal y firma estricta verificados; instalada la compilación local con respaldo en `.cache/AMSpace-before-template-animation-fix.zip`.
