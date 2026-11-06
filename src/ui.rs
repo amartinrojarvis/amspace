@@ -32,6 +32,19 @@ struct PendingFocus {
     point: NSPoint,
 }
 struct App {
+    tile_manager: crate::tile_manager::Manager,
+    tile_timer: Option<Retained<AnyObject>>,
+    tile_interval: f64,
+    tile_hotkey: Option<crate::tile_hotkey::HotKey>,
+    tile_space: Option<u64>,
+    tile_controls: Vec<Obj>,
+    tile_grid_window: Option<Retained<AnyObject>>,
+    tile_grid_fields: Vec<Obj>,
+    tile_grid_status: Obj,
+    tile_grid_toggle: Obj,
+    tile_rules_window: Option<Retained<AnyObject>>,
+    tile_rules_scroll: Obj,
+    tile_rule_ids: Vec<String>,
     target: Retained<AnyObject>,
     status: Retained<AnyObject>,
     status_buttons: Vec<Retained<AnyObject>>,
@@ -218,6 +231,19 @@ impl App {
                 border_enabled: value(Retained::as_ptr(&defaults) as Obj, "border"),
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
+                tile_manager: Default::default(),
+                tile_timer: None,
+                tile_interval: 0.,
+                tile_hotkey: None,
+                tile_space: None,
+                tile_controls: vec![],
+                tile_grid_window: None,
+                tile_grid_fields: vec![],
+                tile_grid_status: ptr::null_mut(),
+                tile_grid_toggle: ptr::null_mut(),
+                tile_rules_window: None,
+                tile_rules_scroll: ptr::null_mut(),
+                tile_rule_ids: vec![],
                 pending_focus: None,
                 focus_target: None,
                 raise_switch: ptr::null_mut(),
@@ -266,6 +292,7 @@ impl App {
             a.refresh_spaces();
             a.update_window();
             a.configure_hover();
+            a.configure_tiling();
             a
         }
     }
@@ -730,10 +757,13 @@ impl App {
             );
             let _: () = msg_send![self.preview, setAlignment:2isize];
             let segmented = alloc_view(class!(NSSegmentedControl), rect(24., 496., 432., 32.));
-            let _: () = msg_send![&segmented, setSegmentCount:3isize];
-            for (i, title) in ["Ventanas", "Escritorios", "Aplicación"].iter().enumerate() {
+            let _: () = msg_send![&segmented, setSegmentCount:4isize];
+            for (i, title) in ["Ventanas", "Escritorios", "Tiling", "Aplicación"]
+                .iter()
+                .enumerate()
+            {
                 let _: () = msg_send![&segmented, setLabel:&*NSString::from_str(title), forSegment:i as isize];
-                let _: () = msg_send![&segmented, setWidth:144f64, forSegment:i as isize];
+                let _: () = msg_send![&segmented, setWidth:108f64, forSegment:i as isize];
             }
             let _: () = msg_send![&segmented, setSelectedSegment:0isize];
             let _: () = msg_send![&segmented, setTarget:target];
@@ -742,12 +772,13 @@ impl App {
             let _: () = msg_send![root, addSubview:&*segmented];
             let tabs = alloc_view(class!(NSTabView), rect(24., 120., 432., 360.));
             let _: () = msg_send![&tabs, setTabViewType:6usize];
-            for i in 0..3 {
+            for i in 0..4 {
                 let view = alloc_view(class!(NSView), rect(0., 0., 432., 360.));
                 let page = Retained::as_ptr(&view) as Obj;
                 match i {
                     0 => self.build_window_page(page, target),
                     1 => self.build_space_page(page, target),
+                    2 => self.build_tile_page(page, target),
                     _ => self.build_application_page(page, target),
                 }
                 let item: Retained<AnyObject> = msg_send![class!(NSTabViewItem), new];
@@ -921,6 +952,435 @@ impl App {
                 self.raise_enabled,
             );
             let _: () = msg_send![self.raise_switch, setEnabled:self.hover_enabled];
+        }
+    }
+    fn configure_tiling(&mut self) {
+        unsafe {
+            if let Some(t) = self.tile_timer.take() {
+                let _: () = msg_send![&t, invalidate];
+            }
+            self.tile_hotkey = None;
+            let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            if crate::tile_manager::pref(defaults, "tile.enabled") == 0
+                || self.sleeping
+                || !ax::trusted()
+            {
+                self.tile_manager.cancel_drag();
+                return;
+            }
+            self.tile_hotkey = crate::tile_hotkey::HotKey::new(
+                crate::tile_manager::pref(defaults, "tile.key").clamp(0, 3) as usize,
+                crate::tile_manager::pref(defaults, "tile.mods").clamp(0, 3) as usize,
+            );
+            if self.tile_hotkey.is_none() {
+                self.feedback("Atajo ocupado: elige otra combinación en Tiling.");
+            }
+            self.update_tile_timer();
+            self.tile_manager.invalidate();
+        }
+    }
+    fn update_tile_timer(&mut self) {
+        let interval = self.tile_manager.tick_interval();
+        if self.tile_timer.is_some() && self.tile_interval == interval {
+            return;
+        }
+        unsafe {
+            if let Some(timer) = self.tile_timer.take() {
+                let _: () = msg_send![&timer, invalidate];
+            }
+            let timer: Retained<AnyObject> = msg_send![class!(NSTimer),timerWithTimeInterval:interval,target:&*self.target,selector:sel!(tileTick:),userInfo:ptr::null::<AnyObject>(),repeats:true];
+            let _: () = msg_send![&timer,setTolerance:if interval>0.02 {0.01f64}else{0.001f64}];
+            let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+            add_common_timer(run, &timer);
+            self.tile_timer = Some(timer);
+            self.tile_interval = interval;
+        }
+    }
+    fn refresh_tile_controls(&mut self) {
+        self.tile_space = crate::tile_manager::current_space();
+        if self.tile_controls.len() != 4 {
+            return;
+        }
+        unsafe {
+            let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            let title = if let Some(id) = self.tile_space {
+                let snapshot = spaces::snapshot();
+                format!(
+                    "Escritorio {} · distribución independiente",
+                    snapshot.desktops.iter().position(|s| *s == id).unwrap_or(0) + 1
+                )
+            } else {
+                "Pantalla completa · selecciona un escritorio".into()
+            };
+            text(self.tile_controls[0], &title);
+            let enabled = self.tile_space.is_some();
+            let _: () = msg_send![self.tile_controls[1],setEnabled:enabled];
+            let _: () = msg_send![self.tile_controls[2],setEnabled:enabled];
+            if let Some(id) = self.tile_space {
+                let _: () = msg_send![self.tile_controls[1],setState:1-crate::tile_manager::pref(defaults,&format!("tile.off.{id}")).clamp(0,1)];
+                let _: () = msg_send![self.tile_controls[2],selectItemAtIndex:crate::tiling::Layout::from_index(crate::tile_manager::pref(defaults,&format!("tile.layout.{id}"))).index()];
+            }
+            text(
+                self.tile_controls[3],
+                if self.tile_hotkey.is_none()
+                    && crate::tile_manager::pref(defaults, "tile.enabled") != 0
+                {
+                    "Atajo no disponible."
+                } else {
+                    "Atajo: flotante ↔ tile."
+                },
+            );
+        }
+    }
+    unsafe fn build_tile_page(&mut self, root: Obj, target: Obj) {
+        unsafe {
+            let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            card(root, rect(0., 282., 432., 78.));
+            label(
+                root,
+                rect(18., 326., 340., 22.),
+                "Gestor de ventanas en mosaico",
+                14.,
+                0.3,
+                false,
+            );
+            toggle(
+                root,
+                374.,
+                326.,
+                "Activar tiling",
+                target,
+                40,
+                crate::tile_manager::pref(defaults, "tile.enabled") != 0,
+            );
+            label(
+                root,
+                rect(18., 299., 395., 20.),
+                "Al desactivarlo, recuperas los tamaños y posiciones previos.",
+                11.,
+                0.,
+                true,
+            );
+            let title = label(root, rect(18., 249., 395., 22.), "", 12., 0.3, false);
+            label(
+                root,
+                rect(18., 215., 310., 22.),
+                "Usar mosaico en este escritorio",
+                13.,
+                0.,
+                false,
+            );
+            let enabled = toggle(
+                root,
+                374.,
+                215.,
+                "Mosaico en este escritorio",
+                target,
+                41,
+                true,
+            );
+            label(
+                root,
+                rect(18., 179., 130., 22.),
+                "Plantilla",
+                13.,
+                0.,
+                false,
+            );
+            let layout = popup(
+                root,
+                rect(160., 173., 254., 30.),
+                &[
+                    "Dwindle · divisiones",
+                    "Espiral",
+                    "Cuadrícula simétrica",
+                    "Principal y secundarias",
+                ],
+                target,
+                42,
+            );
+            label(
+                root,
+                rect(18., 141., 340., 22.),
+                "Colocación inteligente con ratón",
+                13.,
+                0.,
+                false,
+            );
+            toggle(
+                root,
+                374.,
+                141.,
+                "Colocación inteligente",
+                target,
+                43,
+                crate::tile_manager::pref(defaults, "tile.simple") == 0,
+            );
+            label(
+                root,
+                rect(18., 115., 400., 18.),
+                "Arrastra el título. Bordes: divide; centro: intercambia.",
+                11.,
+                0.,
+                true,
+            );
+            button(
+                root,
+                rect(15., 88., 400., 28.),
+                "Rejilla virtual y distribución guardada…",
+                target,
+                49,
+            );
+            label(
+                root,
+                rect(18., 59., 150., 22.),
+                "Flotante ↔ tile",
+                13.,
+                0.3,
+                false,
+            );
+            let mods = popup(
+                root,
+                rect(178., 53., 120., 30.),
+                &crate::tile_hotkey::MODIFIERS
+                    .iter()
+                    .map(|(s, _)| *s)
+                    .collect::<Vec<_>>(),
+                target,
+                44,
+            );
+            let keys = popup(
+                root,
+                rect(304., 53., 110., 30.),
+                &crate::tile_hotkey::KEYS
+                    .iter()
+                    .map(|(s, _)| *s)
+                    .collect::<Vec<_>>(),
+                target,
+                45,
+            );
+            let _: () = msg_send![mods,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.mods").clamp(0,3)];
+            let _: () = msg_send![keys,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.key").clamp(0,3)];
+            let hint = label(root, rect(18., 17., 225., 24.), "", 11., 0., true);
+            button(
+                root,
+                rect(251., 12., 165., 30.),
+                "Apps flotantes…",
+                target,
+                46,
+            );
+            self.tile_controls = vec![title, enabled, layout, hint];
+            self.refresh_tile_controls();
+        }
+    }
+    fn show_tile_grid(&mut self) {
+        unsafe {
+            if self.tile_grid_window.is_none() {
+                let w = window(rect(0., 0., 480., 350.), 1 | 2 | 4);
+                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Rejilla y distribución")];
+                let _: () = msg_send![&w, center];
+                let root: Obj = msg_send![&w, contentView];
+                let target = Retained::as_ptr(&self.target) as Obj;
+                let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                label(
+                    root,
+                    rect(22., 302., 370., 24.),
+                    "Ajustar tamaños a una rejilla virtual",
+                    16.,
+                    0.3,
+                    false,
+                );
+                self.tile_grid_toggle = toggle(
+                    root,
+                    419.,
+                    302.,
+                    "Activar rejilla virtual",
+                    target,
+                    50,
+                    crate::tile_manager::pref(defaults, "tile.grid.enabled") != 0,
+                );
+                label(
+                    root,
+                    rect(22., 270., 435., 20.),
+                    "Las divisiones se alinean sin dejar huecos entre tiles.",
+                    12.,
+                    0.,
+                    true,
+                );
+                for (i, (name, key, fallback, max)) in [
+                    ("Columnas (2–240)", "tile.grid.columns", 120, 240),
+                    ("Filas (2–60)", "tile.grid.rows", 6, 60),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let x = 22. + i as f64 * 220.;
+                    label(root, rect(x, 231., 210., 20.), name, 12., 0., false);
+                    let field = alloc_view(class!(NSTextField), rect(x, 200., 190., 26.));
+                    let _: () = msg_send![&field,setStringValue:&*NSString::from_str(&crate::tile_manager::grid_count(defaults,key,*fallback,*max).to_string())];
+                    let _: () = msg_send![&field,setAccessibilityLabel:&*NSString::from_str(name)];
+                    let _: () = msg_send![root,addSubview:&*field];
+                    self.tile_grid_fields.push(Retained::as_ptr(&field) as Obj);
+                }
+                button(
+                    root,
+                    rect(326., 158., 132., 30.),
+                    "Aplicar rejilla",
+                    target,
+                    51,
+                );
+                label(
+                    root,
+                    rect(22., 122., 435., 20.),
+                    "Una distribución por escritorio · mismo número de tiles.",
+                    12.,
+                    0.,
+                    true,
+                );
+                button(
+                    root,
+                    rect(18., 80., 210., 30.),
+                    "Guardar distribución",
+                    target,
+                    52,
+                );
+                button(
+                    root,
+                    rect(242., 80., 216., 30.),
+                    "Restaurar distribución",
+                    target,
+                    53,
+                );
+                self.tile_grid_status = label(
+                    root,
+                    rect(22., 20., 435., 45.),
+                    "Se guardan proporciones y rejilla, no se abren aplicaciones.",
+                    11.,
+                    0.,
+                    true,
+                );
+                self.tile_grid_window = Some(w);
+            }
+            let _: () = msg_send![self.tile_grid_window.as_ref().unwrap(),makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn show_tile_rules(&mut self) {
+        unsafe {
+            if self.tile_rules_window.is_none() {
+                let w = window(rect(0., 0., 480., 430.), 1 | 2 | 4);
+                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Aplicaciones flotantes")];
+                let _: () = msg_send![&w, center];
+                let root: Obj = msg_send![&w, contentView];
+                let target = Retained::as_ptr(&self.target) as Obj;
+                label(
+                    root,
+                    rect(22., 385., 435., 24.),
+                    "Abrir como flotantes",
+                    18.,
+                    0.3,
+                    false,
+                );
+                label(
+                    root,
+                    rect(22., 356., 435., 20.),
+                    "Se aplica a las nuevas ventanas de estas aplicaciones.",
+                    12.,
+                    0.,
+                    true,
+                );
+                label(
+                    root,
+                    rect(22., 332., 435., 20.),
+                    "Puedes devolver cada ventana al tile con tu atajo.",
+                    12.,
+                    0.,
+                    true,
+                );
+                let scroll = alloc_view(class!(NSScrollView), rect(18., 65., 444., 250.));
+                let _: () = msg_send![&scroll,setHasVerticalScroller:true];
+                let _: () = msg_send![&scroll,setAutohidesScrollers:true];
+                let _: () = msg_send![&scroll,setDrawsBackground:false];
+                let _: () = msg_send![root,addSubview:&*scroll];
+                self.tile_rules_scroll = Retained::as_ptr(&scroll) as Obj;
+                button(
+                    root,
+                    rect(18., 18., 190., 30.),
+                    "Añadir aplicación…",
+                    target,
+                    47,
+                );
+                button(root, rect(343., 18., 119., 30.), "Cerrar", target, 48);
+                self.tile_rules_window = Some(w);
+            }
+            self.rebuild_tile_rules();
+            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app,activateIgnoringOtherApps:true];
+            let _: () = msg_send![self.tile_rules_window.as_ref().unwrap(),makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn rebuild_tile_rules(&mut self) {
+        if self.tile_rules_scroll.is_null() {
+            return;
+        }
+        unsafe {
+            let entries = crate::tile_rules::entries(Retained::as_ptr(&self.defaults) as Obj);
+            self.tile_rule_ids = entries.iter().map(|(id, _)| id.clone()).collect();
+            let height = (entries.len() as f64 * 60.).max(250.);
+            let document = alloc_view(class!(NSView), rect(0., 0., 426., height));
+            let root = Retained::as_ptr(&document) as Obj;
+            if entries.is_empty() {
+                label(
+                    root,
+                    rect(12., height - 45., 400., 24.),
+                    "Ninguna aplicación: las ventanas usarán mosaico.",
+                    12.,
+                    0.,
+                    true,
+                );
+            }
+            for (i, (id, name)) in entries.iter().enumerate() {
+                let y = height - (i + 1) as f64 * 60.;
+                label(root, rect(12., y + 28., 298., 22.), name, 13., 0.3, false);
+                label(root, rect(12., y + 8., 298., 18.), id, 10., 0., true);
+                let remove = button(
+                    root,
+                    rect(326., y + 15., 88., 28.),
+                    "Quitar",
+                    Retained::as_ptr(&self.target) as Obj,
+                    2000 + i as isize,
+                );
+                let _: () = msg_send![remove,setAccessibilityLabel:&*NSString::from_str(&format!("Quitar {name}"))];
+            }
+            let _: () = msg_send![self.tile_rules_scroll,setDocumentView:&*document];
+        }
+    }
+    fn add_tile_rule(&mut self) {
+        unsafe {
+            let panel: Obj = msg_send![class!(NSOpenPanel), openPanel];
+            let _: () = msg_send![panel,setTitle:&*NSString::from_str("Selecciona una aplicación")];
+            let _: () = msg_send![panel,setCanChooseFiles:true];
+            let _: () = msg_send![panel,setCanChooseDirectories:false];
+            let _: () = msg_send![panel,setAllowsMultipleSelection:false];
+            let _: () = msg_send![panel,setTreatsFilePackagesAsDirectories:false];
+            let types: Obj = msg_send![class!(NSArray),arrayWithObject:&*NSString::from_str("app")];
+            let _: () = msg_send![panel,setAllowedFileTypes:types];
+            let directory: Obj =
+                msg_send![class!(NSURL),fileURLWithPath:&*NSString::from_str("/Applications")];
+            let _: () = msg_send![panel,setDirectoryURL:directory];
+            let result: isize = msg_send![panel, runModal];
+            if result == 1 {
+                let url: Obj = msg_send![panel, URL];
+                if let Some((id, name)) = crate::tile_rules::bundle(url) {
+                    crate::tile_rules::set(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        &id,
+                        Some(&name),
+                    );
+                    self.rebuild_tile_rules();
+                } else {
+                    self.feedback("La aplicación seleccionada no tiene identificador de bundle.");
+                }
+            }
         }
     }
     unsafe fn build_application_page(&mut self, root: Obj, target: Obj) {
@@ -1195,7 +1655,7 @@ impl App {
                     if ax::trusted() {
                         "● Accesibilidad concedida"
                     } else {
-                        "○ Borde y foco requieren Accesibilidad"
+                        "○ Borde, foco y tiling requieren Accesibilidad"
                     },
                 );
             }
@@ -1297,7 +1757,148 @@ impl App {
                         self.rebuild_space_rows();
                     }
                 }
-                1000.. => {
+                40..=45 => {
+                    let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                    let selected: isize = if tag == 40 || tag == 41 || tag == 43 {
+                        msg_send![sender, state]
+                    } else {
+                        msg_send![sender, indexOfSelectedItem]
+                    };
+                    match tag {
+                        40 => {
+                            crate::tile_manager::save(defaults, "tile.enabled", selected);
+                            if selected == 0 {
+                                self.tile_manager.restore();
+                            }
+                            self.configure_tiling();
+                        }
+                        41 => {
+                            if let Some(id) = self.tile_space {
+                                crate::tile_manager::save(
+                                    defaults,
+                                    &format!("tile.off.{id}"),
+                                    1 - selected,
+                                );
+                                if selected == 0 {
+                                    self.tile_manager.restore_space(id);
+                                }
+                            }
+                        }
+                        42 => {
+                            if let Some(id) = self.tile_space {
+                                crate::tile_manager::save(
+                                    defaults,
+                                    &format!("tile.layout.{id}"),
+                                    selected,
+                                );
+                                self.tile_manager.reset_template(
+                                    id,
+                                    crate::tiling::Layout::from_index(selected),
+                                );
+                            }
+                        }
+                        43 => crate::tile_manager::save(defaults, "tile.simple", 1 - selected),
+                        44 | 45 => {
+                            crate::tile_manager::save(
+                                defaults,
+                                if tag == 44 { "tile.mods" } else { "tile.key" },
+                                selected,
+                            );
+                            self.configure_tiling();
+                        }
+                        _ => {}
+                    }
+                    self.tile_manager.invalidate();
+                    self.refresh_tile_controls();
+                }
+                49 => self.show_tile_grid(),
+                50 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "tile.grid.enabled",
+                        state,
+                    );
+                    self.tile_manager.invalidate();
+                }
+                51 => {
+                    let columns: isize = msg_send![self.tile_grid_fields[0], integerValue];
+                    let rows: isize = msg_send![self.tile_grid_fields[1], integerValue];
+                    if !(2..=240).contains(&columns) || !(2..=60).contains(&rows) {
+                        text(
+                            self.tile_grid_status,
+                            "Introduce columnas entre 2 y 240 y filas entre 2 y 60.",
+                        );
+                    } else {
+                        for (key, value) in
+                            [("tile.grid.columns", columns), ("tile.grid.rows", rows)]
+                        {
+                            crate::tile_manager::save(
+                                Retained::as_ptr(&self.defaults) as Obj,
+                                key,
+                                value,
+                            );
+                        }
+                        self.tile_manager.invalidate();
+                        text(
+                            self.tile_grid_status,
+                            "Rejilla actualizada. Activa la casilla para aplicarla.",
+                        );
+                    }
+                }
+                52 => {
+                    let ok = self
+                        .tile_manager
+                        .save_distribution(Retained::as_ptr(&self.defaults) as Obj);
+                    text(
+                        self.tile_grid_status,
+                        if ok {
+                            "Distribución guardada para este escritorio."
+                        } else {
+                            "Activa tiling y abre ventanas en este escritorio primero."
+                        },
+                    );
+                }
+                53 => {
+                    let ok = self
+                        .tile_manager
+                        .restore_distribution(Retained::as_ptr(&self.defaults) as Obj);
+                    self.refresh_tile_controls();
+                    let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                    let _: () = msg_send![self.tile_grid_toggle,setState:crate::tile_manager::pref(defaults,"tile.grid.enabled")];
+                    for (field, key, fallback, max) in [
+                        (self.tile_grid_fields[0], "tile.grid.columns", 120, 240),
+                        (self.tile_grid_fields[1], "tile.grid.rows", 6, 60),
+                    ] {
+                        text(
+                            field,
+                            &crate::tile_manager::grid_count(defaults, key, fallback, max)
+                                .to_string(),
+                        );
+                    }
+                    text(
+                        self.tile_grid_status,
+                        if ok {
+                            "Distribución restaurada."
+                        } else {
+                            "No hay una distribución compatible con este número de tiles."
+                        },
+                    );
+                }
+                46 => self.show_tile_rules(),
+                47 => self.add_tile_rule(),
+                48 => {
+                    if let Some(w) = &self.tile_rules_window {
+                        let _: () = msg_send![&**w,orderOut:ptr::null::<AnyObject>()];
+                    }
+                }
+                2000.. => {
+                    if let Some(id) = self.tile_rule_ids.get((tag - 2000) as usize) {
+                        crate::tile_rules::set(Retained::as_ptr(&self.defaults) as Obj, id, None);
+                        self.rebuild_tile_rules();
+                    }
+                }
+                1000..=1999 => {
                     if let Some(id) = self.space_ids.get((tag - 1000) as usize) {
                         let selected: isize = msg_send![sender, indexOfSelectedItem];
                         let _: () = msg_send![&self.defaults, setInteger:space_style::normalize_icon(selected) as isize, forKey:&*NSString::from_str(&format!("spaceIcon.{id}"))];
@@ -1562,11 +2163,46 @@ extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
 extern "C-unwind" fn focus_pending(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.finish_focus());
 }
+pub fn toggle_tile_float() {
+    with_app(|a| {
+        a.tile_manager
+            .toggle_float(Retained::as_ptr(&a.defaults) as Obj);
+        a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj);
+        a.update_tile_timer();
+        a.update_window();
+    });
+}
+extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
+    autoreleasepool(|_| {
+        with_app(|a| {
+            if !ax::trusted() {
+                a.configure_tiling();
+                return;
+            }
+            if a.switching.is_some() {
+                a.tile_manager.cancel_drag();
+                a.update_tile_timer();
+                return;
+            }
+            a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj);
+            a.update_tile_timer();
+            if let Some(error) = a.tile_manager.last_error.take() {
+                a.feedback(&error);
+            }
+        })
+    });
+}
 extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| with_app(|a| a.hover()));
 }
+extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
+    with_app(|a| a.tile_manager.space_changed());
+    workspace(target, selector, notification);
+}
 extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
+        a.tile_manager.invalidate();
+        a.refresh_tile_controls();
         a.refresh_spaces();
         a.refresh_permission();
         a.update_window();
@@ -1578,6 +2214,7 @@ extern "C-unwind" fn became_active(_: Obj, _: Sel, _: Obj) {
         a.refresh_permission();
         a.refresh_login();
         a.configure_hover();
+        a.configure_tiling();
         a.update_window();
     });
 }
@@ -1585,6 +2222,7 @@ extern "C-unwind" fn sleep(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
         a.sleeping = true;
         a.configure_hover();
+        a.configure_tiling();
         a.update_window();
     });
 }
@@ -1592,6 +2230,7 @@ extern "C-unwind" fn wake(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
         a.sleeping = false;
         a.configure_hover();
+        a.configure_tiling();
         a.refresh_spaces();
         a.update_window();
     });
@@ -1667,10 +2306,12 @@ pub fn run() {
             (sel!(checkUpdates:), check_updates),
             (sel!(change:), change),
             (sel!(hover:), hover),
+            (sel!(tileTick:), tile_tick),
             (sel!(focusPending:), focus_pending),
             (sel!(update:), update),
             (sel!(settle:), settle),
             (sel!(workspace:), workspace),
+            (sel!(spaceChanged:), space_changed),
             (sel!(becameActive:), became_active),
             (sel!(sleep:), sleep),
             (sel!(wake:), wake),
@@ -1699,7 +2340,11 @@ pub fn run() {
                 center,
                 Retained::as_ptr(&target) as Obj,
                 name,
-                sel!(workspace:),
+                if name == "NSWorkspaceActiveSpaceDidChangeNotification" {
+                    sel!(spaceChanged:)
+                } else {
+                    sel!(workspace:)
+                },
             );
         }
         for name in [

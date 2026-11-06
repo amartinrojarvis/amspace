@@ -11,6 +11,7 @@ AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escr
 - **Borde de la ventana activa.** Contorno interior sin separación, con radio de esquina leído del sistema, transparente al ratón, color libre o cuatro paletas y grosor de 1 a 6 puntos, en pasos de 0,5.
 - **Foco bajo el cursor.** Activa el teclado de la ventana tras detener el ratón unos 240–390 ms, incluso entre ventanas de una misma aplicación, sin cambiar su orden. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
 - **Traer al primer plano.** Ajuste independiente y desactivado inicialmente: además de enfocar, eleva la ventana sobre las demás.
+- **Tiling opcional.** Mosaico por escritorio con Dwindle, espiral, cuadrícula o principal y secundarias; arrastre con previsualización y ventanas flotantes mediante atajo configurable.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
 - **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.
@@ -18,7 +19,7 @@ AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escr
 - **Preferencias persistentes.** Sin cuenta ni telemetría. Solo se conecta a GitHub al buscar o descargar actualizaciones; Sparkle utiliza auxiliares durante la instalación.
 - **Icono propio.** Ventana redondeada con un espacio destacado; fuentes vectoriales y versión `.icns` incluidas.
 
-El borde y el foco están desactivados inicialmente: actívalos cuando hayas concedido Accesibilidad.
+El borde, el foco y el tiling están desactivados inicialmente: actívalos cuando hayas concedido Accesibilidad.
 
 ## Instalar
 
@@ -67,7 +68,7 @@ Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certific
 
 El clic izquierdo selecciona el escritorio pulsado; pulsar el escritorio actual no hace nada. El clic derecho abre ajustes sin cambiar de escritorio. El cambio es directo, sin abrir la vista de Mission Control, y respeta el ajuste de desplazamiento natural. Para un destino lejano recorre los espacios intermedios y confirma cada cambio. El foco automático y el borde se pausan durante esa transición. No se modifican los atajos ni la configuración del sistema.
 
-Los ajustes se organizan en **Ventanas**, **Escritorios** y **Aplicación**. En Escritorios elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
+Los ajustes se organizan en **Ventanas**, **Escritorios**, **Tiling** y **Aplicación**. En Escritorios elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
 
 En Ventanas, **El foco sigue al cursor** mueve el foco del teclado; **Traer al primer plano** controla por separado la elevación. Una ventana parcialmente cubierta puede recibir el teclado al pasar por su parte visible sin apartar las ventanas que la cubren.
 
@@ -125,3 +126,50 @@ Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSU
 Creado por **Alberto Martín** · [Instagram @amartinro](https://www.instagram.com/amartinro/) · [X @amartinro](https://x.com/amartinro).
 
 [Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt) · [Atribución del protocolo de foco de yabai](docs/YABAI-LICENSE.txt) · [Licencia del protocolo de gestos de iss](docs/ISS-LICENSE.txt) · [Atribución de strafe](docs/STRAFE-LICENSE.txt)
+
+## Tiling por escritorio
+
+Actívalo en **Ajustes → Tiling** después de conceder Accesibilidad. El interruptor general activa el gestor; el segundo permite excluir el escritorio actual. Cada escritorio conserva su plantilla por ID, aunque se reordene en Mission Control. Las pantallas visibles se gestionan de forma independiente y se respeta su área útil (Dock y barra de menús).
+
+- **Dwindle:** divisiones binarias. Las ventanas nuevas dividen la ventana enfocada cuando ya pertenece al árbol, o la última disponible. El eje inicial depende del espacio disponible.
+- **Espiral:** divisiones sucesivas en sentido horario.
+- **Cuadrícula simétrica:** filas y columnas equilibradas; la última fila aprovecha el ancho completo.
+- **Principal y secundarias:** ventana principal al 60 % del ancho y columna de ventanas secundarias.
+
+Arrastra una ventana tiled por su barra de título. Cerca del borde superior/inferior de la pantalla, la ventana fantasma propone una división arriba/abajo; cerca del borde izquierdo/derecho, una división lado a lado. Esto permite cambiar la orientación de dos ventanas en cualquiera de las cuatro plantillas. Sobre el borde de otra ventana, divide solo ese tile; en su centro, intercambia posiciones conservando los tamaños. La vista previa representa la distribución que se aplicará al soltar y estabiliza los cambios de intención durante 70 ms para reducir saltos. Desactivar la colocación inteligente mantiene el intercambio central.
+
+Puedes arrastrar entre monitores visibles, incluso con orientaciones, resoluciones y escalas distintas. Cada pareja monitor/escritorio mantiene su propio árbol; se usa el área útil en puntos de macOS y se respetan Dock, menú y márgenes. Espiral y Principal comienzan apiladas en pantallas verticales. También se separan las distribuciones cuando macOS comparte un Space entre monitores. El traslado nativo a otro Space sigue correspondiendo a macOS. Las flotantes permanecen fuera de esta colocación hasta usar su atajo.
+
+**⌃⌥T** alterna la ventana activa entre flotante y tile. En los ajustes puedes elegir modificadores y tecla entre las combinaciones disponibles. Carbon registra el atajo para que no llegue simultáneamente a la aplicación enfocada; un conflicto se indica en ajustes. Una flotante permanece flotante aunque la muevas o redimensiones: solo vuelve al tile mediante el atajo. Desactivar el gestor o excluir un escritorio restaura la geometría guardada de sus ventanas.
+
+El borde y el foco bajo el cursor siguen funcionando; el mosaico no activa ni eleva ventanas al distribuirlas. Se excluyen diálogos, ventanas no redimensionables, minimizadas, pantalla completa, ventanas propias y ventanas asignadas a todos los escritorios. Algunas aplicaciones imponen tamaños mínimos: se muestra un aviso, sin entrar en un bucle de redimensionado; usa otra plantilla o deja esa ventana flotante.
+
+Esta es una adaptación nativa de la interacción de [Omarchy/Hyprland](https://github.com/omacom/omarchy/blob/master/default/hypr/bindings/tiling.lua), no un compositor Hyprland: no incluye pseudotiling, grupos, scratchpads ni todos sus atajos. Las plantillas y ajustes persisten; el árbol, el orden y las ventanas flotantes son estado de la sesión. El guardado de proporciones y rejilla por escritorio está disponible; los perfiles con identidad de aplicaciones y monitores quedan para una ampliación futura.
+
+### Redimensionado y aplicaciones flotantes
+
+Arrastra un borde o esquina de una ventana tiled: las divisiones compartidas se desplazan y las ventanas vecinas se adaptan durante el gesto. Funciona con Dwindle, espiral, cuadrícula y principal/secundarias. Al soltar se conserva la proporción ajustada, en vez de volver al reparto inicial. Los límites exteriores de la pantalla permanecen fijos; las divisiones tienen mínimos de 120 × 90 puntos por hoja, además de los mínimos que imponga cada aplicación. Seleccionar una plantilla, incluso la actual, reconstruye su reparto inicial. Cerrar una ventana conserva las proporciones ajustadas de las demás divisiones; su hermana ocupa el hueco liberado.
+
+Las recolocaciones automáticas se interpolan durante 120 ms con una curva quintic ease-in/ease-out, de velocidad y aceleración nulas en los extremos. Un nuevo gesto interrumpe la animación para dar prioridad al ratón; durante el redimensionado, el sistema controla la ventana arrastrada y AMSpace ajusta las vecinas sin animación adicional que retrase el seguimiento.
+
+En **Tiling → Apps flotantes… → Añadir aplicación…**, selecciona una aplicación instalada. El listado permite quitar reglas y se conserva entre reinicios. Cada regla se identifica por el bundle ID de la aplicación y se aplica cuando el gestor incorpora una ventana nueva; no modifica retroactivamente las ya gestionadas. El atajo permite devolver al tile una ventana concreta sin eliminar la regla de su aplicación.
+
+
+El gestor comprueba la geometría real al reajustar: una animación interrumpida no deja su destino marcado como completado. La expansión vuelve a aplicarse después de colocar la ventana, evitando tamaños limitados por su posición anterior. Al retirar tiles, las restantes ocupan el área útil completa, respetando los márgenes y gaps. Si una división produce tiles demasiado pequeños se ajustan sus proporciones dentro de la plantilla elegida; los límites impuestos por aplicaciones se notifican sin reintentar indefinidamente.
+
+El temporizador de tiling funciona a 60 Hz durante animaciones y arrastres de tiles, y a 12,5 Hz en reposo. Pantallas y ventanas se consultan como máximo cada 500 ms, salvo cambios explícitos. Los fotogramas intermedios solo escriben los atributos que cambian. El compositor de macOS presenta las ventanas; AMSpace no captura texturas ni añade una segunda copia gráfica de ventanas ajenas. Estos intervalos son objetivos del programador, no una garantía de FPS: la respuesta AX depende de cada aplicación.
+
+
+### Rejilla virtual y distribución guardada
+
+En **Tiling → Rejilla virtual y distribución guardada…** puedes activar el ajuste a una rejilla virtual. Valores iniciales: **120 columnas × 6 filas**, configurables entre 2–240 columnas y 2–60 filas. Pulsa **Aplicar rejilla** tras editar. Se ajustan las divisiones compartidas, respetando gaps y tamaños mínimos, no cada ventana por separado. Si una alineación no cabe por los mínimos de un subárbol, prevalece el mínimo.
+
+**Guardar distribución** conserva una distribución de tamaños por escritorio: plantilla, proporciones, estructura y rejilla. **Restaurar distribución** la aplica a los tiles presentes y requiere el mismo número de ventanas. Usa posiciones lógicas, no IDs de ventana guardados, por lo que puede restaurarse después de reiniciar. No abre aplicaciones ni identifica documentos, y no es todavía un gestor de perfiles multipantalla con nombres.
+
+Recolocar las ventanas de una cuadrícula ajustada conserva sus huecos y proporciones; intercambia o reordena qué ventana ocupa cada hueco. Redimensionar desde una esquina exterior ajusta la división interna opuesta manteniendo el límite de pantalla, incluido el caso de una ventana izquierda y dos apiladas a la derecha.
+
+
+Al mover una ventana a otro Space, el gestor elimina su hoja del escritorio de origen sin reiniciar las proporciones y la coloca directamente en el destino, evitando una segunda animación tras la transición nativa. Durante los primeros 600 ms consulta cambios de pertenencia con mayor frecuencia; después vuelve al sondeo habitual. Las ventanas temporalmente fuera de pantalla durante la transición no hacen que se borre la distribución existente.
+
+
+En Espiral, las ventanas nuevas continúan el giro de la última división, aunque otra ventana tenga el foco. Se conservan los tamaños ajustados y el sentido del giro después de cerrar ventanas. La aplicación no sustituye automáticamente Espiral por Cuadrícula: si no caben los mínimos, muestra un aviso. Puedes reconstruir la forma inicial volviendo a elegir **Espiral** en el selector de plantilla.

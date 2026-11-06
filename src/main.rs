@@ -9,6 +9,10 @@ mod native;
 mod space_style;
 mod space_switch;
 mod spaces;
+mod tile_hotkey;
+mod tile_manager;
+mod tile_rules;
+mod tiling;
 mod ui;
 mod updater;
 mod window_server;
@@ -19,6 +23,13 @@ fn main() {
             println!("AMSpace {}", env!("CARGO_PKG_VERSION"));
             println!("Accessibility: {}", accessibility::trusted());
             println!("Spaces: {:?}", spaces::snapshot());
+            println!("Visible desktops: {:?}", spaces::visible_desktops());
+            for (pid, id, frame) in window_server::tile_windows() {
+                println!(
+                    "Tile candidate: pid={pid} id={id} space={:?} frame={frame:?}",
+                    spaces::window_space(id)
+                );
+            }
             unsafe {
                 use objc2::{class, msg_send, runtime::AnyObject};
                 let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];

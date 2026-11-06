@@ -208,3 +208,75 @@ fn read() -> Option<Snapshot> {
     }
     None
 }
+
+/// Fail closed for sticky/all-desktop windows and unavailable private API.
+pub fn window_space(id: u32) -> Option<u64> {
+    type CopySpaces = unsafe extern "C" fn(i32, u32, Cf) -> Cf;
+    static COPY: OnceLock<Option<CopySpaces>> = OnceLock::new();
+    let api = api()?;
+    let copy = COPY
+        .get_or_init(|| unsafe {
+            let p = libc::dlsym(libc::RTLD_DEFAULT, c"SLSCopySpacesForWindows".as_ptr());
+            if p.is_null() {
+                None
+            } else {
+                Some(std::mem::transmute::<*mut c_void, CopySpaces>(p))
+            }
+        })
+        .as_ref()?;
+    unsafe {
+        let number: objc2::rc::Retained<objc2::runtime::AnyObject> =
+            msg_send![class!(NSNumber),numberWithUnsignedInt:id];
+        let ids: objc2::rc::Retained<objc2::runtime::AnyObject> =
+            msg_send![class!(NSArray),arrayWithObject:&*number];
+        let values = Owned::new(copy(
+            (api.connection)(),
+            7,
+            objc2::rc::Retained::as_ptr(&ids).cast(),
+        ))?;
+        let values = array(values.0);
+        if values.len() != 1 {
+            return None;
+        }
+        crate::accessibility::number(values[0]).map(|n| n as u64)
+    }
+}
+/// Each display's currently visible, non-fullscreen Space.
+pub fn visible_desktops() -> Vec<(u32, u64)> {
+    let Some(api) = api() else { return vec![] };
+    let Some(displays) = Owned::new(unsafe { (api.displays)((api.connection)()) }) else {
+        return vec![];
+    };
+    let mut visible = Vec::new();
+    for display in array(displays.0) {
+        let current = get(display, "Current Space");
+        if number(get(current, "type")) != Some(0) {
+            continue;
+        }
+        let Some(space) = number(get(current, "ManagedSpaceID")) else {
+            continue;
+        };
+        let identifier = get(display, "Display Identifier");
+        if equals_text(identifier, "Main") {
+            // With separate Spaces disabled, SkyLight describes one shared Space.
+            // Keep an independent tiling area for every connected physical screen.
+            unsafe {
+                let screens: Obj = msg_send![class!(NSScreen), screens];
+                let count: usize = msg_send![screens, count];
+                for index in 0..count {
+                    let screen: Obj = msg_send![screens, objectAtIndex:index];
+                    let desc: Obj = msg_send![screen, deviceDescription];
+                    let n: Obj =
+                        msg_send![desc, objectForKey:&*NSString::from_str("NSScreenNumber")];
+                    let id: u32 = msg_send![n, unsignedIntValue];
+                    visible.push((id, space as u64));
+                }
+            }
+        } else if let Some(id) = display_number(identifier) {
+            visible.push((id, space as u64));
+        }
+    }
+    visible.sort_unstable();
+    visible.dedup();
+    visible
+}

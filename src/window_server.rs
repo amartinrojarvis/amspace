@@ -319,6 +319,45 @@ extern "C" fn deliver(_: *mut c_void) {
     objc2::rc::autoreleasepool(|_| crate::ui::window_server_event(flags & 2 != 0, flags & 4 != 0));
 }
 
+/// Visible normal windows, including occluded windows. Excludes our UI/overlays.
+pub fn tile_windows() -> Vec<(i32, u32, NSRect)> {
+    let Some(list) = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }) else {
+        return vec![];
+    };
+    array(list.0)
+        .into_iter()
+        .filter_map(|info| {
+            let pid = number(get(info, "kCGWindowOwnerPID"))? as i32;
+            if pid == std::process::id() as i32 || number(get(info, "kCGWindowLayer")) != Some(0) {
+                return None;
+            }
+            let id = number(get(info, "kCGWindowNumber"))? as u32;
+            let mut frame = NSRect::ZERO;
+            (unsafe {
+                CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+            } && valid(frame))
+            .then_some((pid, id, frame))
+        })
+        .collect()
+}
+
+/// Compositor identities include offscreen/minimized windows. Avoid synchronous
+/// AX calls into background apps just to discover that their windows still exist.
+pub fn all_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(16, 0) })?;
+    Some(
+        array(list.0)
+            .into_iter()
+            .filter_map(|info| {
+                Some((
+                    number(get(info, "kCGWindowOwnerPID"))? as i32,
+                    number(get(info, "kCGWindowNumber"))? as u32,
+                ))
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_event;

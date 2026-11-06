@@ -90,3 +90,66 @@ La selección vuelve a consultar la pantalla, el ID y la posición real del dest
 Solo durante una petición hay un temporizador de 50 ms, registrado en los modos comunes del run loop. Cada salto debe confirmar su ID real antes del siguiente: dos segundos de plazo por salto y ocho para la operación completa, sin bloquear el hilo principal. Se concede un margen de 180 ms al asentarse cada salto. Un clic nuevo sustituye el destino pendiente, conservando el salto que ya está en curso. Un cambio inesperado de escritorio cancela la petición. La operación no modifica preferencias, atajos ni propiedades de SkyLight y no desactiva SIP. El borde y el foco automático se suspenden durante el cambio. Al terminar se libera el estado pendiente; no queda sondeo de escritorios en reposo.
 
 Las selecciones se entregan mediante un temporizador de una sola ejecución en los modos comunes del run loop. Si una llamada AX reentra mientras App está prestada, la entrega se reintenta en lugar de perder el clic.
+
+
+## Gestor de mosaico
+
+`tiling.rs` contiene el árbol binario y las plantillas puras, así como la clasificación normalizada del punto de destino (cuatro bordes y centro). `tile_manager.rs` adapta ese modelo a AX y SkyLight. `tile_hotkey.rs` gestiona registro y liberación de la combinación global con Carbon. No añade dependencias ni toca los observadores del borde.
+
+La pertenencia se valida con `SLSCopySpacesForWindows`, sin inferirla de coordenadas ni del escritorio enfocado. Solo se aceptan ventanas con un único Space conocido. Cada display visible aporta su Space no fullscreen y `NSScreen.visibleFrame`, convertido a coordenadas globales AX. Si los símbolos privados no están disponibles, no se mueven ventanas.
+
+Con el modo activado y permiso AX hay un temporizador adaptativo de 1/60 s durante arrastres de tiles y animaciones, y de 80 ms en reposo. La enumeración de ventanas se limita a una vez cada 500 ms fuera de cambios explícitos; las escrituras de geometría se hacen ante cambios del modelo/área o desviaciones respecto a la geometría real. Durante un movimiento no hay redistribución; durante un redimensionado solo se ajustan las vecinas. Se exige movimiento real de ventana antes de proponer un destino, evitando confundir selección de texto con arrastre. La previsualización es un panel sin foco ni captura de clics. Suspensión y bloqueo cancelan el arrastre; el cambio de Space lo conserva si la pantalla de origen sigue visible; desactivar elimina temporizador y atajo. Las aplicaciones que limitan tamaños no provocan reintentos permanentes.
+
+Preferencias: `tile.enabled`, `tile.off.<SpaceID>`, `tile.layout.<SpaceID>`, `tile.simple`, `tile.mods`, `tile.key`. Los IDs de ventana y objetos AX son efímeros y nunca se guardan como perfiles de pantalla. La futura persistencia completa deberá resolver monitores por UUID y ventanas por identidad de aplicación/documento antes de reconstruir el árbol.
+
+
+### Proporciones, transiciones y reglas por aplicación
+
+Cada nodo de división mantiene su proporción. Las cuatro plantillas producen árboles de divisiones, con filas/columnas compensadas por los gaps para conservar la simetría. Un gesto conserva una copia inicial del árbol y su área; cada muestra modifica los bordes compartidos respecto a esa copia, sin acumular error. La búsqueda recorre la rama de la ventana y ajusta el nodo cuya frontera coincide con el borde original. Los mínimos de cada subárbol limitan el ajuste. No se escribe la geometría de la ventana arrastrada hasta terminar el gesto.
+
+Las transiciones guardan origen, destino y tiempo monotónico; interpolación quintic smootherstep de 120 ms. El caché `applied` guarda destinos, no fotogramas intermedios. Un gesto cancela las transiciones e invalida el reparto para evitar dejar ventanas a mitad de camino. Se cancelan también al cambiar de Space, suspender o perder autorización. Antes de escribir una transición se vuelve a comprobar la pertenencia al escritorio visible.
+
+`tile_rules.rs` persiste `tile.floatingApps` como diccionario bundle ID → nombre visible en NSUserDefaults. El selector nativo NSOpenPanel obtiene los bundles sin lanzarlos. La regla solo se consulta al incorporar una ventana al gestor, por lo que una elección manual de tile no se revierte en el siguiente sondeo. Las pruebas de persistencia utilizan una suite separada, sin modificar las preferencias del usuario.
+
+
+### Correcciones de flotantes, cobertura y coste de animación
+
+El conjunto `floating` solo cambia por atajo, regla inicial o destrucción/reutilización de la identidad de ventana. Las flotantes quedan fuera de la captura de arrastre y `place_drag` vuelve a comprobarlo antes de modificar el árbol; no existe reinserción por ratón. Tampoco se restauran al desactivar el mosaico.
+
+Cancelar una transición invalida su destino pendiente. La reconciliación compara WindowServer con los frames esperados, incluso si el modelo no ha cambiado. Los tamaños impuestos por una app se registran junto con destino y geometría observada; solo vuelven a intentarse si cambia alguno de ellos o hay una invalidación explícita. La escritura final sigue tamaño → posición → tamaño, pues expandir en la posición anterior puede quedar limitado por el borde del monitor. El redimensionado final también compara geometría real en lugar del caché de solicitudes.
+
+Las muestras usan un único instante monotónico por fotograma. La curva quintic tiene velocidad y aceleración cero en ambos extremos. Los pasos intermedios solo envían tamaño/posición si cambia ese atributo; la colocación completa y verificación AX se reservan para el final. La caché de pantallas caduca a los 500 ms y se invalida con las notificaciones de Space/pantalla; no se vuelve a enumerar NSScreen cada fotograma. El temporizador cambia de frecuencia solo al entrar/salir de movimiento y se elimina sin permiso AX. No se prometen tiempos de GPU ni cifras de consumo sin medición en una sesión autorizada.
+
+
+### Rejilla y snapshot de tamaños
+
+`Desktop.grid` cuantiza las fronteras de los árboles en coordenadas globales del área útil, compensando medio gap a cada lado. Se encaja cada frontera dentro de los mínimos de sus dos subárboles. Los campos persistentes `tile.grid.enabled`, `tile.grid.columns` y `tile.grid.rows` controlan esta función. El redimensionado parte de la geometría del modelo; para bordes exteriores traslada el delta a la frontera compartida opuesta. El hit test prioriza el handle de la ventana enfocada para no confundirlo con una vecina.
+
+Las plantillas geométricas conservan su árbol ajustado durante movimientos: remapean las hojas según la nueva asignación de ventanas y actualizan la firma de orden sin borrar proporciones. Dwindle conserva sus proporciones al intercambiar y sigue permitiendo cambios de topología en inserciones laterales.
+
+`tile.saved.<SpaceID>` guarda un snapshot textual versionado de plantilla, número de tiles, rejilla y árbol con proporciones. Las hojas usan índices de slot, nunca IDs de ventanas. El lector valida versión, profundidad, proporciones finitas, rejilla, número e identidad única de slots y ausencia de tokens sobrantes antes de cambiar el estado. La restauración requiere el mismo número de tiles y conserva las ventanas flotantes fuera del snapshot.
+
+
+### Cambios de composición y de Space
+
+Eliminar una ventana poda la hoja tanto del árbol Dwindle como del árbol personalizado de las otras plantillas, actualizando su firma de orden. Se colapsa solo su padre; las demás proporciones se mantienen. Insertar otra ventana en una distribución personalizada divide el destino dentro del árbol existente.
+
+NSWorkspaceActiveSpaceDidChange tiene un callback separado de activación de aplicaciones: cancela la transición anterior e inicia una reconciliación de 100 ms durante un máximo de 600 ms. No hereda la pausa de 400 ms del foco bajo cursor. La entrada al destino se aplica sin interpolación adicional. Las identidades que siguen vivas pero aún no son visibles durante esa transición se retienen en el modelo sin escribir su geometría.
+
+La eliminación de objetos AX ya no consulta AXRole de cada ventana oculta; una lista global de WindowServer identifica cierres y conserva las ventanas minimizadas/fuera del Space activo. Un traslado observado elimina inmediatamente la hoja del árbol de origen y descarta destinos/transiciones anteriores. Las consultas fallidas de la lista global no borran estado.
+
+
+### Inserción y recuperación de Espiral
+
+La inserción en un árbol personalizado de Espiral usa el último slot del orden, no el foco. El siguiente giro se deriva del eje y lado de la última división existente; no se infiere de la relación de aspecto ni de una profundidad que cambia al cerrar nodos. Las proporciones de los demás nodos se conservan.
+
+`fit` mantiene la topología y limita ratios con los mínimos de subárbol, sin cambiar a cuadrícula. Si esa topología no cabe, el adaptador informa al usuario. La selección explícita de plantilla llama a `reset_template`, incluido seleccionar la plantilla ya activa, para permitir recuperar su estructura canónica.
+
+
+### Intención espacial y varios monitores
+
+El destino es `DropIntent::Screen(lado)` o `Window(id, zona)`. Los bordes de pantalla tienen prioridad, con una banda de 8 % del eje menor limitada a 28–80 pt; el resto usa zonas normalizadas dentro del tile. `proposed_drop` genera una copia completa del modelo que comparten preview y commit. El borde global envuelve el árbol restante; un borde local divide solo su destino; el centro conserva geometría e intercambia identidades. Las propuestas demasiado pequeñas se rechazan. Una espera de 70 ms estabiliza cambios de destino; salir de una zona válida oculta el fantasma inmediatamente.
+
+Los árboles en memoria se indexan por `(DisplayID, SpaceID)`. Las áreas usan `visibleFrame`, convertido con la altura del monitor primario a coordenadas AX globales en puntos, incluyendo coordenadas negativas. La pertenencia se determina por mayor solapamiento dentro del Space nativo, evitando mezclar monitores que comparten Space. El identificador SkyLight `Main` se expande a las pantallas conectadas. Los perfiles geométricos usan `tile.saved.<SpaceID>.<DisplayID>` y leen también la clave histórica por Space; aún no son perfiles portables por UUID.
+
+El gesto distingue el redimensionado iniciado en un borde del cambio de tamaño nativo al cruzar a otra pantalla. Al soltar entre monitores, una entrega pendiente de hasta 700 ms espera la pertenencia nativa antes de modificar origen y destino. Durante esa espera no se recoloca de vuelta al origen. Suspender, desactivar o comenzar otro gesto elimina la entrega. La animación sigue usando el compositor nativo y el preview es un único panel sin captura de entrada.

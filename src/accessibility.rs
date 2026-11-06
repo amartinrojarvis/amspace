@@ -297,3 +297,145 @@ impl Drop for Observer {
 extern "C" fn changed(_: Cf, _: Cf, _: Cf, _: *mut c_void) {
     crate::ui::queue_window_update();
 }
+
+/// Only standard, movable/resizable windows participate. Dialogs stay floating.
+pub fn tileable(window: Cf) -> bool {
+    unsafe extern "C" {
+        fn AXUIElementIsAttributeSettable(element: Cf, name: Cf, result: *mut bool) -> i32;
+    }
+    if !attr(window, "AXSubrole").is_some_and(|v| equals_text(v.0, "AXStandardWindow"))
+        || geometry(window).is_none()
+    {
+        return false;
+    }
+    ["AXPosition", "AXSize"].iter().all(|name| {
+        let mut settable = false;
+        unsafe {
+            AXUIElementIsAttributeSettable(window, cf(&NSString::from_str(name)), &mut settable)
+                == 0
+                && settable
+        }
+    })
+}
+pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
+    unsafe extern "C" {
+        fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
+    }
+    if !frame.origin.x.is_finite()
+        || !frame.origin.y.is_finite()
+        || !frame.size.width.is_finite()
+        || !frame.size.height.is_finite()
+        || frame.size.width < 80.
+        || frame.size.height < 60.
+    {
+        return false;
+    }
+    let Some(p) = Owned::new(unsafe { AXValueCreate(1, (&frame.origin as *const NSPoint).cast()) })
+    else {
+        return false;
+    };
+    let Some(s) = Owned::new(unsafe { AXValueCreate(2, (&frame.size as *const NSSize).cast()) })
+    else {
+        return false;
+    };
+    unsafe {
+        // Size first permits movement from a larger display to a smaller one.
+        apply_frame(
+            || AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXSize")), s.0) == 0,
+            || {
+                AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXPosition")), p.0)
+                    == 0
+            },
+        )
+    }
+}
+
+/// Intermediate animation frames only write attributes that changed. The final
+/// frame uses set_frame's full transaction and is verified separately.
+pub fn set_frame_step(
+    window: Cf,
+    previous: objc2_foundation::NSRect,
+    next: objc2_foundation::NSRect,
+) -> bool {
+    unsafe extern "C" {
+        fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
+    }
+    let (size, position) = frame_changes(previous, next);
+    let mut ok = true;
+    if size {
+        let Some(value) =
+            Owned::new(unsafe { AXValueCreate(2, (&next.size as *const NSSize).cast()) })
+        else {
+            return false;
+        };
+        ok &= unsafe {
+            AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXSize")), value.0) == 0
+        };
+    }
+    if position {
+        let Some(value) =
+            Owned::new(unsafe { AXValueCreate(1, (&next.origin as *const NSPoint).cast()) })
+        else {
+            return false;
+        };
+        ok &= unsafe {
+            AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXPosition")), value.0)
+                == 0
+        };
+    }
+    ok
+}
+fn frame_changes(a: objc2_foundation::NSRect, b: objc2_foundation::NSRect) -> (bool, bool) {
+    (
+        (a.size.width - b.size.width).abs() >= 0.5 || (a.size.height - b.size.height).abs() >= 0.5,
+        (a.origin.x - b.origin.x).abs() >= 0.5 || (a.origin.y - b.origin.y).abs() >= 0.5,
+    )
+}
+
+// An app may clamp the first expansion against the old screen edge. Apply the
+// size again at the final position so an expanded sibling fills its entire tile.
+fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> bool) -> bool {
+    size();
+    let moved = position();
+    let sized = size();
+    moved && sized
+}
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+    #[test]
+    fn animation_writes_only_changed_attributes() {
+        let a = crate::native::rect(0., 0., 600., 400.);
+        assert_eq!(frame_changes(a, a), (false, false));
+        assert_eq!(
+            frame_changes(a, crate::native::rect(20., 0., 600., 400.)),
+            (false, true)
+        );
+        assert_eq!(
+            frame_changes(a, crate::native::rect(0., 0., 700., 400.)),
+            (true, false)
+        );
+        assert_eq!(
+            frame_changes(a, crate::native::rect(0.1, 0.1, 600.1, 400.1)),
+            (false, false)
+        );
+    }
+    #[test]
+    fn expansion_is_retried_after_moving_away_from_screen_edge() {
+        use std::cell::Cell;
+        let x = Cell::new(700.0_f64);
+        let width = Cell::new(500.0_f64);
+        assert!(apply_frame(
+            || {
+                width.set(1200.0_f64.min(1200. - x.get()));
+                true
+            },
+            || {
+                x.set(0.);
+                true
+            }
+        ));
+        assert_eq!(x.get() + width.get(), 1200.);
+        assert_eq!(width.get(), 1200.);
+    }
+}

@@ -1,3 +1,69 @@
+# Preparación de 0.5.0
+
+- Versión 0.5.0, build 8. Incluye el tiling y las correcciones desarrolladas después de 0.4.1.
+- Comprobaciones de publicación: 43 tests correctos, fmt, Clippy y plist sin errores; compilación universal y firma estricta del bundle verificadas. ZIP y feed firmados con Sparkle y verificados antes de publicar.
+- El usuario confirma que el comportamiento de la colocación inteligente parece correcto y autoriza publicar. Se mantienen las limitaciones de hardware indicadas en las comprobaciones siguientes.
+
+# Colocación inteligente y monitores (2026-11-06)
+
+- 43 pruebas correctas; fmt, Clippy y plist sin errores. Nuevas pruebas cubren cuatro plantillas, las cuatro direcciones globales, cambio de eje, rejilla 120×6 y 12×6, persistencia tras reconciliar, intención local/central, transferencia entre árboles, destino vacío y cancelación de entrega pendiente.
+- Coordenadas probadas con monitores a izquierda, arriba y debajo, áreas negativas y orientación vertical. Pertenencia por solapamiento comprobada con Space compartido y separado. Son pruebas del modelo; no equivalen a hardware real.
+- Compilación universal y firma estricta verificadas. Instalada y abierta `/Applications/AMSpace.app`; respaldo anterior en `.cache/AMSpace-before-smart-drag.zip`.
+- UI comprobada: Espiral, tiling y colocación inteligente siguen activados, y aparece la nueva ayuda de bordes/centro. La aplicación gráfica indica que requiere Accesibilidad; el proceso de diagnóstico lanzado desde terminal indica `true`, por lo que ese diagnóstico no se usa como prueba del permiso del proceso gráfico.
+- Se abrió una ventana de Finder para intentar una comprobación interactiva y se cerró al terminar. El arrastre no se considera validado mientras la aplicación gráfica no tenga el permiso vigente. Solo hay un monitor conectado: pendiente la comprobación física de pantallas mixtas, distintas escalas, conexión/desconexión y entrega nativa entre monitores.
+
+# Investigación de cierre y deriva de Espiral
+
+- Al comenzar, AMSpace no estaba en ejecución. No se encontró un informe de crash de AMSpace en DiagnosticReports. El registro unificado del último proceso muestra `terminate:`, aprobación y finalización normal a las 22:40:04; esto no demuestra la causa de cualquier incidencia anterior.
+- Relanzado con stderr en `.cache/amspace-runtime.log`; no apareció un error durante la comprobación inicial.
+- Corregida la inserción en Espiral personalizada: antes dividía la ventana enfocada por su relación de aspecto y podía convertir tres ventanas en columnas. Ahora usa el slot final y continúa el giro según la división superviviente, incluyendo el cierre de la primera ventana.
+- Eliminada la sustitución silenciosa por cuadrícula. Ajustar mínimos conserva la topología; seleccionar explícitamente una plantilla la restablece.
+- 37 pruebas correctas, fmt y Clippy sin warnings. Build universal y firma estricta verificados; versión instalada y relanzada en Aplicaciones. El recorrido de interacción real sigue pendiente si macOS exige renovar Accesibilidad por la firma nueva.
+
+# Conservación al cerrar ventanas y traslado entre Spaces
+
+- Reproducido antes de corregir: una columna en Espiral ajustada a 928,33 pt volvía a 795 pt tras cerrar una de las dos ventanas apiladas a su derecha. La prueba falló con la versión anterior y pasa tras conservar el árbol ajustado y colapsar solo el nodo eliminado.
+- 35 pruebas correctas, fmt y Clippy sin warnings. Incluyen cierre de cualquiera de las dos hermanas en Dwindle/Espiral/Principal con rejilla activa, nueva inserción después del cierre, y cancelación de animación con ráfaga de reconciliación limitada al cambio de Space.
+- Quitada la espera de 400 ms del foco bajo cursor en el callback de tiling. Las activaciones de aplicaciones ya no cancelan las transiciones; solo lo hace el cambio real de Space.
+- La limpieza usa una consulta global de IDs a WindowServer, no consultas AX síncronas a cada ventana fuera de pantalla. La llegada al escritorio aplica el destino directamente, sin otra animación. No se ha medido la latencia real de esta ruta.
+- Bundle universal y firma estricta verificados; instalado y abierto desde Aplicaciones, con respaldo en `.cache/AMSpace-before-preserve-width.zip`. La UI muestra Accesibilidad pendiente para esta firma: falta la prueba física del traslado tras renovar el permiso.
+
+# Rejilla virtual y regresiones de redimensionado (desarrollo)
+
+- 32 pruebas correctas, fmt y Clippy sin warnings. Compilación universal y firma verificada; instalada en Aplicaciones con respaldo previo en `.cache/AMSpace-before-virtual-grid.zip`.
+- Reproducción en el modelo de la disposición descrita por el usuario: una ventana a la izquierda, dos a la derecha. La inferior derecha responde tanto desde bordes compartidos como desde esquina exterior, y las restantes recuperan el espacio.
+- Reordenación/intercambio desde los cinco destinos conserva exactamente las celdas y proporciones de una cuadrícula redimensionada, incluso tras reconciliación.
+- Rejilla 120×6: divisiones alineadas, cobertura sin huecos, guardado/restauración con otros IDs de ventana, rechazo de datos corruptos y números de ventanas incompatibles.
+- UI nativa comprobada mediante AX y captura. Introducir 1 columna muestra error; restaurados 120×6 y activada la casilla conforme a la petición. Selector y botones legibles.
+- La compilación instalada sigue indicando que requiere Accesibilidad. No se ha ejecutado un arrastre real de Finder ni se presenta la simulación del modelo como validación de Finder. Pendiente esa comprobación una vez renovado el permiso.
+
+# Corrección de flotantes, cobertura y animación eficiente (desarrollo)
+
+- 28 pruebas correctas, fmt y Clippy sin warnings. Build universal y firma estricta verificados; nueva copia instalada y abierta desde Aplicaciones. La UI confirma que esta firma aún requiere Accesibilidad, por lo que no se ha validado físicamente el movimiento ni medido FPS/consumo.
+
+- Regresión de flotante: moverla hacia cualquiera de los bordes o el centro no puede reinsertarla; solo la transición explícita del atajo la devuelve al mosaico.
+- Regresión de animación cancelada: invalida el destino pendiente y se repara la diferencia entre geometría real y solicitada. Los límites estables impuestos por aplicaciones no producen un bucle de ajustes.
+- Simulación de expansión limitada por la posición anterior: tamaño → posición → tamaño recupera todo el ancho disponible.
+- Cobertura espacial de las cuatro plantillas tras redimensionar y eliminar 11 de 12 ventanas; no quedan huecos mayores que los gaps y la última ventana ocupa toda el área. Árboles demasiado profundos se compactan a cuadrícula.
+- Curva quintic: extremos, aceleración/deceleración simétrica y monotonía. Las escrituras intermedias omiten atributos sin cambios. El temporizador vuelve a 80 ms tras terminar/cancelar el movimiento; 1/60 s solo durante actividad.
+- No se ha medido FPS ni consumo de GPU; dependen del compositor y de las respuestas AX de las aplicaciones. La prueba del motor no sustituye esa medición.
+
+# Redimensionado, animaciones y reglas flotantes (desarrollo)
+
+- 20 pruebas correctas; fmt, Clippy sin warnings y plist válidos. Bundle universal Intel/Apple Silicon generado y firma estricta verificada; instalado en `/Applications/AMSpace.app`. Copia previa conservada en `.cache/AMSpace-before-resize.zip`.
+- Nuevas pruebas: ajuste de fronteras en las cuatro plantillas sin solapamiento, límites de subárbol, bordes izquierdo/superior, conservación de proporciones tras reconciliación, simetría de cuadrícula con gaps, ausencia de deriva tras 100 muestras y extremos/monotonía de interpolación.
+- Persistencia de reglas comprobada con NSUserDefaults en suite aislada: nombres iguales con IDs distintos, actualización sin duplicados y eliminación.
+- UI real comprobada: Tiling → Apps flotantes → selector nativo; añadido Ajedrez (`com.apple.Chess`), comprobada su fila y eliminado después. Captura del listado inspeccionada, sin recortes.
+- La nueva firma ad hoc vuelve a mostrar Accesibilidad no concedida. No se ha dado ese permiso automáticamente. Pendiente de prueba física: fluidez de las transiciones, redimensionado nativo con aplicaciones de distintos tamaños mínimos y apertura de ventanas de una aplicación marcada flotante. Las pruebas puras no sustituyen esa validación.
+
+# Validación de tiling (desarrollo, sin publicar)
+
+- `scripts/check.sh`: 15 pruebas correctas, fmt, Clippy sin warnings y plist válido. Build universal Apple Silicon/Intel y firma estricta del bundle correctos.
+- Pruebas puras de las cuatro plantillas con 1–8 ventanas, áreas negativas de monitor, cobertura y ausencia de solapamiento; inserción lateral, intercambio, flotantes, eliminación completa, reutilización del árbol, división de ventana enfocada e independencia de escritorios.
+- Diagnóstico nativo en esta máquina: permiso AX en el ejecutable de desarrollo, Space activo 1 y ventana visible asignada inequívocamente a Space 1. El bundle ad hoc de `dist` no hereda ese permiso.
+- Pestaña Tiling abierta e inspeccionada mediante AX y captura: cuatro pestañas, ambos interruptores de ámbito, plantilla, modo inteligente y selectores de atajo legibles y sin recortes. Se mantuvo desactivado el gestor y no se cambiaron permisos. Después se volvió a abrir la instalación previa de Aplicaciones.
+- Pendiente de validación interactiva con Accesibilidad concedida al bundle: arrastre real y previsualización, atajo flotante/retorno y conflictos, restauración de posiciones, convivencia con borde, minimización/cierre/fullscreen, dos pantallas físicas, desconexión de monitor y Mission Control. No se presenta la inspección de UI como prueba de esos comportamientos.
+
 # Validación de 0.4.1
 
 - El usuario reprodujo que la barra cambiaba al 2 y no regresaba al 1. El registro mostró que las selecciones posteriores también llegaban con ID 5 (escritorio 2); no aparecía la selección de ID 1.
