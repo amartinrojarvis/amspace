@@ -1,0 +1,24 @@
+name: macOS
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: ./scripts/check.sh
+      - run: ./scripts/bundle.sh --universal
+      - name: Package application
+        run: ditto -c -k --keepParent dist/AMSpace.app dist/AMSpace-universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMSpace-universal
+          path: dist/AMSpace-universal.zip

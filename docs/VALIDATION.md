@@ -1,0 +1,55 @@
+# Validación de 0.1.0
+
+Fecha: 2026-11-06. Equipo local: Apple Silicon, macOS 27.2 (26B123). Toolchain: Rust 1.99.1. Objetivo mínimo del paquete: macOS 13.
+
+## Comprobaciones realizadas
+
+- `cargo fmt --all -- --check`: correcto.
+- `cargo clippy --locked --all-targets -- -D warnings`: correcto.
+- `cargo test --locked`: cuatro pruebas correctas. Cubren presentación/compactación, preferencias no finitas, creación de ventanas sin un borde previo y enrutamiento diferenciado entre geometría y cambio de ventana.
+- Build release para `aarch64-apple-darwin` y `x86_64-apple-darwin`: correcto. Binario universal generado con `lipo`.
+- `plutil -lint` y verificación estricta de la firma ad hoc: correctos.
+- Ejecución de la app nativa, apertura de ajustes, aspecto oscuro, etiquetas accesibles, paletas, color personalizado y grosor: inspeccionados. Persistencia observada al relanzar.
+- Indicador real: detectados dos escritorios y observados `1 ·` y `· 2`.
+- Inicio de sesión: probado registro y desregistro; la UI consulta el estado real de `SMAppService`. No se cerró la sesión del usuario para probar el arranque completo.
+- Accesibilidad: comprobado el comportamiento sin permiso y con permiso. Detectada y resuelta una entrada TCC que apuntaba a la firma de una compilación anterior, eliminándola y añadiendo de nuevo la app instalada.
+- Borde corregido: `swift scripts/verify-border.swift` verificó igualdad exacta de posición y tamaño entre el panel y la ventana delantera de Ghostty, con dos ventanas de ese proceso abiertas. El radio consultado en esa ventana fue 16 pt. La comprobación es geométrica; no mide visualmente cada fotograma durante un arrastre.
+
+## Correcciones incorporadas tras la prueba de uso
+
+1. Eliminado el margen exterior: el borde se dibuja dentro del rectángulo real de la ventana.
+2. Sustituido el radio fijo por metadatos de la ventana y curva continua.
+3. Identificación por ID y orden de WindowServer, evitando depender de un `AXFocusedWindow` obsoleto entre ventanas del mismo proceso.
+4. Movimiento directo del panel desde los eventos del compositor; eliminada la demora artificial de 16 ms y el trabajo AX de la ruta de movimiento.
+5. Suscripción a creación/cierre de ventanas incluso sin objetivo previo; reconciliación única de apertura/activación para ventanas que aparecen después de activarse la app.
+6. El panel se ordena sobre su ventana, en lugar de flotar sobre todas las aplicaciones.
+
+## Alcance pendiente de validación física
+
+- Intel en hardware real y versiones anteriores de macOS.
+- Varias pantallas físicas, escalas mixtas, Stage Manager y todos los modos de Mission Control.
+- Arranque completo después de cerrar y volver a iniciar sesión.
+- Medición con vídeo de alta velocidad para cuantificar desfase por fotograma durante redimensionados extremos. El overlay es externo, no parte del proceso de la otra aplicación.
+- Compatibilidad de foco al pasar el cursor con todas las apps de terceros, diálogos personalizados y aplicaciones que incumplen las convenciones AX.
+
+No se considera que compilar o aprobar pruebas unitarias sustituya estas pruebas físicas.
+
+## Reproducir la comprobación del borde
+
+Activa el borde, concede Accesibilidad y enfoca una ventana de otra aplicación:
+
+```sh
+swift scripts/verify-border.swift
+```
+
+El script lee metadatos de WindowServer, sin capturar la pantalla, títulos ni contenido. Compara el rectángulo de la ventana normal delantera de la app activa con los paneles visibles de AMSpace. Devuelve 0 si coinciden, 1 si no coinciden y 2 si falta una condición previa. No cambia el foco ni mueve ventanas.
+
+Prueba manual recomendada: abre dos ventanas de Ghostty, alterna con clic y `⌘\``, muévelas, cambia tamaño desde los cuatro bordes, crea una tercera, minimiza/cierra la activa y abre otra aplicación. Repite la comprobación anterior en cada estado asentado. Comprueba además que ⌥ y el arrastre suspenden el foco automático.
+
+## Medición de recursos
+
+```sh
+python3 scripts/benchmark.py <PID> --seconds 20
+```
+
+El script mide CPU acumulada con `ps` y RSS cada segundo. RSS incluye páginas compartidas de frameworks: no equivale a memoria exclusiva ni a la memoria total del compositor. Para obtener la huella física utiliza `sample <PID> 1 1` o Monitor de Actividad. Las mediciones dependen del tamaño de la ventana, Retina, opciones activadas y actividad del usuario.
