@@ -3,6 +3,11 @@
 - Versión 0.5.0, build 8. Incluye el tiling y las correcciones desarrolladas después de 0.4.1.
 - Comprobaciones de publicación: 43 tests correctos, fmt, Clippy y plist sin errores; compilación universal y firma estricta del bundle verificadas. ZIP y feed firmados con Sparkle y verificados antes de publicar.
 - El usuario confirma que el comportamiento de la colocación inteligente parece correcto y autoriza publicar. Se mantienen las limitaciones de hardware indicadas en las comprobaciones siguientes.
+- [CI de 0.5.0](https://github.com/amartinrojarvis/amspace/actions/runs/42301041838) completada correctamente sobre `64c13cf75045a8a68bee52f89664bc814179d08d`, incluyendo comprobaciones y empaquetado universal.
+- [Release v0.5.0](https://github.com/amartinrojarvis/amspace/releases/tag/v0.5.0) publicada con ZIP, feed firmado y SHA256SUMS. Descarga anónima del ZIP idéntica al artefacto local. Feed público idéntico al firmado, verificado después de publicar.
+- Actualización real mediante Buscar… desde la copia instalada 0.4.1: Sparkle detectó 0.5.0, verificó ambas firmas, instaló y reinició. La UI confirma Versión 0.5.0; el ejecutable instalado coincide con el publicado y pasa codesign estricto. Las 15 preferencias de usuario comparadas se conservaron (excluyendo claves internas de Sparkle/AppKit/WebKit).
+- La UI de la versión nueva indica que requiere renovar Accesibilidad. No se modificó ese permiso. Respaldo previo en `.cache/AMSpace-before-0.5.0.zip`.
+
 
 # Colocación inteligente y monitores (2026-11-06)
 
