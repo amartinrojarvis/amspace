@@ -3,6 +3,7 @@
 - El usuario reprodujo que la barra cambiaba al 2 y no regresaba al 1. El registro mostró que las selecciones posteriores también llegaban con ID 5 (escritorio 2); no aparecía la selección de ID 1.
 - Con el botón nativo, el evento reenviado indicaba x=24, el centro del grupo de 48 pt. La selección ahora usa NSEvent.mouseLocation y la convierte mediante la ventana y la vista del botón.
 - Diez pruebas correctas; fmt, Clippy y build universal sin errores. Firma estricta de la instalación verificada.
+- Apertura normal de la versión final: renovada la autorización existente y observado «Accesibilidad concedida» en los ajustes.
 - El usuario ejecutó físicamente 2 → 1 → 2 → 1 en la barra. El registro verificó x=39,16 → ID 5 → confirmado 5; x=10,95 → ID 1 → confirmado 1; x=33,75 → ID 5 → confirmado 5; x=13,63 → ID 1 → confirmado 1. La consulta independiente final indicó escritorio 1 activo. Esta prueba sí ejercita el botón de la barra.
 
 # Validación de 0.4.0
