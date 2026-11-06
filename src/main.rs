@@ -11,6 +11,7 @@ mod space_switch;
 mod spaces;
 mod tile_hotkey;
 mod tile_manager;
+mod tile_picker;
 mod tile_rules;
 mod tiling;
 mod ui;

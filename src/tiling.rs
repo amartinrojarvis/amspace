@@ -9,13 +9,45 @@ pub enum Layout {
     Spiral,
     Grid,
     Master,
+    ThreeBands,
+    FourBands,
 }
 impl Layout {
+    pub const ALL: [Self; 6] = [
+        Self::Dwindle,
+        Self::Spiral,
+        Self::Grid,
+        Self::Master,
+        Self::ThreeBands,
+        Self::FourBands,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Dwindle => "Dwindle",
+            Self::Spiral => "Espiral",
+            Self::Grid => "Cuadrícula",
+            Self::Master => "Principal",
+            Self::ThreeBands => "División en 3",
+            Self::FourBands => "División en 4",
+        }
+    }
+
+    pub fn screen_name(self, area: NSRect) -> &'static str {
+        match (self, area.size.width >= area.size.height) {
+            (Self::ThreeBands, true) => "3 columnas",
+            (Self::ThreeBands, false) => "3 filas",
+            (Self::FourBands, true) => "4 columnas",
+            (Self::FourBands, false) => "4 filas",
+            _ => self.name(),
+        }
+    }
     pub fn from_index(i: isize) -> Self {
         match i {
             1 => Self::Spiral,
             2 => Self::Grid,
             3 => Self::Master,
+            4 => Self::ThreeBands,
+            5 => Self::FourBands,
             _ => Self::Dwindle,
         }
     }
@@ -698,6 +730,40 @@ impl Desktop {
                     gap,
                 ),
             ),
+            Layout::ThreeBands | Layout::FourBands => {
+                let count = leaves.len().min(if self.layout == Layout::ThreeBands {
+                    3
+                } else {
+                    4
+                });
+                let vertical = area.size.width >= area.size.height;
+                let mut bands = Vec::with_capacity(count);
+                let mut start = 0;
+                for index in 0..count {
+                    let length = leaves.len() / count + usize::from(index < leaves.len() % count);
+                    bands.push(Self::equal_chain(
+                        &leaves[start..start + length],
+                        !vertical,
+                        if vertical {
+                            area.size.height
+                        } else {
+                            area.size.width
+                        },
+                        gap,
+                    ));
+                    start += length;
+                }
+                Self::equal_chain(
+                    &bands,
+                    vertical,
+                    if vertical {
+                        area.size.width
+                    } else {
+                        area.size.height
+                    },
+                    gap,
+                )
+            }
             Layout::Grid => {
                 let cols = (leaves.len() as f64).sqrt().ceil() as usize;
                 let rows: Vec<_> = leaves
@@ -791,7 +857,7 @@ impl Desktop {
         let Some(index) = tokens
             .next()
             .and_then(|s| s.parse::<isize>().ok())
-            .filter(|i| (0..=3).contains(i))
+            .filter(|i| (0..Layout::ALL.len() as isize).contains(i))
         else {
             return false;
         };
@@ -892,6 +958,52 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adaptive_three_and_four_bands_cover_and_round_trip() {
+        for (layout, count) in [(Layout::ThreeBands, 3), (Layout::FourBands, 4)] {
+            for area in [rect(0., 30., 1600., 900.), rect(-900., -400., 900., 1600.)] {
+                for n in [1, count, 8] {
+                    let mut d = Desktop::configured(layout, None);
+                    let ids: Vec<_> = (1..=n).collect();
+                    d.reconcile(&ids, area, 0.);
+                    let frames = d.frames(area, 0.);
+                    assert_eq!(frames.len(), n as usize);
+                    let mut bands: Vec<_> = frames
+                        .iter()
+                        .map(|(_, r)| {
+                            if area.size.width >= area.size.height {
+                                r.origin.x as i64
+                            } else {
+                                r.origin.y as i64
+                            }
+                        })
+                        .collect();
+                    bands.sort();
+                    bands.dedup();
+                    assert_eq!(bands.len(), n.min(count) as usize);
+                    let covered: f64 = frames
+                        .iter()
+                        .map(|(_, r)| r.size.width * r.size.height)
+                        .sum();
+                    assert!((covered - area.size.width * area.size.height).abs() < 0.01);
+                    assert_eq!(
+                        layout.screen_name(area),
+                        match (count, area.size.width >= area.size.height) {
+                            (3, true) => "3 columnas",
+                            (3, false) => "3 filas",
+                            (_, true) => "4 columnas",
+                            (_, false) => "4 filas",
+                        }
+                    );
+                    let saved = d.save_distribution(area).unwrap();
+                    let mut restored = Desktop::default();
+                    restored.reconcile(&ids, area, 10.);
+                    assert!(restored.restore_distribution(&saved));
+                    assert_eq!(restored.frames(area, 10.), d.frames(area, 10.));
+                }
+            }
+        }
+    }
     #[test]
     fn screen_drop_reorients_every_template_and_survives_reconciliation() {
         for layout in [

@@ -153,3 +153,17 @@ El destino es `DropIntent::Screen(lado)` o `Window(id, zona)`. Los bordes de pan
 Los árboles en memoria se indexan por `(DisplayID, SpaceID)`. Las áreas usan `visibleFrame`, convertido con la altura del monitor primario a coordenadas AX globales en puntos, incluyendo coordenadas negativas. La pertenencia se determina por mayor solapamiento dentro del Space nativo, evitando mezclar monitores que comparten Space. El identificador SkyLight `Main` se expande a las pantallas conectadas. Los perfiles geométricos usan `tile.saved.<SpaceID>.<DisplayID>` y leen también la clave histórica por Space; aún no son perfiles portables por UUID.
 
 El gesto distingue el redimensionado iniciado en un borde del cambio de tamaño nativo al cruzar a otra pantalla. Al soltar entre monitores, una entrega pendiente de hasta 700 ms espera la pertenencia nativa antes de modificar origen y destino. Durante esa espera no se recoloca de vuelta al origen. Suspender, desactivar o comenzar otro gesto elimina la entrega. La animación sigue usando el compositor nativo y el preview es un único panel sin captura de entrada.
+
+
+### Selector de plantillas y estabilidad al cruzar monitores
+
+`tile_picker.rs` presenta un NSPanel no activante con seis botones accesibles, miniaturas de orientación real y un único contenedor de previsualización. NSTrackingArea actualiza el hover por eventos, sin sondeo adicional. Teclado: números, flechas, Tab, Intro y Escape. El gestor de foco y la distribución quedan suspendidos mientras el selector está abierto. Cambiar de Space, desconectar/rotar pantalla, perder foco o suspender cancela. Solo confirmar modifica el modelo y valida de nuevo monitor, Space, área y conjunto de ventanas.
+
+Los índices históricos 0–3 de Layout se conservan. Los índices 4 y 5 añaden tres/cuatro divisiones principales: columnas en horizontal, filas en vertical. Los excedentes se distribuyen en el eje secundario y las ventanas insuficientes llenan toda el área. `tile.layout.<SpaceID>.<DisplayID>` tiene prioridad sobre la preferencia histórica por Space. Carbon distingue ambos atajos por EventHotKeyID; un manejador devuelve eventNotHandled si el evento corresponde al otro.
+
+El arrastre fija su intención al primer movimiento/redimensionado observado. Un cambio de tamaño automático al entrar en un monitor vertical no modifica el árbol del origen. El monitor del cursor determina el destino, evitando la ambigüedad de las bandas de borde compartidas. Sin zona concreta al soltar en otra pantalla, se usa la plantilla del destino.
+
+Después de confirmar una transferencia, la propiedad del monitor se retiene durante un plazo máximo de 1,2 s para tolerar frames antiguos de WindowServer; no se interpola desde una pantalla a otra. Un Space nativo distinto, un nuevo gesto sobre esa ventana o la desaparición del monitor invalida esa retención. Los tamaños mínimos impuestos por aplicaciones se registran también en las colocaciones directas para no volver a clasificar una ventana por el área que sobresale del monitor vertical.
+
+
+Las escrituras finales AX se verifican después de un margen de 120 ms, mediante WindowServer. Si la geometría no ha llegado, se permite un único reintento y otro margen de 120 ms antes de registrar un límite estable. Durante la verificación no se inician animaciones repetidas hacia el mismo destino. Un nuevo gesto, una transferencia o la cancelación elimina escrituras diferidas antiguas.

@@ -18,7 +18,60 @@ use std::{
     time::{Duration, Instant},
 };
 
-type Workspace = (u32, u64); // Display identity + native Space identity.
+pub type Workspace = (u32, u64); // Display identity + native Space identity.
+
+#[derive(Clone)]
+pub struct PickerContext {
+    pub workspace: Workspace,
+    pub area: NSRect,
+    pub desktop: Desktop,
+}
+impl PickerContext {
+    pub fn proposal(&self, layout: Layout) -> Option<Desktop> {
+        let mut desktop = self.desktop.clone();
+        desktop.reset_template(layout, self.area);
+        let frames = desktop.frames(self.area, 10.);
+        frames
+            .iter()
+            .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.)
+            .then_some(desktop)
+    }
+}
+pub fn pref_or(defaults: Obj, key: &str, fallback: isize) -> isize {
+    let exists: Obj = unsafe { msg_send![defaults,objectForKey:&*NSString::from_str(key)] };
+    if exists.is_null() {
+        fallback
+    } else {
+        pref(defaults, key)
+    }
+}
+fn layout_key(space: Workspace) -> String {
+    format!("tile.layout.{}.{}", space.1, space.0)
+}
+fn layout_pref(defaults: Obj, space: Workspace) -> Layout {
+    Layout::from_index(pref_or(
+        defaults,
+        &layout_key(space),
+        pref(defaults, &format!("tile.layout.{}", space.1)),
+    ))
+}
+fn pointer_display() -> Option<u32> {
+    unsafe {
+        let p: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let screens: Obj = msg_send![class!(NSScreen), screens];
+        let count: usize = msg_send![screens, count];
+        for i in 0..count {
+            let screen: Obj = msg_send![screens,objectAtIndex:i];
+            let frame: NSRect = msg_send![screen, frame];
+            if contains(frame, p) {
+                let desc: Obj = msg_send![screen, deviceDescription];
+                let id: Obj = msg_send![desc,objectForKey:&*NSString::from_str("NSScreenNumber")];
+                return Some(msg_send![id, unsignedIntValue]);
+            }
+        }
+        None
+    }
+}
 
 pub fn pref(defaults: Obj, key: &str) -> isize {
     unsafe { msg_send![defaults,integerForKey:&*NSString::from_str(key)] }
@@ -107,8 +160,98 @@ struct PendingDrop {
     id: u32,
     source: Workspace,
     destination: Workspace,
-    intent: DropIntent,
+    intent: Option<DropIntent>,
     expires: Instant,
+}
+#[derive(Clone, Copy)]
+struct MonitorHandoff {
+    destination: Workspace,
+    expires: Instant,
+}
+fn arrival_proposal(
+    desktop: &Desktop,
+    id: u32,
+    intent: Option<DropIntent>,
+    area: NSRect,
+) -> Option<Desktop> {
+    if let Some(intent) = intent {
+        return desktop.proposed_drop(id, intent, area, 10.);
+    }
+    let mut proposed = desktop.clone();
+    let mut ids = proposed.order.clone();
+    if !ids.contains(&id) {
+        ids.push(id);
+    }
+    proposed.reconcile_at(&ids, area, 10., None);
+    proposed.fit(area, 10.);
+    proposed
+        .frames(area, 10.)
+        .iter()
+        .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.)
+        .then_some(proposed)
+}
+impl Drag {
+    fn observe(&mut self, frame: NSRect, pointer_workspace: Option<Workspace>) {
+        // Once a move is underway, a native size change on another screen is
+        // still a move. Never reinterpret it as resizing the source layout.
+        if self.moved || self.resized {
+            return;
+        }
+        let size_changed = (frame.size.width - self.start.size.width).abs() > 3.
+            || (frame.size.height - self.start.size.height).abs() > 3.;
+        let moved = (frame.origin.x - self.start.origin.x).abs() > 5.
+            || (frame.origin.y - self.start.origin.y).abs() > 5.;
+        let anchored_x = (frame.origin.x - self.start.origin.x).abs() < 3.
+            || (frame.origin.x + frame.size.width - self.start.origin.x - self.start.size.width)
+                .abs()
+                < 3.;
+        let anchored_y = (frame.origin.y - self.start.origin.y).abs() < 3.
+            || (frame.origin.y + frame.size.height - self.start.origin.y - self.start.size.height)
+                .abs()
+                < 3.;
+        self.resized = self.resize_gesture
+            && pointer_workspace == Some(self.space)
+            && size_changed
+            && anchored_x
+            && anchored_y;
+        self.moved = !self.resized && moved;
+    }
+}
+#[derive(Clone, Copy)]
+struct Verification {
+    target: NSRect,
+    due: Instant,
+    retried: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerificationStep {
+    Wait,
+    Complete,
+    Retry,
+    Limited,
+}
+impl Verification {
+    fn new(target: NSRect) -> Self {
+        Self {
+            target,
+            due: Instant::now() + Duration::from_millis(120),
+            retried: false,
+        }
+    }
+    fn step(&mut self, actual: NSRect, now: Instant) -> VerificationStep {
+        if near(actual, self.target) {
+            return VerificationStep::Complete;
+        }
+        if now < self.due {
+            return VerificationStep::Wait;
+        }
+        if self.retried {
+            return VerificationStep::Limited;
+        }
+        self.retried = true;
+        self.due = now + Duration::from_millis(120);
+        VerificationStep::Retry
+    }
 }
 struct Transition {
     from: NSRect,
@@ -123,9 +266,11 @@ pub struct Manager {
     floating: HashSet<u32>,
     applied: HashMap<u32, NSRect>,
     transitions: HashMap<u32, Transition>,
+    verifications: HashMap<u32, Verification>,
     constrained: HashMap<u32, (NSRect, NSRect)>,
     drag: Option<Drag>,
     pending_drop: Option<PendingDrop>,
+    handoffs: HashMap<u32, MonitorHandoff>,
     pressed: bool,
     preview: Option<Retained<AnyObject>>,
     last_scan: Option<Instant>,
@@ -154,13 +299,18 @@ impl Manager {
     }
     pub fn cancel_drag(&mut self) {
         // Cached destinations are not evidence that cancelled animations arrived.
-        for id in self.transitions.keys() {
+        for id in self.transitions.keys().chain(self.verifications.keys()) {
             self.applied.remove(id);
         }
-        if !self.transitions.is_empty() || self.drag.is_some() || self.pending_drop.is_some() {
+        if !self.transitions.is_empty()
+            || !self.verifications.is_empty()
+            || self.drag.is_some()
+            || self.pending_drop.is_some()
+        {
             self.invalidate();
         }
         self.transitions.clear();
+        self.verifications.clear();
         self.drag = None;
         self.pending_drop = None;
         self.pressed = false;
@@ -176,6 +326,7 @@ impl Manager {
         self.applied.clear();
         self.constrained.clear();
         self.windows.clear();
+        self.handoffs.clear();
         self.invalidate();
     }
     fn hide_preview(&self) {
@@ -222,6 +373,7 @@ impl Manager {
                 return;
             }
             self.transitions.remove(&id);
+            self.verifications.remove(&id);
             self.constrained.remove(&id);
             if self.floating.remove(&id) {
                 if let Some(w) = self.windows.get_mut(&id) {
@@ -262,6 +414,7 @@ impl Manager {
         let from = ws::bounds(id).unwrap_or(to);
         if near(from, to) {
             self.transitions.remove(&id);
+            self.verifications.remove(&id);
             return;
         }
         self.transitions.insert(
@@ -303,30 +456,51 @@ impl Manager {
             } else {
                 ax::set_frame_step(w.element.0, t.last, frame)
             };
-            if !ok {
-                if let Some(actual) = ws::bounds(*id) {
-                    self.constrained.insert(*id, (t.to, actual));
-                }
-                done.push(*id);
-                self.last_error = Some("Una aplicación no permite ajustar su ventana.".into());
-                continue;
-            }
             t.last = frame;
-            if progress >= 1. {
-                if let Some((p, s)) = ax::geometry(w.element.0) {
-                    let actual = NSRect::new(p, s);
-                    if !near(actual, t.to) {
-                        self.constrained.insert(*id, (t.to, actual));
-                        self.last_error=Some("Una ventana limita su tamaño; prueba otra plantilla o déjala flotante.".into());
-                    } else {
-                        self.constrained.remove(id);
-                    }
-                }
+            if !ok || progress >= 1. {
+                self.verifications.insert(*id, Verification::new(t.to));
                 done.push(*id);
             }
         }
         for id in done {
             self.transitions.remove(&id);
+        }
+    }
+    fn verify_placements(&mut self, active: &[(Workspace, NSRect)]) {
+        let now = Instant::now();
+        for id in self.verifications.keys().copied().collect::<Vec<_>>() {
+            let Some(w) = self.windows.get(&id) else {
+                self.verifications.remove(&id);
+                continue;
+            };
+            let Some(actual) = ws::bounds(id) else {
+                self.verifications.remove(&id);
+                continue;
+            };
+            if self.floating.contains(&id) || !active.iter().any(|(key, _)| *key == w.space) {
+                self.verifications.remove(&id);
+                continue;
+            }
+            let verification = self.verifications.get_mut(&id).unwrap();
+            match verification.step(actual, now) {
+                VerificationStep::Wait => {}
+                VerificationStep::Complete => {
+                    self.verifications.remove(&id);
+                    self.constrained.remove(&id);
+                }
+                VerificationStep::Retry => {
+                    if spaces::window_space(id) == Some(w.space.1) {
+                        ax::set_frame(w.element.0, verification.target);
+                    } else {
+                        self.verifications.remove(&id);
+                    }
+                }
+                VerificationStep::Limited => {
+                    self.constrained.insert(id, (verification.target, actual));
+                    self.verifications.remove(&id);
+                    self.last_error=Some("Una ventana limita su tamaño o posición; prueba otra plantilla o déjala flotante.".into());
+                }
+            }
         }
     }
     fn resize_drag(&mut self, final_sample: bool) {
@@ -336,9 +510,8 @@ impl Manager {
         let Some(frame) = ws::bounds(drag.id) else {
             return;
         };
-        drag.resized |= drag.resize_gesture
-            && ((frame.size.width - drag.start.size.width).abs() > 3.
-                || (frame.size.height - drag.start.size.height).abs() > 3.);
+        let pointer_workspace = (pointer_display() == Some(drag.space.0)).then_some(drag.space);
+        drag.observe(frame, pointer_workspace);
         if !drag.resized
             || self.floating.contains(&drag.id)
             || spaces::window_space(drag.id) != Some(drag.space.1)
@@ -368,26 +541,59 @@ impl Manager {
         }
         self.desktops.insert(drag.space, layout);
     }
-    fn current_workspace(&self) -> Option<Workspace> {
-        let native = current_space()?;
-        let p = pointer();
+    pub fn current_workspace(&self) -> Option<Workspace> {
+        let display = pointer_display()?;
         self.active_areas
             .iter()
-            .find(|(key, r)| key.1 == native && contains(*r, p))
-            .or_else(|| self.active_areas.iter().find(|(key, _)| key.1 == native))
+            .find(|(key, _)| key.0 == display)
             .map(|(key, _)| *key)
     }
-    pub fn reset_template(&mut self, native_space: u64, layout: Layout) {
-        let Some(space) = self.current_workspace().filter(|key| key.1 == native_space) else {
-            return;
-        };
-        if let (Some(d), Some((_, area))) = (
-            self.desktops.get_mut(&space),
-            self.active_areas.iter().find(|(id, _)| *id == space),
-        ) {
-            d.reset_template(layout, *area);
+    pub fn current_layout(&self, defaults: Obj) -> Layout {
+        self.current_workspace()
+            .map(|key| layout_pref(defaults, key))
+            .unwrap_or_default()
+    }
+    pub fn picker_context(&self) -> Option<PickerContext> {
+        let workspace = self.current_workspace()?;
+        Some(PickerContext {
+            workspace,
+            area: self
+                .active_areas
+                .iter()
+                .find(|(key, _)| *key == workspace)?
+                .1,
+            desktop: self.desktops.get(&workspace)?.clone(),
+        })
+    }
+    pub fn apply_template(
+        &mut self,
+        defaults: Obj,
+        context: &PickerContext,
+        layout: Layout,
+    ) -> bool {
+        // A picker is tied to one display/Space and one window set for its entire lifetime.
+        if !spaces::visible_desktops().contains(&context.workspace)
+            || area(context.workspace.0) != Some(context.area)
+            || pref(defaults, &format!("tile.off.{}", context.workspace.1)) != 0
+            || !self
+                .desktops
+                .get(&context.workspace)
+                .is_some_and(|d| d.order == context.desktop.order)
+        {
+            return false;
         }
+        let Some(proposed) = context.proposal(layout) else {
+            return false;
+        };
+        save(defaults, &layout_key(context.workspace), layout.index());
+        self.desktops.insert(context.workspace, proposed);
         self.invalidate();
+        true
+    }
+    pub fn reset_template(&mut self, defaults: Obj, layout: Layout) {
+        if let Some(context) = self.picker_context() {
+            self.apply_template(defaults, &context, layout);
+        }
     }
     pub fn save_distribution(&self, defaults: Obj) -> bool {
         let Some(space) = self.current_workspace() else {
@@ -434,11 +640,7 @@ impl Manager {
             save(defaults, "tile.grid.columns", columns as isize);
             save(defaults, "tile.grid.rows", rows as isize);
         }
-        save(
-            defaults,
-            &format!("tile.layout.{}", space.1),
-            desktop.layout.index(),
-        );
+        save(defaults, &layout_key(space), desktop.layout.index());
         self.invalidate();
         true
     }
@@ -474,7 +676,7 @@ impl Manager {
         for (key, _) in &active {
             self.desktops.entry(*key).or_insert_with(|| {
                 Desktop::configured(
-                    Layout::from_index(pref(defaults, &format!("tile.layout.{}", key.1))),
+                    layout_pref(defaults, *key),
                     if pref(defaults, "tile.grid.enabled") != 0 {
                         Some((
                             grid_count(defaults, "tile.grid.columns", 120, 240),
@@ -489,10 +691,21 @@ impl Manager {
         let down: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
         let down = down & 1 != 0;
         let p = pointer();
+        let pointer_workspace = pointer_display().and_then(|display| {
+            active
+                .iter()
+                .find(|(key, _)| key.0 == display)
+                .map(|(key, _)| *key)
+        });
+        self.handoffs.retain(|_, handoff| {
+            handoff.expires > Instant::now()
+                && active.iter().any(|(key, _)| *key == handoff.destination)
+        });
         if down && !self.pressed {
             self.pending_drop = None;
-            self.dirty |= !self.transitions.is_empty();
+            self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
             self.transitions.clear();
+            self.verifications.clear();
             // A click inside content is not a drag until native window geometry moves.
             let handle = unsafe {
                 let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -564,42 +777,50 @@ impl Manager {
                     })
                 });
         }
+        if down && !self.pressed {
+            if let Some(drag) = &self.drag {
+                self.handoffs.remove(&drag.id);
+            }
+        }
         self.pressed = down;
         if down {
             let mut preview = None;
             if let Some(drag) = &mut self.drag {
-                if !active.iter().any(|(s, _)| *s == drag.space) {
+                if !active
+                    .iter()
+                    .any(|(s, r)| *s == drag.space && *r == drag.area)
+                {
                     self.cancel_drag();
+                    self.pressed = true; // Wait for release; never recapture halfway through a gesture.
                     return;
                 }
                 if let Some(frame) = ws::bounds(drag.id) {
-                    drag.resized |= drag.resize_gesture
-                        && ((frame.size.width - drag.start.size.width).abs() > 3.
-                            || (frame.size.height - drag.start.size.height).abs() > 3.);
-                    drag.moved |= (frame.origin.x - drag.start.origin.x).abs() > 5.
-                        || (frame.origin.y - drag.start.origin.y).abs() > 5.;
+                    drag.observe(frame, pointer_workspace);
                 }
                 if drag.moved
                     && !drag.resized
                     && (p.x - drag.point.x).abs() + (p.y - drag.point.y).abs() > 12.
                 {
-                    let candidate = active.iter().find_map(|(key, area)| {
-                        let destination = self.desktops.get(key).cloned().unwrap_or_default();
-                        let frames = destination.frames(*area, 10.);
-                        let intent = drop_intent(
-                            *area,
-                            &frames,
-                            drag.id,
-                            p,
-                            pref(defaults, "tile.simple") == 0,
-                        )
-                        .or_else(|| {
-                            (frames.is_empty() && contains(*area, p))
-                                .then_some(DropIntent::Screen(Zone::Left))
-                        })?;
-                        destination.proposed_drop(drag.id, intent, *area, 10.)?;
-                        Some((*key, intent))
-                    });
+                    let candidate = active
+                        .iter()
+                        .filter(|(key, _)| Some(*key) == pointer_workspace)
+                        .find_map(|(key, area)| {
+                            let destination = self.desktops.get(key).cloned().unwrap_or_default();
+                            let frames = destination.frames(*area, 10.);
+                            let intent = drop_intent(
+                                *area,
+                                &frames,
+                                drag.id,
+                                p,
+                                pref(defaults, "tile.simple") == 0,
+                            )
+                            .or_else(|| {
+                                (frames.is_empty() && contains(*area, p))
+                                    .then_some(DropIntent::Screen(Zone::Left))
+                            })?;
+                            destination.proposed_drop(drag.id, intent, *area, 10.)?;
+                            Some((*key, intent))
+                        });
                     if candidate != drag.candidate {
                         drag.candidate = candidate;
                         drag.candidate_since = Instant::now();
@@ -637,27 +858,23 @@ impl Manager {
         if let Some(drag) = self.drag.take() {
             self.hide_preview();
             if drag.moved && !drag.resized && !self.floating.contains(&drag.id) {
-                if let Some((destination, intent)) = drag.drop {
-                    if active.iter().any(|(key, area)| {
-                        *key == destination
-                            && contains(
-                                rect(
-                                    area.origin.x - 12.,
-                                    area.origin.y - 12.,
-                                    area.size.width + 24.,
-                                    area.size.height + 24.,
-                                ),
-                                p,
-                            )
-                    }) {
-                        self.pending_drop = Some(PendingDrop {
-                            id: drag.id,
-                            source: drag.space,
-                            destination,
-                            intent,
-                            expires: Instant::now() + Duration::from_millis(700),
-                        });
-                    }
+                let selected = drag
+                    .drop
+                    .filter(|(key, _)| Some(*key) == pointer_workspace)
+                    .map(|(key, intent)| (key, Some(intent)))
+                    .or_else(|| {
+                        pointer_workspace
+                            .filter(|key| *key != drag.space)
+                            .map(|key| (key, None))
+                    });
+                if let Some((destination, intent)) = selected {
+                    self.pending_drop = Some(PendingDrop {
+                        id: drag.id,
+                        source: drag.space,
+                        destination,
+                        intent,
+                        expires: Instant::now() + Duration::from_millis(700),
+                    });
                 }
             }
             if drag.moved || drag.resized {
@@ -675,22 +892,27 @@ impl Manager {
                             .get(&drop.destination)
                             .cloned()
                             .unwrap_or_default();
-                        if let Some(proposed) = d.proposed_drop(drop.id, drop.intent, *area, 10.) {
+                        if let Some(proposed) = arrival_proposal(&d, drop.id, drop.intent, *area) {
                             if drop.source != drop.destination {
                                 if let Some(source) = self.desktops.get_mut(&drop.source) {
                                     source.remove(drop.id);
                                 }
                             }
                             if drop.source != drop.destination {
-                                if let (Some(w), Some((_, frame))) = (
-                                    self.windows.get(&drop.id),
-                                    proposed
-                                        .frames(*area, 10.)
-                                        .iter()
-                                        .find(|(id, _)| *id == drop.id),
-                                ) {
-                                    ax::set_frame(w.element.0, *frame);
-                                }
+                                self.transitions.remove(&drop.id);
+                                self.verifications.remove(&drop.id);
+                                self.applied.remove(&drop.id);
+                                self.constrained.remove(&drop.id);
+                                // WindowServer can still publish the source frame after AX
+                                // has accepted the destination. Keep ownership stable until
+                                // that native handoff settles; do not animate across displays.
+                                self.handoffs.insert(
+                                    drop.id,
+                                    MonitorHandoff {
+                                        destination: drop.destination,
+                                        expires: Instant::now() + Duration::from_millis(1200),
+                                    },
+                                );
                             }
                             self.desktops.insert(drop.destination, proposed);
                             if let Some(w) = self.windows.get_mut(&drop.id) {
@@ -710,6 +932,7 @@ impl Manager {
             return;
         }
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
+        self.verify_placements(&active);
         self.animate(&active);
         let scan_interval = if self.settling_space() { 100 } else { 500 };
         if self
@@ -728,7 +951,7 @@ impl Manager {
         };
         let candidates = ws::tile_windows();
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
-        let mut transferred = HashSet::new();
+        let mut transferred: HashSet<u32> = self.handoffs.keys().copied().collect();
         // Offscreen Spaces retain their trees; closed/hidden/minimized windows on
         // visible Spaces leave the current tree and rejoin when visible again.
         let mut members: HashMap<Workspace, Vec<u32>> = HashMap::new();
@@ -736,7 +959,29 @@ impl Manager {
             let Some(space) = spaces::window_space(id) else {
                 continue;
             };
-            let Some(space) = workspace_at_frame(space, frame, &active) else {
+            if self
+                .handoffs
+                .get(&id)
+                .is_some_and(|h| h.destination.1 != space)
+                || self.windows.get(&id).is_some_and(|w| w.pid != pid)
+            {
+                self.handoffs.remove(&id);
+                transferred.remove(&id);
+            }
+            let previous = self
+                .windows
+                .get(&id)
+                .filter(|w| w.pid == pid)
+                .map(|w| w.space);
+            let retained = self.handoffs.get(&id).map(|h| h.destination).or_else(|| {
+                let expected = self.applied.get(&id).copied();
+                let limited = self.constrained.get(&id).map(|(_, observed)| *observed);
+                (expected.is_some_and(|r| near(r, frame))
+                    || limited.is_some_and(|r| near(r, frame)))
+                .then_some(previous)
+                .flatten()
+            });
+            let Some(space) = retained_workspace(space, frame, &active, retained) else {
                 continue;
             };
             if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
@@ -769,6 +1014,7 @@ impl Manager {
                 }
                 transferred.insert(id);
                 self.transitions.remove(&id);
+                self.verifications.remove(&id);
                 self.constrained.remove(&id);
                 self.applied.remove(&id);
             }
@@ -806,10 +1052,25 @@ impl Manager {
                     d.remove(id);
                 }
             }
+            self.handoffs.remove(&id);
             self.floating.remove(&id);
             self.applied.remove(&id);
             self.transitions.remove(&id);
+            self.verifications.remove(&id);
             self.constrained.remove(&id);
+        }
+        for (id, handoff) in &self.handoffs {
+            if self
+                .windows
+                .get(id)
+                .is_some_and(|w| w.space == handoff.destination)
+                && !self.floating.contains(id)
+            {
+                let ids = members.entry(handoff.destination).or_default();
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
         }
         if self.settling_space() {
             // During the native transition, onscreen visibility can lag Space
@@ -834,7 +1095,7 @@ impl Manager {
             } else {
                 None
             };
-            let layout = Layout::from_index(pref(defaults, &format!("tile.layout.{}", space.1)));
+            let layout = layout_pref(defaults, space);
             if d.layout != layout {
                 d.layout = layout;
                 self.dirty = true;
@@ -860,7 +1121,11 @@ impl Manager {
                     continue;
                 }
                 let actual = ws::bounds(id);
-                let pending = self.transitions.get(&id).map(|t| t.to);
+                let pending = self
+                    .transitions
+                    .get(&id)
+                    .map(|t| t.to)
+                    .or_else(|| self.verifications.get(&id).map(|v| v.target));
                 let limited = self.constrained.get(&id).copied();
                 if !needs_placement(frame, actual, pending, if changed { None } else { limited }) {
                     continue;
@@ -870,12 +1135,10 @@ impl Manager {
                     // macOS has already animated the Space transition. Commit
                     // the destination once, rather than animating it a second time.
                     self.transitions.remove(&id);
+                    self.verifications.remove(&id);
                     if let Some(w) = self.windows.get(&id) {
-                        if !ax::set_frame(w.element.0, frame) {
-                            self.last_error = Some(
-                                "No se pudo ajustar la ventana al escritorio de destino.".into(),
-                            );
-                        }
+                        ax::set_frame(w.element.0, frame);
+                        self.verifications.insert(id, Verification::new(frame));
                     }
                 } else {
                     self.transition(id, frame);
@@ -895,11 +1158,23 @@ impl Manager {
                 ax::set_frame(w.element.0, w.original);
                 self.applied.remove(id);
                 self.transitions.remove(id);
+                self.verifications.remove(id);
             }
         }
         self.windows.retain(|_, w| w.space.1 != space);
         self.invalidate();
     }
+}
+
+fn retained_workspace(
+    native: u64,
+    frame: NSRect,
+    areas: &[(Workspace, NSRect)],
+    retained: Option<Workspace>,
+) -> Option<Workspace> {
+    retained
+        .filter(|key| key.1 == native && areas.iter().any(|(candidate, _)| candidate == key))
+        .or_else(|| workspace_at_frame(native, frame, areas))
 }
 
 fn workspace_at_frame(
@@ -943,6 +1218,201 @@ fn needs_placement(
 mod tests {
     use super::*;
     #[test]
+    fn cancelling_does_not_leave_a_deferred_write_to_an_old_monitor() {
+        let mut manager = Manager::default();
+        let target = rect(-890., -390., 880., 1580.);
+        manager.applied.insert(1, target);
+        manager.verifications.insert(1, Verification::new(target));
+        manager.cancel_drag();
+        assert!(manager.verifications.is_empty());
+        assert!(!manager.applied.contains_key(&1));
+        assert!(manager.dirty);
+    }
+
+    #[test]
+    fn asynchronous_geometry_is_not_mistaken_for_a_permanent_limit() {
+        let target = rect(-890., -390., 880., 1580.);
+        let old = rect(10., 30., 1500., 800.);
+        let mut verification = Verification::new(target);
+        let due = verification.due;
+        assert_eq!(
+            verification.step(old, due - Duration::from_millis(1)),
+            VerificationStep::Wait
+        );
+        assert_eq!(verification.step(old, due), VerificationStep::Retry);
+        assert_eq!(
+            verification.step(old, due + Duration::from_millis(80)),
+            VerificationStep::Wait
+        );
+        assert_eq!(
+            verification.step(target, due + Duration::from_millis(120)),
+            VerificationStep::Complete
+        );
+    }
+    #[test]
+    fn application_constraints_have_only_one_bounded_retry() {
+        let mut verification = Verification::new(rect(0., 0., 400., 300.));
+        let actual = rect(0., 0., 600., 500.);
+        let due = verification.due;
+        assert_eq!(verification.step(actual, due), VerificationStep::Retry);
+        assert_eq!(
+            verification.step(actual, due + Duration::from_millis(120)),
+            VerificationStep::Limited
+        );
+        assert_eq!(
+            verification.step(actual, due + Duration::from_secs(1)),
+            VerificationStep::Limited
+        );
+    }
+
+    fn test_drag() -> Drag {
+        let area = rect(0., 30., 1600., 900.);
+        let mut baseline = Desktop::default();
+        baseline.reconcile(&[1, 2], area, 10.);
+        Drag {
+            id: 1,
+            space: (1, 7),
+            start: rect(10., 40., 1500., 800.),
+            point: NSPoint::new(200., 45.),
+            drop: None,
+            candidate: None,
+            candidate_since: Instant::now(),
+            moved: false,
+            resized: false,
+            resize_gesture: true,
+            baseline,
+            area,
+        }
+    }
+    #[test]
+    fn crossing_to_portrait_does_not_resize_the_source_tree() {
+        let mut drag = test_drag();
+        let original = drag.baseline.frames(drag.area, 10.);
+        drag.observe(rect(40., 60., 1500., 800.), Some((1, 7)));
+        assert!(drag.moved && !drag.resized);
+        drag.observe(rect(-850., -300., 850., 1300.), Some((2, 8)));
+        assert!(drag.moved && !drag.resized);
+        assert_eq!(drag.baseline.frames(drag.area, 10.), original);
+        let mut fast = test_drag();
+        fast.observe(rect(-850., -300., 850., 1300.), Some((2, 8)));
+        assert!(fast.moved && !fast.resized);
+    }
+    #[test]
+    fn genuine_resize_handles_remain_resizes() {
+        for frame in [rect(10., 40., 1200., 650.), rect(110., 140., 1400., 700.)] {
+            let mut drag = test_drag();
+            drag.observe(frame, Some((1, 7)));
+            assert!(drag.resized && !drag.moved);
+        }
+    }
+    #[test]
+    fn delayed_source_frame_cannot_reverse_a_committed_monitor_handoff() {
+        let areas = vec![
+            ((1, 7), rect(0., 0., 1600., 900.)),
+            ((2, 7), rect(-900., -400., 900., 1600.)),
+        ];
+        let stale = rect(10., 30., 1500., 800.);
+        assert_eq!(workspace_at_frame(7, stale, &areas), Some((1, 7)));
+        assert_eq!(
+            retained_workspace(7, stale, &areas, Some((2, 7))),
+            Some((2, 7))
+        );
+        let arrived = rect(-890., -390., 880., 1580.);
+        assert_eq!(retained_workspace(7, arrived, &areas, None), Some((2, 7)));
+        // An app minimum wider than the portrait monitor must not change ownership.
+        let limited = rect(-890., -390., 2400., 1000.);
+        assert_eq!(workspace_at_frame(7, limited, &areas), Some((1, 7)));
+        assert_eq!(
+            retained_workspace(7, limited, &areas, Some((2, 7))),
+            Some((2, 7))
+        );
+    }
+    #[test]
+    fn handoff_ownership_never_overrides_a_different_native_space_or_removed_monitor() {
+        let areas = vec![
+            ((1, 7), rect(0., 0., 1600., 900.)),
+            ((2, 8), rect(-900., -400., 900., 1600.)),
+        ];
+        assert_eq!(
+            retained_workspace(7, rect(10., 30., 1500., 800.), &areas, Some((2, 8))),
+            Some((1, 7))
+        );
+        assert_eq!(
+            retained_workspace(7, rect(10., 30., 1500., 800.), &areas, Some((99, 7))),
+            Some((1, 7))
+        );
+    }
+    #[test]
+    fn transfer_without_a_drop_zone_uses_destination_template_and_unique_membership() {
+        let area = rect(-900., -400., 900., 1600.);
+        let mut dest = Desktop::configured(Layout::ThreeBands, None);
+        dest.reconcile(&[2, 3], area, 10.);
+        let proposed = arrival_proposal(&dest, 1, None, area).unwrap();
+        assert_eq!(proposed.layout, Layout::ThreeBands);
+        assert_eq!(proposed.order, vec![2, 3, 1]);
+        for (_, r) in proposed.frames(area, 10.) {
+            assert_eq!(r.size.width, area.size.width);
+        }
+        assert_eq!(dest.order, vec![2, 3]);
+    }
+
+    #[test]
+    fn display_preferences_override_legacy_without_affecting_other_monitors() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite = NSString::from_str(&format!("amspace.tests.layout.{}", std::process::id()));
+            let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+            let raw = Retained::as_ptr(&defaults) as Obj;
+            save(raw, "tile.layout.7", 1);
+            assert_eq!(layout_pref(raw, (1, 7)), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (2, 7)), Layout::Spiral);
+            save(raw, &layout_key((1, 7)), 4);
+            assert_eq!(layout_pref(raw, (1, 7)), Layout::ThreeBands);
+            assert_eq!(layout_pref(raw, (2, 7)), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (1, 8)), Layout::Dwindle);
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
+    }
+
+    #[test]
+    fn picker_proposals_do_not_mutate_original_and_match_committed_model() {
+        for area in [rect(0., 30., 1600., 900.), rect(-900., -400., 900., 1600.)] {
+            let mut desktop = Desktop::configured(Layout::Spiral, Some((120, 6)));
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            let context = PickerContext {
+                workspace: (1, 7),
+                area,
+                desktop,
+            };
+            let original = context.desktop.frames(area, 10.);
+            for layout in Layout::ALL {
+                let mut proposed = context.proposal(layout).unwrap();
+                let preview = proposed.frames(area, 10.);
+                proposed.reconcile(&[3, 2, 1], area, 10.);
+                proposed.fit(area, 10.);
+                assert_eq!(proposed.frames(area, 10.), preview);
+                assert_eq!(context.desktop.frames(area, 10.), original);
+            }
+            assert_ne!(layout_key((1, 7)), layout_key((2, 7)));
+        }
+    }
+    #[test]
+    fn picker_rejects_templates_that_do_not_fit() {
+        let area = rect(0., 0., 500., 400.);
+        let mut desktop = Desktop::configured(Layout::Grid, None);
+        desktop.reconcile(&[1, 2, 3, 4], area, 10.);
+        let context = PickerContext {
+            workspace: (1, 7),
+            area,
+            desktop,
+        };
+        assert!(context.proposal(Layout::ThreeBands).is_some());
+        assert!(context.proposal(Layout::FourBands).is_none());
+        assert!(context.proposal(Layout::Grid).is_some());
+    }
+
+    #[test]
     fn monitor_membership_uses_overlap_and_native_space() {
         let areas = vec![
             ((1, 7), rect(0., 30., 1600., 900.)),
@@ -977,7 +1447,7 @@ mod tests {
                 id: 1,
                 source: (1, 7),
                 destination: (2, 8),
-                intent: DropIntent::Screen(Zone::Top),
+                intent: Some(DropIntent::Screen(Zone::Top)),
                 expires: Instant::now() + Duration::from_millis(700),
             }),
             ..Default::default()

@@ -1,16 +1,15 @@
-AMSpace 0.5.0 — mosaico inteligente de ventanas.
+AMSpace 0.6.0 — selector de distribuciones y estabilidad entre monitores.
 
-- Nuevo tiling opcional con cuatro plantillas: Dwindle, Espiral, Cuadrícula y Principal con secundarias. Cada monitor y escritorio mantiene su propia distribución durante la sesión.
-- Colocación inteligente con ratón y ventana fantasma: los bordes de pantalla cambian la orientación, los bordes de otra ventana dividen su tile y el centro intercambia posiciones conservando tamaños.
-- Redimensionado compartido: las ventanas vecinas se adaptan y las proporciones se conservan al intercambiar o cerrar ventanas.
-- Ventanas flotantes con atajo configurable y lista de aplicaciones que se abren flotantes. Mover una flotante no la devuelve al mosaico.
-- Rejilla virtual configurable, con guardado y restauración de proporciones para el mismo número de tiles.
-- Adaptación a monitores verticales, coordenadas globales y distribuciones independientes incluso cuando comparten un Space de macOS.
-- Animaciones de 120 ms con aceleración y deceleración suaves, temporizador adaptativo y menos consultas AX al cambiar de escritorio.
-- Integración con el borde de ventana y el foco bajo el cursor existentes.
+- Nuevo selector semitransparente mediante ⌃⌥Espacio, configurable en Tiling → Plantillas y atajo…
+- Previsualización en el monitor del cursor, selección con ratón, números o flechas, Intro para aplicar y Escape para cancelar.
+- Seis plantillas: Dwindle, Espiral, Cuadrícula, Principal y divisiones de 3 o 4. Estas últimas muestran columnas en pantallas horizontales y filas en verticales.
+- Preferencias de plantilla independientes por monitor y escritorio, también cuando comparten un Space.
+- Corrige la interpretación de cambios automáticos de tamaño al trasladar ventanas a pantallas verticales.
+- Estabiliza la pertenencia al monitor de destino ante posiciones atrasadas de WindowServer y evita animar el traslado entre pantallas.
+- Verifica la geometría después de asentarse y permite un único reintento antes de registrar una restricción de la aplicación.
 
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 
-Validación: 43 pruebas automatizadas y comprobación interactiva del usuario. Pendiente la validación física con varios monitores y la ejecución en hardware Intel. El guardado actual conserva geometría; todavía no restaura aplicaciones/documentos ni identifica monitores de forma portable.
+Validación: 58 pruebas automatizadas y revisión interactiva del selector. Pendiente la validación física de monitores horizontal y vertical y del atajo global con teclado físico. Finder mostró algunas discrepancias entre la geometría solicitada y la real; no se consideran resueltos todos los casos de colocación.
 
-La distribución ad hoc puede requerir eliminar AMSpace de Accesibilidad y añadir de nuevo la copia de Aplicaciones tras actualizar.
+La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

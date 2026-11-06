@@ -36,6 +36,10 @@ struct App {
     tile_timer: Option<Retained<AnyObject>>,
     tile_interval: f64,
     tile_hotkey: Option<crate::tile_hotkey::HotKey>,
+    picker_hotkey: Option<crate::tile_hotkey::HotKey>,
+    layout_picker: Option<crate::tile_picker::Picker>,
+    picker_settings: Option<Retained<AnyObject>>,
+    picker_hint: Obj,
     tile_space: Option<u64>,
     tile_controls: Vec<Obj>,
     tile_grid_window: Option<Retained<AnyObject>>,
@@ -235,6 +239,10 @@ impl App {
                 tile_timer: None,
                 tile_interval: 0.,
                 tile_hotkey: None,
+                picker_hotkey: None,
+                layout_picker: None,
+                picker_settings: None,
+                picker_hint: ptr::null_mut(),
                 tile_space: None,
                 tile_controls: vec![],
                 tile_grid_window: None,
@@ -594,7 +602,10 @@ impl App {
         }
     }
     fn hover(&mut self) {
-        if self.switching.is_some() || Instant::now() < self.hover_resume {
+        if self.layout_picker.is_some()
+            || self.switching.is_some()
+            || Instant::now() < self.hover_resume
+        {
             return;
         }
         unsafe {
@@ -960,21 +971,30 @@ impl App {
                 let _: () = msg_send![&t, invalidate];
             }
             self.tile_hotkey = None;
+            self.picker_hotkey = None;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             if crate::tile_manager::pref(defaults, "tile.enabled") == 0
                 || self.sleeping
                 || !ax::trusted()
             {
+                self.layout_picker = None;
                 self.tile_manager.cancel_drag();
                 return;
             }
             self.tile_hotkey = crate::tile_hotkey::HotKey::new(
                 crate::tile_manager::pref(defaults, "tile.key").clamp(0, 3) as usize,
                 crate::tile_manager::pref(defaults, "tile.mods").clamp(0, 3) as usize,
+                crate::tile_hotkey::Action::Float,
+            );
+            self.picker_hotkey = crate::tile_hotkey::HotKey::new(
+                crate::tile_manager::pref_or(defaults, "tile.picker.key", 2).clamp(0, 3) as usize,
+                crate::tile_manager::pref(defaults, "tile.picker.mods").clamp(0, 3) as usize,
+                crate::tile_hotkey::Action::Layouts,
             );
             if self.tile_hotkey.is_none() {
                 self.feedback("Atajo ocupado: elige otra combinación en Tiling.");
             }
+            self.refresh_picker_hint();
             self.update_tile_timer();
             self.tile_manager.invalidate();
         }
@@ -997,7 +1017,11 @@ impl App {
         }
     }
     fn refresh_tile_controls(&mut self) {
-        self.tile_space = crate::tile_manager::current_space();
+        self.tile_space = self
+            .tile_manager
+            .current_workspace()
+            .map(|key| key.1)
+            .or_else(crate::tile_manager::current_space);
         if self.tile_controls.len() != 4 {
             return;
         }
@@ -1016,9 +1040,18 @@ impl App {
             let enabled = self.tile_space.is_some();
             let _: () = msg_send![self.tile_controls[1],setEnabled:enabled];
             let _: () = msg_send![self.tile_controls[2],setEnabled:enabled];
+            if let Some(context) = self.tile_manager.picker_context() {
+                for layout in [
+                    crate::tiling::Layout::ThreeBands,
+                    crate::tiling::Layout::FourBands,
+                ] {
+                    let item: Obj = msg_send![self.tile_controls[2],itemAtIndex:layout.index()];
+                    let _: () = msg_send![item,setTitle:&*NSString::from_str(layout.screen_name(context.area))];
+                }
+            }
             if let Some(id) = self.tile_space {
                 let _: () = msg_send![self.tile_controls[1],setState:1-crate::tile_manager::pref(defaults,&format!("tile.off.{id}")).clamp(0,1)];
-                let _: () = msg_send![self.tile_controls[2],selectItemAtIndex:crate::tiling::Layout::from_index(crate::tile_manager::pref(defaults,&format!("tile.layout.{id}"))).index()];
+                let _: () = msg_send![self.tile_controls[2],selectItemAtIndex:self.tile_manager.current_layout(defaults).index()];
             }
             text(
                 self.tile_controls[3],
@@ -1095,6 +1128,8 @@ impl App {
                     "Espiral",
                     "Cuadrícula simétrica",
                     "Principal y secundarias",
+                    "3 divisiones · según pantalla",
+                    "4 divisiones · según pantalla",
                 ],
                 target,
                 42,
@@ -1126,8 +1161,8 @@ impl App {
             );
             button(
                 root,
-                rect(15., 88., 400., 28.),
-                "Rejilla virtual y distribución guardada…",
+                rect(15., 88., 196., 28.),
+                "Rejilla y distribución…",
                 target,
                 49,
             );
@@ -1161,6 +1196,13 @@ impl App {
             );
             let _: () = msg_send![mods,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.mods").clamp(0,3)];
             let _: () = msg_send![keys,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.key").clamp(0,3)];
+            button(
+                root,
+                rect(217., 88., 198., 28.),
+                "Plantillas y atajo…",
+                target,
+                54,
+            );
             let hint = label(root, rect(18., 17., 225., 24.), "", 11., 0., true);
             button(
                 root,
@@ -1172,6 +1214,142 @@ impl App {
             self.tile_controls = vec![title, enabled, layout, hint];
             self.refresh_tile_controls();
         }
+    }
+    fn refresh_picker_hint(&self) {
+        if self.picker_hint.is_null() {
+            return;
+        }
+        unsafe {
+            text(
+                self.picker_hint,
+                if self.picker_hotkey.is_some() {
+                    "Atajo listo · abre el selector en la pantalla del cursor."
+                } else {
+                    "Atajo no disponible: revisa tiling, Accesibilidad o la combinación."
+                },
+            );
+        }
+    }
+    fn show_picker_settings(&mut self) {
+        unsafe {
+            if self.picker_settings.is_none() {
+                let panel = window(rect(0., 0., 480., 224.), 1 | 2 | 4);
+                let _: () =
+                    msg_send![&panel,setTitle:&*NSString::from_str("Selector de distribuciones")];
+                let _: () = msg_send![&panel, center];
+                let root: Obj = msg_send![&panel, contentView];
+                let target = Retained::as_ptr(&self.target) as Obj;
+                let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                label(
+                    root,
+                    rect(20., 182., 440., 24.),
+                    "Plantillas en la pantalla del cursor",
+                    16.,
+                    0.3,
+                    false,
+                );
+                label(
+                    root,
+                    rect(20., 155., 440., 22.),
+                    "Previsualiza con el ratón o las flechas. Intro aplica; Esc cancela.",
+                    11.,
+                    0.,
+                    true,
+                );
+                label(
+                    root,
+                    rect(20., 111., 160., 24.),
+                    "Abrir selector",
+                    13.,
+                    0.,
+                    false,
+                );
+                let mods = popup(
+                    root,
+                    rect(200., 108., 125., 30.),
+                    &crate::tile_hotkey::MODIFIERS
+                        .iter()
+                        .map(|v| v.0)
+                        .collect::<Vec<_>>(),
+                    target,
+                    55,
+                );
+                let keys = popup(
+                    root,
+                    rect(330., 108., 130., 30.),
+                    &crate::tile_hotkey::KEYS
+                        .iter()
+                        .map(|v| v.0)
+                        .collect::<Vec<_>>(),
+                    target,
+                    56,
+                );
+                let _: () = msg_send![mods,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.picker.mods").clamp(0,3)];
+                let _: () = msg_send![keys,selectItemAtIndex:crate::tile_manager::pref_or(defaults,"tile.picker.key",2).clamp(0,3)];
+                self.picker_hint = label(root, rect(20., 70., 440., 30.), "", 11., 0., true);
+                button(
+                    root,
+                    rect(270., 20., 190., 32.),
+                    "Mostrar plantillas",
+                    target,
+                    57,
+                );
+                self.picker_settings = Some(panel);
+            }
+            self.refresh_picker_hint();
+            let _: () = msg_send![self.picker_settings.as_ref().unwrap(),makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn toggle_picker(&mut self) {
+        if self.layout_picker.take().is_some() {
+            return;
+        }
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        if self.sleeping
+            || self.switching.is_some()
+            || !ax::trusted()
+            || crate::tile_manager::pref(defaults, "tile.enabled") == 0
+        {
+            self.feedback("Activa tiling y Accesibilidad para usar las plantillas.");
+            self.refresh_picker_hint();
+            return;
+        }
+        self.pending_focus = None;
+        self.tile_manager.cancel_drag();
+        self.tile_manager.invalidate();
+        self.tile_manager.tick(defaults);
+        let Some(context) = self.tile_manager.picker_context() else {
+            self.feedback("Activa el mosaico en el escritorio de esta pantalla.");
+            return;
+        };
+        self.layout_picker = Some(crate::tile_picker::Picker::new(
+            context,
+            Retained::as_ptr(&self.target) as Obj,
+        ));
+        self.layout_picker.as_ref().unwrap().show();
+        self.update_tile_timer();
+    }
+    fn commit_picker(&mut self) {
+        let Some(picker) = self.layout_picker.take() else {
+            return;
+        };
+        let Some(layout) = picker.selected_layout() else {
+            self.layout_picker = Some(picker);
+            return;
+        };
+        let context = picker.context.clone();
+        drop(picker);
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        self.tile_manager.invalidate();
+        self.tile_manager.tick(defaults);
+        if self.tile_manager.apply_template(defaults, &context, layout) {
+            self.tile_manager.tick(defaults);
+        } else {
+            self.feedback("La pantalla o sus ventanas han cambiado. Abre de nuevo el selector.");
+        }
+        self.hover_resume = Instant::now() + Duration::from_millis(300);
+        self.update_tile_timer();
+        self.refresh_tile_controls();
     }
     fn show_tile_grid(&mut self) {
         unsafe {
@@ -1785,17 +1963,10 @@ impl App {
                             }
                         }
                         42 => {
-                            if let Some(id) = self.tile_space {
-                                crate::tile_manager::save(
-                                    defaults,
-                                    &format!("tile.layout.{id}"),
-                                    selected,
-                                );
-                                self.tile_manager.reset_template(
-                                    id,
-                                    crate::tiling::Layout::from_index(selected),
-                                );
-                            }
+                            self.tile_manager.reset_template(
+                                defaults,
+                                crate::tiling::Layout::from_index(selected),
+                            );
                         }
                         43 => crate::tile_manager::save(defaults, "tile.simple", 1 - selected),
                         44 | 45 => {
@@ -1811,6 +1982,22 @@ impl App {
                     self.tile_manager.invalidate();
                     self.refresh_tile_controls();
                 }
+                54 => self.show_picker_settings(),
+                55 | 56 => {
+                    let selected: isize = msg_send![sender, indexOfSelectedItem];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        if tag == 55 {
+                            "tile.picker.mods"
+                        } else {
+                            "tile.picker.key"
+                        },
+                        selected,
+                    );
+                    self.configure_tiling();
+                    self.refresh_picker_hint();
+                }
+                57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),
                 50 => {
                     let state: isize = msg_send![sender, state];
@@ -2163,8 +2350,52 @@ extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
 extern "C-unwind" fn focus_pending(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.finish_focus());
 }
+pub fn toggle_layout_picker() {
+    with_app(|a| a.toggle_picker());
+}
+pub fn cancel_layout_picker() {
+    with_app(|a| {
+        a.layout_picker = None;
+        a.hover_resume = Instant::now() + Duration::from_millis(300);
+    });
+}
+pub fn layout_picker_hover(index: usize) {
+    with_app(|a| {
+        if let Some(picker) = &mut a.layout_picker {
+            picker.select(index);
+        }
+    });
+}
+pub fn layout_picker_key(key: u16, shift: bool) {
+    with_app(|a| {
+        let Some(picker) = &mut a.layout_picker else {
+            return;
+        };
+        match crate::tile_picker::key_input(key, picker.columns, shift) {
+            Some(crate::tile_picker::Input::Select(index)) => picker.select(index),
+            Some(crate::tile_picker::Input::Move(offset)) => picker.move_selection(offset),
+            Some(crate::tile_picker::Input::Confirm) => a.commit_picker(),
+            Some(crate::tile_picker::Input::Cancel) => a.layout_picker = None,
+            None => {}
+        }
+    });
+}
+extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
+    let index: isize = unsafe { msg_send![sender, tag] };
+    with_app(|a| {
+        if index < 0 {
+            a.layout_picker = None;
+        } else if let Some(picker) = &mut a.layout_picker {
+            picker.select(index as usize);
+            a.commit_picker();
+        }
+    });
+}
 pub fn toggle_tile_float() {
     with_app(|a| {
+        if a.layout_picker.is_some() {
+            return;
+        }
         a.tile_manager
             .toggle_float(Retained::as_ptr(&a.defaults) as Obj);
         a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj);
@@ -2177,6 +2408,9 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
         with_app(|a| {
             if !ax::trusted() {
                 a.configure_tiling();
+                return;
+            }
+            if a.layout_picker.is_some() {
                 return;
             }
             if a.switching.is_some() {
@@ -2196,7 +2430,14 @@ extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| with_app(|a| a.hover()));
 }
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
-    with_app(|a| a.tile_manager.space_changed());
+    with_app(|a| {
+        a.layout_picker = None;
+        a.tile_manager.space_changed();
+    });
+    workspace(target, selector, notification);
+}
+extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: Obj) {
+    cancel_layout_picker();
     workspace(target, selector, notification);
 }
 extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {
@@ -2307,6 +2548,8 @@ pub fn run() {
             (sel!(change:), change),
             (sel!(hover:), hover),
             (sel!(tileTick:), tile_tick),
+            (sel!(layoutChoice:), layout_choice),
+            (sel!(screensChanged:), screens_changed),
             (sel!(focusPending:), focus_pending),
             (sel!(update:), update),
             (sel!(settle:), settle),
@@ -2366,7 +2609,7 @@ pub fn run() {
             center,
             Retained::as_ptr(&target) as Obj,
             "NSApplicationDidChangeScreenParametersNotification",
-            sel!(workspace:),
+            sel!(screensChanged:),
         );
         observe(
             center,

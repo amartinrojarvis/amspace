@@ -1,3 +1,14 @@
+# Selector de plantillas y depuración de monitores (desarrollo posterior a 0.5.0)
+
+- 58 pruebas correctas; fmt, Clippy y plist sin errores. Paquete universal compilado y firma estricta verificada; copia local instalada en Aplicaciones, sin publicar otra release.
+- Nuevas pruebas: selección por teclado, miniaturas horizontales/verticales, tres/cuatro divisiones adaptativas con 1–8 ventanas, cobertura y guardado/restauración, preferencias por monitor con fallback histórico, preview sin mutación y rechazo de opciones que no caben.
+- Regresiones de traslado: tamaño automático en pantalla vertical no se interpreta como resize; movimiento fijado durante todo el gesto; frame antiguo no revierte la pertenencia del monitor; mínimo de aplicación que sobresale no provoca cambios de propietario; Space distinto o monitor retirado invalida retención; llegada sin zona usa plantilla de destino.
+- Verificación AX diferida: se espera antes de declarar una restricción y se permite un único reintento. Las cancelaciones eliminan escrituras diferidas para no devolver ventanas a destinos antiguos.
+- UI comprobada con Accesibilidad concedida en este lanzamiento: panel semitransparente, seis opciones, miniaturas de tres/cuatro columnas, selección con números/flechas, Escape y confirmación con Intro; la preferencia elegida se guarda por monitor/escritorio. Se abrieron y cerraron dos ventanas temporales de Finder; se restauró Espiral al terminar. Algunas posiciones/tamaños reales de Finder no coincidieron exactamente con el objetivo durante la comprobación; no se presenta la vista previa como prueba de cumplimiento de todas las restricciones AX de Finder.
+- El registro de ambos atajos se comprobó y el despacho por EventHotKeyID tiene prueba propia. Las teclas sintéticas de la automatización no alcanzaron el manejador global; la apertura física con ⌃⌥Espacio se solicitó al usuario y no se considera confirmada. La apertura por ajustes sí se verificó.
+- El entorno conectado solo expone una pantalla; no se ha reproducido físicamente la combinación horizontal/vertical del usuario. Las pruebas de varios monitores son del modelo. Quedan pendientes la prueba física del traslado y la desconexión/rotación durante un gesto.
+- Respaldo de la versión anterior: `.cache/AMSpace-before-layout-picker.zip`.
+
 # Preparación de 0.5.0
 
 - Versión 0.5.0, build 8. Incluye el tiling y las correcciones desarrolladas después de 0.4.1.
