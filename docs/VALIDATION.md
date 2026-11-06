@@ -82,6 +82,8 @@ Prueba manual recomendada: abre dos ventanas de Ghostty, alterna con clic y `⌘
 
 ## Medición de recursos
 
+Muestra local de 0.3.1 con borde y foco habilitados: 20,33 s, CPU media del 0,394 % de un núcleo y RSS entre 69,14 y 69,47 MiB. Es una muestra puntual de uso ligero, no un límite ni una comparación de equipos.
+
 ```sh
 python3 scripts/benchmark.py <PID> --seconds 20
 ```
