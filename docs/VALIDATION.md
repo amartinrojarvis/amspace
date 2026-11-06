@@ -1,3 +1,11 @@
+# Validación de 0.2.0
+
+- Compilación universal, fmt, Clippy sin warnings y las cinco pruebas de regresión: correctos.
+- Interfaz nativa inspeccionada: versión instalada, búsqueda, búsqueda automática desactivada inicialmente y Acerca de con autoría y enlaces. Corregido el espacio entre historial y copyright.
+- Sparkle 2.10.1 descargado del repositorio oficial y verificado mediante SHA-256 fijado; framework y auxiliares incluidos en el bundle.
+- ZIP y feed firmados con la clave Ed25519 del Llavero. Ambas firmas verificadas. Un ZIP alterado tras firmar fue rechazado por el verificador.
+- Eliminado el bloqueo de foco que afectaba a otras apps mientras los ajustes de AMSpace estaban activos. La comparación de ventana ya enfocada usa el ID de WindowServer.
+
 # Validación de 0.1.1
 
 - Reproducido el fallo del temporizador: la prueba de integración falla con la cadena literal `NSRunLoopCommonModes` y pasa usando la constante exportada por Foundation (`kCFRunLoopCommonModes`).

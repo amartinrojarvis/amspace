@@ -8,7 +8,7 @@ AMSpace muestra dónde estás con un vistazo: **`1 · ·`**, **`· 2 ·`**, **`�
 
 - **Escritorio actual.** Número activo y puntos medios para los demás escritorios de la pantalla activa. A partir de diez escritorios se compacta a `3 / 12`.
 - **Borde de la ventana activa.** Contorno interior sin separación, con radio de esquina leído del sistema, transparente al ratón, color libre o cuatro paletas y grosor de 1 a 6 puntos, en pasos de 0,5.
-- **Foco bajo el cursor.** Activa y eleva la ventana tras detener el ratón unos 240–350 ms. Se pausa al arrastrar, mantener ⌥ o trabajar en los ajustes de AMSpace.
+- **Foco bajo el cursor.** Activa y eleva la ventana tras detener el ratón unos 240–350 ms. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
 - **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.

@@ -396,27 +396,31 @@ impl App {
                 self.hide_border();
                 return;
             }
-            // No focus stealing while interacting with settings, a color panel, or a menu.
-            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
-            let key: Obj = msg_send![app, keyWindow];
-            let active: bool = msg_send![app, isActive];
-            if active && !key.is_null() {
-                return;
-            }
+            // Hit-testing excludes our own windows. Having settings active must
+            // not block focusing another app after the pointer leaves settings.
             let Some((w, pid)) = ax::window_at(point.x, primary_height() - point.y) else {
                 return;
             };
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: Obj = msg_send![ws, frontmostApplication];
             let front_pid: i32 = msg_send![front, processIdentifier];
-            if front_pid == pid && ax::focused(pid).is_some_and(|f| ax::CFEqual(f.0, w.0)) {
+            if front_pid == pid
+                && ax::window_id(w.0)
+                    .is_some_and(|id| ws::front_window(pid).is_some_and(|front| front.id == id))
+            {
                 return;
             }
             if front_pid != pid {
                 let running: Obj = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier:pid];
                 let _: bool = msg_send![running, activateWithOptions:0usize];
             }
-            ax::focus(w.0, pid);
+            let focused = ax::focus(w.0, pid);
+            if std::env::var_os("AMSPACE_TRACE_FOCUS").is_some() {
+                eprintln!(
+                    "hover: from_pid={front_pid} to_pid={pid} window={:?} raised={focused}",
+                    ax::window_id(w.0)
+                );
+            }
         }
     }
     fn show_settings(&mut self) {

@@ -116,20 +116,20 @@ pub fn application(pid: i32) -> Option<Owned> {
     }
     Some(app)
 }
-pub fn focused(pid: i32) -> Option<Owned> {
-    attr(application(pid)?.0, "AXFocusedWindow")
-}
-pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
+pub fn window_id(window: Cf) -> Option<u32> {
     type GetId = unsafe extern "C" fn(Cf, *mut u32) -> i32;
     let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"_AXUIElementGetWindow".as_ptr()) };
     if symbol.is_null() {
         return None;
     }
     let get_id = unsafe { std::mem::transmute::<*mut c_void, GetId>(symbol) };
+    let mut id = 0;
+    (unsafe { get_id(window, &mut id) } == 0 && id != 0).then_some(id)
+}
+pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
     for window in array(windows.0) {
-        let mut found = 0;
-        if unsafe { get_id(window, &mut found) } == 0 && found == id {
+        if window_id(window) == Some(id) {
             return Owned::new(unsafe { CFRetain(window) });
         }
     }
