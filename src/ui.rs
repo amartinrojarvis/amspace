@@ -183,7 +183,7 @@ impl App {
                 msg_send![class!(NSFont), monospacedDigitSystemFontOfSize:13f64, weight:0.23f64];
             let _: () = msg_send![b, setFont:font];
             let _: () = msg_send![b, setTarget:&*target];
-            let _: () = msg_send![b, setAction:sel!(settings:)];
+            let _: () = msg_send![b, setAction:sel!(statusClick:)];
             let _: usize = msg_send![b, sendActionOn:((1usize << 2) | (1usize << 4))];
             let _: () =
                 msg_send![b, setAccessibilityLabel:&*NSString::from_str("AMSpace · abrir ajustes")];
@@ -1383,19 +1383,99 @@ fn desktop_button_class() -> &'static AnyClass {
     }
     unsafe {
         let mut builder = ClassBuilder::new(c"AMSpaceDesktopButton", class!(NSButton)).unwrap();
+        // Let the real NSStatusBarButton own mouse tracking across Spaces.
+        // Children keep their individual AXPress actions, but only draw for
+        // physical input: nested NSButton cells can retain tracking state.
         builder.add_method(
-            sel!(rightMouseDown:),
-            desktop_right_down as extern "C-unwind" fn(Obj, Sel, Obj),
-        );
-        builder.add_method(
-            sel!(rightMouseUp:),
-            settings as extern "C-unwind" fn(Obj, Sel, Obj),
+            sel!(hitTest:),
+            desktop_hit_test as extern "C-unwind" fn(Obj, Sel, NSPoint) -> Obj,
         );
         builder.register()
     }
 }
-extern "C-unwind" fn desktop_right_down(_: Obj, _: Sel, _: Obj) {}
-extern "C-unwind" fn select_desktop(_: Obj, _: Sel, sender: Obj) {
+extern "C-unwind" fn desktop_hit_test(_: Obj, _: Sel, _: NSPoint) -> Obj {
+    ptr::null_mut()
+}
+extern "C-unwind" fn status_click(target: Obj, _: Sel, sender: Obj) {
+    unsafe {
+        let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let event: Obj = msg_send![app, currentEvent];
+        let kind: usize = msg_send![event, type];
+        let flags: usize = msg_send![event, modifierFlags];
+        if kind == 4 || flags & (1 << 18) != 0 {
+            settings(target, sel!(settings:), sender);
+            return;
+        }
+        if kind != 2 {
+            // Keyboard/VoiceOver activation has no reliable pointer position.
+            desktop_menu(target, sel!(desktopMenu:), sender);
+            return;
+        }
+        // The menu-bar host may forward a click at the item's centre.
+        // Use the actual pointer location to identify its desktop segment.
+        let cursor: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let window: Obj = msg_send![sender, window];
+        let location: NSPoint = msg_send![window, convertPointFromScreen:cursor];
+        let point: NSPoint =
+            msg_send![sender, convertPoint:location, fromView:ptr::null::<AnyObject>()];
+        let views: Obj = msg_send![sender, subviews];
+        let count: usize = msg_send![views, count];
+        if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
+            eprintln!("spaces: status pointer x={} views={count}", point.x);
+        }
+        for index in 0..count {
+            let view: Obj = msg_send![views, objectAtIndex:index];
+            let desktop: bool = msg_send![view, isKindOfClass:desktop_button_class()];
+            if !desktop {
+                continue;
+            }
+            let frame: NSRect = msg_send![view, frame];
+            if point.x < frame.origin.x || point.x >= frame.origin.x + frame.size.width {
+                continue;
+            }
+            let id: isize = msg_send![view, tag];
+            if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
+                eprintln!(
+                    "spaces: status mouse-up x={} cursor={},{} id={id}",
+                    point.x, cursor.x, cursor.y
+                );
+            }
+            if id > 0 {
+                schedule_selection(target, id);
+            } else {
+                desktop_menu(target, sel!(desktopMenu:), sender);
+            }
+            return;
+        }
+    }
+}
+fn schedule_selection(target: Obj, id: isize) {
+    unsafe {
+        let value: Obj = msg_send![class!(NSNumber), numberWithInteger:id];
+        let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.01f64, target:target, selector:sel!(selectDesktopRequest:), userInfo:value, repeats:false];
+        let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+        add_common_timer(run, &timer);
+    }
+}
+extern "C-unwind" fn select_desktop_request(target: Obj, _: Sel, timer: Obj) {
+    let id: isize = unsafe {
+        let value: Obj = msg_send![timer, userInfo];
+        msg_send![value, integerValue]
+    };
+    let delivered = APP.with(|cell| {
+        let Ok(mut app) = cell.try_borrow_mut() else {
+            return false;
+        };
+        if let Some(app) = app.as_mut() {
+            app.select_desktop(id as u64);
+        }
+        true
+    });
+    if !delivered {
+        schedule_selection(target, id);
+    }
+}
+extern "C-unwind" fn select_desktop(target: Obj, _: Sel, sender: Obj) {
     let id: isize = unsafe { msg_send![sender, tag] };
     unsafe {
         // AXPress on a submenu item can leave AppKit tracking the parent menu.
@@ -1410,7 +1490,7 @@ extern "C-unwind" fn select_desktop(_: Obj, _: Sel, sender: Obj) {
         }
     }
     if id > 0 {
-        with_app(|a| a.select_desktop(id as u64));
+        schedule_selection(target, id);
     }
 }
 fn schedule_switch_timer(target: Obj) {
@@ -1577,6 +1657,8 @@ pub fn run() {
                 settings as extern "C-unwind" fn(Obj, Sel, Obj),
             ),
             (sel!(selectDesktop:), select_desktop),
+            (sel!(selectDesktopRequest:), select_desktop_request),
+            (sel!(statusClick:), status_click),
             (sel!(menuNeedsUpdate:), desktop_menu_update),
             (sel!(desktopMenu:), desktop_menu),
             (sel!(showDesktopMenu:), show_desktop_menu),

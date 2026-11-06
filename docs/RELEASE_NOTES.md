@@ -1,11 +1,8 @@
-AMSpace 0.4.0 — escritorios interactivos.
+AMSpace 0.4.1 — regreso al escritorio correcto.
 
-- Clic izquierdo en un número, punto o icono de la barra para cambiar a ese escritorio.
-- Clic derecho para abrir ajustes, sin cambiar de escritorio ni añadir otro icono.
-- Pulsar el escritorio actual no provoca ninguna transición.
-- El indicador compacto de más de nueve escritorios abre una lista de destinos.
-- Cambio directo, sin abrir Mission Control, también a escritorios vacíos.
-- Compatible con desplazamiento natural activado o desactivado.
-- Confirmación del destino real, clics consecutivos y pausa del borde y del foco durante la transición.
+- Corrige los clics en la barra que se interpretaban siempre como una selección del escritorio 2.
+- El botón nativo de la barra recibe los clics y calcula el escritorio a partir de la posición real del cursor.
+- Evita descartar selecciones cuando hay una llamada reentrante de Accesibilidad.
+- Mantiene el clic derecho para ajustes y el cambio directo, sin abrir Mission Control.
 
-El cambio requiere Accesibilidad. La distribución ad hoc puede requerir renovar el permiso al actualizar.
+La distribución ad hoc puede requerir renovar Accesibilidad al actualizar.

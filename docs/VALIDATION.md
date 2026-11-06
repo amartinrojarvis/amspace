@@ -1,7 +1,14 @@
+# Validación de 0.4.1
+
+- El usuario reprodujo que la barra cambiaba al 2 y no regresaba al 1. El registro mostró que las selecciones posteriores también llegaban con ID 5 (escritorio 2); no aparecía la selección de ID 1.
+- Con el botón nativo, el evento reenviado indicaba x=24, el centro del grupo de 48 pt. La selección ahora usa NSEvent.mouseLocation y la convierte mediante la ventana y la vista del botón.
+- Diez pruebas correctas; fmt, Clippy y build universal sin errores. Firma estricta de la instalación verificada.
+- Pendiente de confirmación física de la secuencia 2 → 1 → 2 → 1 con la corrección instalada.
+
 # Validación de 0.4.0
 
 - Diez pruebas correctas; fmt, Clippy sin warnings, plist y compilación universal verificados.
-- Confirmado en macOS 27.2 el cambio real 1 → 2 (vacío) → 1 desde la acción nativa de selección. El diagnóstico de SkyLight confirmó los IDs 5 y 1 tras las dos acciones, sin abrir Mission Control.
+- Confirmado en macOS 27.2 el cambio real 1 → 2 (vacío) → 1 desde el menú de la aplicación. Esta comprobación no ejercitaba los clics físicos en los segmentos de la barra. El diagnóstico de SkyLight confirmó los IDs 5 y 1 tras las dos acciones, sin abrir Mission Control.
 - El equipo tiene desplazamiento natural desactivado. Las pruebas cubren los signos para ambas preferencias, ambas direcciones y el protocolo anterior a macOS 27; también validan longitudes, fases y velocidad con signo del payload IOHID.
 - El usuario confirmó el clic derecho para ajustes. La selección conserva el ID real del escritorio; la prueba de orden cubre espacios a pantalla completa intermedios, reordenación y eliminación del destino.
 - Una petición mantiene como máximo un salto en curso; los clics nuevos actualizan el destino. Cada salto y la operación completa tienen plazo límite, y el temporizador desaparece al terminar.
