@@ -3,6 +3,7 @@ compile_error!("AMSpace requires macOS 13 or later.");
 
 mod accessibility;
 mod focus;
+mod instance;
 mod model;
 mod native;
 mod space_style;
@@ -26,6 +27,14 @@ fn main() {
             }
         });
     } else {
+        let _instance = match instance::acquire() {
+            Ok(Some(lock)) => lock,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("AMSpace cannot acquire its instance lock: {error}");
+                return;
+            }
+        };
         ui::run();
     }
 }

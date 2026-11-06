@@ -1,12 +1,9 @@
-AMSpace 0.3.0 — foco independiente e iconos de escritorio.
+AMSpace 0.3.1 — acabado y actualizaciones.
 
-- Foco del teclado por ventana, separado de su orden visual; corrección para ventanas hermanas de Ghostty.
-- Nuevo ajuste «Traer al primer plano», opcional e independiente del foco.
-- Corregida la detección bajo una capa transparente del Dock.
-- Tres modos del indicador: Puntos, Números e Iconos; activo destacado y demás atenuados.
-- 30 iconos: vídeo, fotografía, comunicaciones, audio, trabajo, código, calendario, tareas y más. Selección por escritorio, con opción de mantener su número.
-- Ajustes compactos en Ventanas, Escritorios y Aplicación.
-- Acerca de con Alberto Martín, Instagram y X @amartinro, con espaciado revisado.
-- Actualizaciones firmadas dentro de la app, búsqueda diaria opcional e historial de versiones.
+- Diálogos del actualizador adaptados al idioma del sistema, incluido español.
+- Instancia única: evita procesos duplicados ante aperturas o relanzamientos simultáneos.
+- Incluye el foco del teclado independiente de «Traer al primer plano» y la corrección entre ventanas de Ghostty.
+- 30 iconos configurables por escritorio, con el activo destacado y los demás atenuados; también modos Puntos y Números.
+- Ajustes compactos y Acerca de con Alberto Martín y @amartinro.
 
 Universal Apple Silicon + Intel. La distribución ad hoc puede requerir renovar Accesibilidad al actualizar; la app no evita ese control de macOS.

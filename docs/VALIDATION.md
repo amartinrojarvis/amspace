@@ -1,9 +1,16 @@
+# Validación de 0.3.1
+
+- Siete pruebas correctas. La prueba de instancia única comprueba exclusión entre dos manejadores y disponibilidad después de liberar el primero.
+- Realizada actualización completa desde una copia de 0.2.0: búsqueda en la app, oferta 0.3.0, descarga, validación, instalación y reinicio. Verificada versión 0.3.0 del bundle instalado y su firma estricta; las preferencias se conservaron.
+- Declarada localización española para que los diálogos nativos de Sparkle sigan el idioma del sistema.
+- Añadido bloqueo de instancia para impedir dos procesos de AMSpace ante relanzamientos simultáneos.
+
 # Validación de 0.3.0
 
 - Seis pruebas correctas, fmt y Clippy sin warnings; build universal y firma del bundle verificada.
 - Inspeccionadas las tres pestañas y la ventana Acerca de. El copyright ya no se acerca al botón Historial.
 - Modo Iconos probado en la UI: icono activo blanco e inactivo atenuado. Los 30 nombres SF Symbols comprobados con NSImage, sin ausencias en el sistema de prueba.
-- El diagnóstico del foco confirma target=562 y AXFocused=562 en Ghostty con elevación desactivada. Esto comprueba identidad AX; la prueba manual de alternancia y orden con ventanas superpuestas se documentará al completarse.
+- El diagnóstico registró alternancia repetida entre las dos ventanas de Ghostty y ventanas de otras aplicaciones. En todos los cambios observados, AXFocused coincidió con el ID objetivo, con elevación desactivada. Esto comprueba identidad del foco; no sustituye las pruebas de orden con todas las aplicaciones y ventanas superpuestas.
 - Detectada la capa transparente de pantalla completa de Dock, nivel 20, que bloqueaba el hit-test por geometría. Ahora AX decide si el elemento recibe entrada y WindowServer desambigua las ventanas de la misma app.
 - Las APIs privadas se resuelven en ejecución; no se desactiva SIP ni se inyecta código.
 
