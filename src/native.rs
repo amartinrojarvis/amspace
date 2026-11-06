@@ -6,6 +6,14 @@ use objc2::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 pub type Obj = *mut AnyObject;
+pub unsafe fn add_common_timer(run_loop: Obj, timer: &AnyObject) {
+    unsafe {
+        // Use the exported constant. Its actual value is kCFRunLoopCommonModes;
+        // a literal "NSRunLoopCommonModes" creates an unused custom mode.
+        let _: () =
+            msg_send![run_loop, addTimer:timer, forMode:objc2_foundation::NSRunLoopCommonModes];
+    }
+}
 pub fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
 }
@@ -48,5 +56,55 @@ pub unsafe fn label(
 pub unsafe fn text(obj: Obj, value: &str) {
     unsafe {
         let _: () = msg_send![obj, setStringValue:&*NSString::from_str(value)];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2::{
+        rc::autoreleasepool,
+        runtime::{ClassBuilder, Sel},
+        sel,
+    };
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
+    static FIRED: AtomicUsize = AtomicUsize::new(0);
+    extern "C-unwind" fn tick(_: Obj, _: Sel, _: Obj) {
+        FIRED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn common_timer_fires_in_default_mode_and_stops_after_invalidation() {
+        autoreleasepool(|_| unsafe {
+            let mut builder =
+                ClassBuilder::new(c"AMSpaceTimerRegression", class!(NSObject)).unwrap();
+            builder.add_method(sel!(tick:), tick as extern "C-unwind" fn(Obj, Sel, Obj));
+            let target: Retained<AnyObject> = msg_send![builder.register(), new];
+            let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.01f64, target:&*target, selector:sel!(tick:), userInfo:std::ptr::null::<AnyObject>(), repeats:true];
+            let run_loop: Obj = msg_send![class!(NSRunLoop), currentRunLoop];
+            add_common_timer(run_loop, &timer);
+            let start = Instant::now();
+            while FIRED.load(Ordering::Relaxed) == 0 && start.elapsed() < Duration::from_millis(300)
+            {
+                let until: Obj = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow:0.02f64];
+                let _: () = msg_send![run_loop, runUntilDate:until];
+            }
+            let _: () = msg_send![&timer, invalidate];
+            let count = FIRED.load(Ordering::Relaxed);
+            assert!(
+                count > 0,
+                "cursor timer never ran in the normal application run loop"
+            );
+            let until: Obj = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow:0.04f64];
+            let _: () = msg_send![run_loop, runUntilDate:until];
+            assert_eq!(
+                FIRED.load(Ordering::Relaxed),
+                count,
+                "disabled timers must stop waking up"
+            );
+        });
     }
 }

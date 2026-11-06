@@ -192,8 +192,14 @@ pub fn focus(window: Cf, pid: i32) -> bool {
         return false;
     };
     unsafe {
+        // Raising a background window alone does not make its app active.
+        AXUIElementSetAttributeValue(
+            app.0,
+            cf(&NSString::from_str("AXFrontmost")),
+            kCFBooleanTrue,
+        );
         AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXMain")), kCFBooleanTrue);
-        AXUIElementSetAttributeValue(app.0, cf(&NSString::from_str("AXFocusedWindow")), window);
+        AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXFocused")), kCFBooleanTrue);
         AXUIElementPerformAction(window, cf(&NSString::from_str("AXRaise"))) == 0
     }
 }

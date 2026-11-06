@@ -19,6 +19,9 @@ unsafe extern "C" {}
 #[link(name = "ServiceManagement", kind = "framework")]
 unsafe extern "C" {}
 thread_local! { static APP: RefCell<Option<App>> = const { RefCell::new(None) }; }
+// NSWindowCollectionBehavior: transient panels are hidden by Mission Control.
+// Stationary panels remain visible like the desktop and must not be used here.
+const BORDER_COLLECTION_BEHAVIOR: usize = (1 << 0) | (1 << 3) | (1 << 6) | (1 << 8);
 struct App {
     target: Retained<AnyObject>,
     status: Retained<AnyObject>,
@@ -151,7 +154,7 @@ impl App {
             let _: () = msg_send![&border, setHasShadow:false];
             let _: () = msg_send![&border, setIgnoresMouseEvents:true];
             let _: () = msg_send![&border, setLevel:0isize];
-            let _: () = msg_send![&border, setCollectionBehavior:(1usize|16|64|256)];
+            let _: () = msg_send![&border, setCollectionBehavior:BORDER_COLLECTION_BEHAVIOR];
             let _: () = msg_send![&border, setHidesOnDeactivate:false];
             let _: () = msg_send![&border, setAnimationBehavior:2isize];
             let v: Obj = msg_send![&border, contentView];
@@ -357,7 +360,7 @@ impl App {
                 let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.08f64, target:&*self.target, selector:sel!(hover:), userInfo:ptr::null::<AnyObject>(), repeats:true];
                 let _: () = msg_send![&timer, setTolerance:0.03f64];
                 let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
-                let _: () = msg_send![run, addTimer:&*timer, forMode:&*NSString::from_str("NSRunLoopCommonModes")];
+                add_common_timer(run, &timer);
                 self.hover_timer = Some(timer);
             }
         }
@@ -390,7 +393,8 @@ impl App {
             // No focus stealing while interacting with settings, a color panel, or a menu.
             let app: Obj = msg_send![class!(NSApplication), sharedApplication];
             let key: Obj = msg_send![app, keyWindow];
-            if !key.is_null() {
+            let active: bool = msg_send![app, isActive];
+            if active && !key.is_null() {
                 return;
             }
             let Some((w, pid)) = ax::window_at(point.x, primary_height() - point.y) else {
@@ -402,10 +406,11 @@ impl App {
             if front_pid == pid && ax::focused(pid).is_some_and(|f| ax::CFEqual(f.0, w.0)) {
                 return;
             }
-            if ax::focus(w.0, pid) {
+            if front_pid != pid {
                 let running: Obj = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier:pid];
                 let _: bool = msg_send![running, activateWithOptions:0usize];
             }
+            ax::focus(w.0, pid);
         }
     }
     fn show_settings(&mut self) {
@@ -614,7 +619,7 @@ impl App {
             label(
                 root,
                 rect(29., 25., 270., 20.),
-                "AMSPACE  /  0.1.0",
+                concat!("AMSPACE  /  ", env!("CARGO_PKG_VERSION")),
                 10.,
                 0.3,
                 true,

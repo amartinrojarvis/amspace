@@ -35,7 +35,7 @@ Las referencias a símbolos privados se resuelven una sola vez y el framework pe
 
 WindowServer devuelve coordenadas globales con origen superior izquierdo de la pantalla principal. AppKit utiliza el origen inferior izquierdo de esa misma pantalla. El panel convierte `y = altura_principal - y_windowserver - altura_ventana`, sin margen exterior. El trazo se pinta hacia dentro del rectángulo real. El radio se consulta por ventana y se aplica con curva continua de Core Animation; si el metadato no está disponible se usa un radio de respaldo de 10 puntos.
 
-El panel es transparente, no activable, ignora eventos del ratón y se ordena inmediatamente encima de su ventana objetivo, en el nivel normal, en lugar de flotar encima de todas las ventanas. Su identificación usa el orden visible del compositor y el PID activo; un `AXFocusedWindow` antiguo no puede seleccionar otra ventana de Ghostty por error.
+El panel usa `NSWindowCollectionBehaviorTransient`: macOS lo oculta en Mission Control, en lugar de mantenerlo inmóvil como un panel `Stationary`. Es transparente, no activable, ignora eventos del ratón y se ordena inmediatamente encima de su ventana objetivo, en el nivel normal, en lugar de flotar encima de todas las ventanas. Su identificación usa el orden visible del compositor y el PID activo; un `AXFocusedWindow` antiguo no puede seleccionar otra ventana de Ghostty por error.
 
 Mover una ventana requiere únicamente consultar sus límites y trasladar el panel propio con `SLSMoveWindow`: no hay redibujado, llamadas AX ni espera en el hilo de AppKit en esa ruta. Redimensionar actualiza el panel y su capa sin animaciones implícitas y fuerza el commit de Core Animation. Creación y activación ejecutan además una única reconciliación a los 80 ms, porque una app puede activarse antes de ordenar su primera ventana. No es sondeo permanente y no retrasa la actualización inicial.
 
@@ -43,7 +43,7 @@ No se modifica ni se inyecta código en la ventana objetivo. Es un overlay exter
 
 ## Foco y permisos
 
-El temporizador existe únicamente si el usuario activa el foco y AX está autorizado. Consulta posición, botones y modificadores. Descarta arrastre y ⌥, exige 240 ms de reposo y realiza un único hit-test por posición. Antes de activar valida `AXStandardWindow`, descarta el propio proceso y evita repetir el foco actual. El sistema decide qué ventanas son accesibles.
+El temporizador se registra con la constante exportada `NSRunLoopCommonModes` de Foundation, nunca con una cadena inventada. Existe únicamente si el usuario activa el foco y AX está autorizado. Consulta posición, botones y modificadores. Descarta arrastre y ⌥, exige 240 ms de reposo y realiza un único hit-test por posición. Antes de activar valida `AXStandardWindow`, descarta el propio proceso y evita repetir el foco actual. Los ajustes solo suspenden el foco cuando AMSpace está activa. Para enfocar otra aplicación se solicita activación y después se establecen `AXFrontmost`, `AXMain` y `AXFocused` antes de elevar la ventana. El sistema decide qué ventanas son accesibles.
 
 La app no concede permisos por sí misma. El botón Accesibilidad solicita al sistema el diálogo correspondiente y abre su panel de ajustes. Se vuelve a comprobar la autorización cuando la app recibe foco. Los errores del registro de inicio de sesión se muestran y se consulta el estado real de `SMAppService` para no dejar un interruptor engañoso.
 

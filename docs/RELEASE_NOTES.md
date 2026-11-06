@@ -1,12 +1,11 @@
-Primera versión de AMSpace para macOS 13 o posterior.
+AMSpace 0.1.1 — correcciones de foco y Mission Control.
 
-- Indicador compacto de escritorios en la barra de menús.
-- Borde interior de la ventana activa, radio adaptado, color y grosor configurables.
-- Seguimiento por ID y eventos de WindowServer, incluidas ventanas nuevas.
-- Foco opcional bajo el cursor e inicio automático con SMAppService.
-- Interfaz nativa, icono propio y documentación en español.
-- Compilación universal Apple Silicon + Intel.
+- Corregido el modo del run loop del temporizador: el seguimiento del cursor ahora se ejecuta en el ciclo normal de macOS.
+- Los ajustes abiertos en segundo plano ya no bloquean el foco automático.
+- La app de destino se activa antes de elevar y enfocar su ventana.
+- El borde usa el comportamiento transitorio de AppKit para ocultarse en Mission Control y reaparecer al volver al escritorio.
+- Prueba de integración del temporizador: reproduce el fallo anterior, comprueba su ejecución real y su desactivación.
 
-Paquete firmado ad hoc, sin notarización de Apple. Instálalo en Aplicaciones y concede Accesibilidad para borde y foco. Tras sustituir una compilación de desarrollo puede ser necesario eliminar la entrada de Accesibilidad y añadir otra vez la app instalada.
+El foco se activa al detener el cursor unos 240–350 ms sobre una ventana; se pausa con ⌥, al arrastrar y al trabajar en los ajustes de AMSpace.
 
-Consulta docs/VALIDATION.md para pruebas realizadas y límites de compatibilidad.
+Paquete universal Apple Silicon + Intel, firmado ad hoc. Tras sustituir una compilación, macOS puede requerir eliminar AMSpace de Accesibilidad y añadir de nuevo la copia de Aplicaciones.

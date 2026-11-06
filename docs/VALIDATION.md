@@ -1,4 +1,12 @@
-# Validación de 0.1.0
+# Validación de 0.1.1
+
+- Reproducido el fallo del temporizador: la prueba de integración falla con la cadena literal `NSRunLoopCommonModes` y pasa usando la constante exportada por Foundation (`kCFRunLoopCommonModes`).
+- La misma prueba verifica que el temporizador se invalida y deja de dispararse.
+- Corregida la pausa por ventana de ajustes: requiere que AMSpace esté activa; una ventana de ajustes en segundo plano no bloquea el seguimiento.
+- Para Mission Control, sustituido `Stationary` (permanece visible) por `Transient` (ocultado por el sistema), conforme a la cabecera de AppKit y la documentación de Apple.
+- Cinco pruebas automatizadas en total. La comprobación física de foco y Mission Control requiere Accesibilidad vigente y la app actualizada.
+
+# Historial: validación de 0.1.0
 
 Fecha: 2026-11-06. Equipo local: Apple Silicon, macOS 27.2 (26B123). Toolchain: Rust 1.99.1. Objetivo mínimo del paquete: macOS 13.
 
