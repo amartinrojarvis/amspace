@@ -1,3 +1,11 @@
+# Publicación de 0.6.0
+
+- Versión 0.6.0, build 9. 58 pruebas, fmt, Clippy y plist correctos. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42305489910) finalizada correctamente sobre `4424b323dd7c6ff39902c5379afe61b28cb7f7d4`.
+- [Release v0.6.0](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.0) pública con ZIP universal, catálogo firmado y SHA256SUMS. Descarga anónima del ZIP idéntica al artefacto firmado local.
+- Catálogo subido después de publicar el ZIP; contenido del commit público verificado y firma Sparkle válida. La URL de main todavía devolvía el catálogo anterior desde la caché de GitHub: Buscar… en 0.5.0 mostró que estaba al día. No se considera probada la actualización completa por Sparkle para esta versión.
+- Copia local 0.6.0 instalada y abierta, firma estricta y versión del diagnóstico verificadas; preferencias de usuario conservadas. Respaldo en `.cache/AMSpace-before-0.6.0.zip`.
+- Se mantienen las limitaciones de validación física y las discrepancias de Finder documentadas a continuación.
+
 # Selector de plantillas y depuración de monitores (desarrollo posterior a 0.5.0)
 
 - 58 pruebas correctas; fmt, Clippy y plist sin errores. Paquete universal compilado y firma estricta verificada; copia local instalada en Aplicaciones, sin publicar otra release.
