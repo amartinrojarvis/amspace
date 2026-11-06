@@ -1,3 +1,10 @@
+# Publicación de 0.6.2
+
+- Versión 0.6.2, build 11. 61 tests, fmt, Clippy y plist correctos. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42308626666) correcta sobre `ff17f6de0a3e602b0363f68fa3a1c1f8f299be60`.
+- [Release v0.6.2](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.2) pública con ZIP universal, catálogo firmado y SHA256SUMS. Descarga anónima idéntica al artefacto local. Catálogo público idéntico al firmado y firma Sparkle verificada.
+- Actualización real desde 0.6.1 mediante Buscar… e Instalar actualización: descarga, extracción, instalación y reinicio correctos. UI confirma Versión 0.6.2. Preferencias de usuario conservadas; se excluyen claves internas de Sparkle/AppKit/WebKit de la comparación.
+- La UI pide renovar Accesibilidad para la nueva firma ad hoc; no se modificó ese permiso. Respaldo previo en `.cache/AMSpace-before-0.6.2.zip`.
+
 # Ampliación y sugerencias de atajos (desarrollo posterior a 0.6.1)
 
 - 61 pruebas correctas, fmt/Clippy/plist sin errores y paquete universal firmado verificado. Instalada la compilación local; no se ha publicado otra release.
