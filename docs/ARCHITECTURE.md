@@ -21,6 +21,7 @@ NSStatusItem ─── clic ─── NSPanel de ajustes
 | `accessibility.rs` | RAII de CoreFoundation, consultas AX, observador de foco y ciclo de vida, respaldo de geometría |
 | `window_server.rs` | Identidad, orden, geometría y radios reales; notificaciones de movimiento, tamaño, creación y cierre |
 | `native.rs` | Puente AppKit pequeño: vistas, texto y colores |
+| `updater.rs` | Puente Rust a Sparkle, ciclo de actualización y búsqueda opcional |
 | `ui.rs` | Ciclo de vida, ajustes, panel de borde, temporizador e ítems de inicio |
 
 ## Seguridad de memoria y ciclo de vida
@@ -57,3 +58,9 @@ La app no concede permisos por sí misma. El botón Accesibilidad solicita al si
 - [Hammerspoon: investigación e integración de SkyLight/Spaces](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/spaces/libspaces.m).
 
 Las cabeceras del SDK de macOS son la referencia para los selectores, las firmas C y las constantes AppKit. La implementación Rust es propia; las firmas y los IDs de eventos privados se contrastan con proyectos que documentan el comportamiento de WindowServer.
+
+## Actualizaciones
+
+El bundle incorpora Sparkle 2.10.1, cargado mediante NSBundle desde Contents/Frameworks. Todos sus objetos permanecen en el hilo principal. SPUStandardUpdaterController ofrece los diálogos nativos y SPUUpdater persiste la preferencia de búsqueda. Se verifica la firma Ed25519 del feed y la del ZIP antes de extraerlo. No se envía perfil del sistema y las instalaciones automáticas están deshabilitadas. El modo cargo run funciona sin el framework, con los controles de actualización deshabilitados.
+
+El empaquetador fija versión y SHA-256 de Sparkle. El script prepare-release.py comprueba coherencia de versiones, firma ZIP y feed con la clave del Llavero y genera sumas SHA-256. El feed público se actualiza después de publicar el archivo, evitando anunciar una descarga inexistente.

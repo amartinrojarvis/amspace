@@ -6,6 +6,7 @@ mod model;
 mod native;
 mod spaces;
 mod ui;
+mod updater;
 mod window_server;
 
 fn main() {

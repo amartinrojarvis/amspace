@@ -11,7 +11,9 @@ AMSpace muestra dónde estás con un vistazo: **`1 · ·`**, **`· 2 ·`**, **`�
 - **Foco bajo el cursor.** Activa y eleva la ventana tras detener el ratón unos 240–350 ms. Se pausa al arrastrar, mantener ⌥ o trabajar en los ajustes de AMSpace.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
-- **Preferencias persistentes.** Sin cuentas, conexión de red, telemetría, servicios auxiliares ni navegador integrado.
+- **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.
+- **Acerca de.** Autoría de Alberto Martín y enlaces a Instagram y X: [@amartinro](https://x.com/amartinro).
+- **Preferencias persistentes.** Sin cuenta ni telemetría. Solo se conecta a GitHub al buscar o descargar actualizaciones; Sparkle utiliza auxiliares durante la instalación.
 - **Icono propio.** Ventana redondeada con un espacio destacado; fuentes vectoriales y versión `.icns` incluidas.
 
 El borde y el foco están desactivados inicialmente: actívalos cuando hayas concedido Accesibilidad.
@@ -20,7 +22,7 @@ El borde y el foco están desactivados inicialmente: actívalos cuando hayas con
 
 Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el ZIP desde [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
-Esta primera versión está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
+La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
 1. Abre AMSpace. Solo aparece en la barra de menús, sin icono permanente en el Dock.
 2. Haz clic en `1 · ·` para abrir los ajustes.
@@ -29,6 +31,12 @@ Esta primera versión está firmada **ad hoc**, sin certificado Developer ID ni 
 5. Activa **Abrir al iniciar sesión** si lo deseas. macOS puede solicitar confirmar el ítem de inicio.
 
 **El indicador de escritorios funciona sin Accesibilidad.** No se necesita Grabación de pantalla ni Monitorización de entrada. Accesibilidad se usa para consultar la posición de ventanas, recibir cambios de foco y activar ventanas.
+
+## Actualizar desde AMSpace
+
+En ajustes, pulsa **Buscar…**, revisa las novedades y elige **Instalar actualización**. AMSpace descarga, comprueba la firma, sustituye su paquete y se reinicia conservando tus preferencias. Si no hay novedades, lo indica. Puedes activar **Buscar actualizaciones automáticamente** para recibir avisos diarios; no se instala sin tu intervención.
+
+El menú **Acerca de…** incluye la versión, autoría y el historial de versiones. La firma Ed25519 protege tanto el catálogo como los archivos; la clave privada permanece en el Llavero del desarrollador. Es independiente de la firma de Apple: mientras los paquetes sean ad hoc, macOS puede exigir renovar Accesibilidad tras actualizarlos.
 
 ## Compilar
 
@@ -49,7 +57,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ./scripts/bundle.sh --universal
 ```
 
-La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` es únicamente una herramienta de desarrollo para rasterizar el icono vectorial; no forma parte del ejecutable. Solo hay tres dependencias directas de Rust: `objc2`, `objc2-foundation` y `libc`.
+La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` es únicamente una herramienta de desarrollo para rasterizar el icono vectorial; no forma parte del ejecutable. El empaquetado descarga Sparkle 2.10.1 desde su repositorio oficial y verifica un SHA-256 fijado antes de integrarlo. Solo hay tres dependencias directas de Rust: `objc2`, `objc2-foundation` y `libc`.
 
 Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certificado, define `SIGNING_IDENTITY` al ejecutar el empaquetador. La distribución notarizada requiere además configurar hardened runtime, firmar con Developer ID y enviar el paquete al servicio de notarización; este script no realiza esos pasos.
 
@@ -71,7 +79,7 @@ Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la
 
 ## Eficiencia
 
-- Sin temporizador recurrente con el foco automático desactivado.
+- Sin sondeo de ventanas con el foco automático desactivado. La búsqueda automática de versiones, opcional y desactivada inicialmente, se programa una vez al día.
 - Spaces se consulta al cambiar de escritorio, aplicación o pantalla y al abrir ajustes.
 - El borde identifica la ventana por su ID de WindowServer. El movimiento se aplica directamente desde la notificación del compositor, sin redibujar ni esperar a Accesibilidad. El tamaño se actualiza en el siguiente turno del hilo principal, sin demora artificial; no hay un bucle de animación permanente.
 - El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
@@ -103,3 +111,9 @@ python3 scripts/benchmark.py <PID> --seconds 20
 [Arquitectura](docs/ARCHITECTURE.md) · [Validación y pruebas manuales](docs/VALIDATION.md) · [Licencia MIT](LICENSE)
 
 Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSUserDefaults`. Para desinstalar: desactiva inicio de sesión, sal de la app, elimina AMSpace de Aplicaciones y retira su permiso de Accesibilidad si lo deseas.
+
+## Autoría
+
+Creado por **Alberto Martín** · [Instagram @amartinro](https://www.instagram.com/amartinro/) · [X @amartinro](https://x.com/amartinro).
+
+[Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt)

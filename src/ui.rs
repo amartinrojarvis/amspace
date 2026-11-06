@@ -1,5 +1,5 @@
 //! AppKit and AX run on the main thread. Idle mode has no recurring timer.
-use crate::{accessibility as ax, model, native::*, spaces, window_server as ws};
+use crate::{accessibility as ax, model, native::*, spaces, updater::Updater, window_server as ws};
 use objc2::{
     class, msg_send,
     rc::{Allocated, Retained, autoreleasepool},
@@ -28,6 +28,9 @@ struct App {
     border: Retained<AnyObject>,
     defaults: Retained<AnyObject>,
     settings: Option<Retained<AnyObject>>,
+    about: Option<Retained<AnyObject>>,
+    updater: Option<Updater>,
+    updates_switch: Obj,
     border_enabled: bool,
     hover_enabled: bool,
     width: f64,
@@ -182,6 +185,9 @@ impl App {
                 status,
                 border,
                 settings: None,
+                about: None,
+                updater: Updater::new(),
+                updates_switch: ptr::null_mut(),
                 width,
                 rgb,
                 observer: None,
@@ -428,23 +434,23 @@ impl App {
     }
     unsafe fn build_settings(&mut self) {
         unsafe {
-            let w = window(rect(0., 0., 460., 658.), 1 | 2 | 4 | 32768);
+            let w = window(rect(0., 0., 460., 768.), 1 | 2 | 4 | 32768);
             let _: () = msg_send![&w, setTitle:&*NSString::from_str("AMSpace")];
             let _: () = msg_send![&w, setTitleVisibility:1isize];
             let _: () = msg_send![&w, setTitlebarAppearsTransparent:true];
             let _: () = msg_send![&w, setHidesOnDeactivate:false];
             let _: () = msg_send![&w, center];
-            let effect = alloc_view(class!(NSVisualEffectView), rect(0., 0., 460., 658.));
+            let effect = alloc_view(class!(NSVisualEffectView), rect(0., 0., 460., 768.));
             let _: () = msg_send![&effect, setMaterial:12isize];
             let _: () = msg_send![&effect, setBlendingMode:0isize];
             let _: () = msg_send![&effect, setState:1isize];
             let _: () = msg_send![&w, setContentView:&*effect];
             let root = Retained::as_ptr(&effect) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
-            label(root, rect(28., 565., 250., 42.), "amspace", 32., 0.5, false);
+            label(root, rect(28., 675., 250., 42.), "amspace", 32., 0.5, false);
             label(
                 root,
-                rect(29., 539., 350., 22.),
+                rect(29., 649., 350., 22.),
                 "Tu espacio. Tu foco.",
                 14.,
                 0.,
@@ -452,17 +458,17 @@ impl App {
             );
             self.preview = label(
                 root,
-                rect(314., 570., 118., 28.),
+                rect(314., 680., 118., 28.),
                 &self.last_title,
                 20.,
                 0.3,
                 false,
             );
             let _: () = msg_send![self.preview, setAlignment:2isize];
-            card(root, rect(24., 303., 412., 215.));
+            card(root, rect(24., 413., 412., 215.));
             label(
                 root,
-                rect(42., 477., 310., 22.),
+                rect(42., 587., 310., 22.),
                 "Borde de la ventana activa",
                 14.,
                 0.3,
@@ -470,7 +476,7 @@ impl App {
             );
             label(
                 root,
-                rect(42., 451., 320., 20.),
+                rect(42., 561., 320., 20.),
                 "Un contorno sutil para situarte al instante.",
                 12.,
                 0.,
@@ -479,14 +485,14 @@ impl App {
             self.border_switch = toggle(
                 root,
                 378.,
-                478.,
+                588.,
                 "Borde de la ventana activa",
                 target,
                 1,
                 self.border_enabled,
             );
-            label(root, rect(42., 405., 100., 22.), "Color", 13., 0., false);
-            let well = alloc_view(class!(NSColorWell), rect(366., 399., 48., 30.));
+            label(root, rect(42., 515., 100., 22.), "Color", 13., 0., false);
+            let well = alloc_view(class!(NSColorWell), rect(366., 509., 48., 30.));
             let _: () = msg_send![&well, setColor:color(self.rgb[0],self.rgb[1],self.rgb[2],1.)];
             let _: () = msg_send![&well, setTarget:target];
             let _: () = msg_send![&well, setAction:sel!(change:)];
@@ -506,7 +512,7 @@ impl App {
             {
                 let b = button(
                     root,
-                    rect(134. + i as f64 * 53., 401., 50., 28.),
+                    rect(134. + i as f64 * 53., 511., 50., 28.),
                     "●",
                     target,
                     20 + i as isize,
@@ -519,16 +525,16 @@ impl App {
                 let _: () = msg_send![b, setAttributedTitle:&*title];
                 let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(name)];
             }
-            label(root, rect(42., 353., 90., 22.), "Grosor", 13., 0., false);
+            label(root, rect(42., 463., 90., 22.), "Grosor", 13., 0., false);
             self.width_label = label(
                 root,
-                rect(358., 353., 58., 22.),
+                rect(358., 463., 58., 22.),
                 &format!("{:.1} pt", self.width),
                 12.,
                 0.,
                 true,
             );
-            let slider = alloc_view(class!(NSSlider), rect(131., 352., 215., 24.));
+            let slider = alloc_view(class!(NSSlider), rect(131., 462., 215., 24.));
             let _: () = msg_send![&slider, setMinValue:1f64];
             let _: () = msg_send![&slider, setMaxValue:6f64];
             let _: () = msg_send![&slider, setDoubleValue:self.width];
@@ -541,16 +547,16 @@ impl App {
             self.slider = Retained::as_ptr(&slider) as Obj;
             label(
                 root,
-                rect(42., 318., 350., 18.),
+                rect(42., 428., 350., 18.),
                 "Esquinas suaves · sin interceptar tus clics",
                 11.,
                 0.,
                 true,
             );
-            card(root, rect(24., 200., 412., 91.));
+            card(root, rect(24., 310., 412., 91.));
             label(
                 root,
-                rect(42., 254., 310., 22.),
+                rect(42., 364., 310., 22.),
                 "El foco sigue al cursor",
                 14.,
                 0.3,
@@ -558,7 +564,7 @@ impl App {
             );
             label(
                 root,
-                rect(42., 226., 350., 20.),
+                rect(42., 336., 350., 20.),
                 "Activa una ventana al detenerte sobre ella.",
                 12.,
                 0.,
@@ -566,7 +572,7 @@ impl App {
             );
             label(
                 root,
-                rect(42., 207., 350., 17.),
+                rect(42., 317., 350., 17.),
                 "Mantén ⌥ para pausarlo. No actúa al arrastrar.",
                 11.,
                 0.,
@@ -575,16 +581,16 @@ impl App {
             self.hover_switch = toggle(
                 root,
                 378.,
-                254.,
+                364.,
                 "El foco sigue al cursor",
                 target,
                 2,
                 self.hover_enabled,
             );
-            card(root, rect(24., 121., 412., 67.));
+            card(root, rect(24., 231., 412., 67.));
             label(
                 root,
-                rect(42., 151., 310., 22.),
+                rect(42., 261., 310., 22.),
                 "Abrir al iniciar sesión",
                 14.,
                 0.3,
@@ -592,7 +598,7 @@ impl App {
             );
             label(
                 root,
-                rect(42., 130., 350., 18.),
+                rect(42., 240., 350., 18.),
                 "Disponible en cuanto empieza tu día.",
                 12.,
                 0.,
@@ -601,12 +607,53 @@ impl App {
             self.login = toggle(
                 root,
                 378.,
-                150.,
+                260.,
                 "Abrir al iniciar sesión",
                 target,
                 5,
                 false,
             );
+            card(root, rect(24., 121., 412., 98.));
+            label(
+                root,
+                rect(42., 181., 220., 22.),
+                concat!("Versión ", env!("CARGO_PKG_VERSION")),
+                14.,
+                0.3,
+                false,
+            );
+            let check = button(root, rect(303., 175., 113., 30.), "Buscar…", target, 8);
+            let available = self.updater.is_some();
+            let _: () = msg_send![check, setEnabled:available];
+            label(
+                root,
+                rect(42., 154., 310., 20.),
+                "Buscar actualizaciones automáticamente",
+                12.,
+                0.,
+                false,
+            );
+            label(
+                root,
+                rect(42., 133., 325., 18.),
+                "Avisos diarios · tú decides cuándo instalar.",
+                11.,
+                0.,
+                true,
+            );
+            self.updates_switch = toggle(
+                root,
+                378.,
+                149.,
+                "Buscar actualizaciones automáticamente",
+                target,
+                9,
+                self.updater.as_ref().is_some_and(Updater::automatic_checks),
+            );
+            let _: () = msg_send![self.updates_switch, setEnabled:available];
+            if !available {
+                let _: () = msg_send![check, setToolTip:&*NSString::from_str("Disponible en el paquete instalado de AMSpace.")];
+            }
             self.permission = label(root, rect(29., 89., 276., 18.), "", 11., 0., true);
             button(
                 root,
@@ -616,16 +663,83 @@ impl App {
                 6,
             );
             self.feedback = label(root, rect(29., 64., 405., 18.), "", 10., 0., true);
-            label(
-                root,
-                rect(29., 25., 270., 20.),
-                concat!("AMSPACE  /  ", env!("CARGO_PKG_VERSION")),
-                10.,
-                0.3,
-                true,
-            );
+            label(root, rect(29., 25., 110., 20.), "AMSPACE", 10., 0.3, true);
+            button(root, rect(214., 19., 116., 28.), "Acerca de…", target, 10);
             button(root, rect(335., 19., 103., 28.), "Salir", target, 7);
             self.settings = Some(w);
+        }
+    }
+    fn check_updates(&self) {
+        if let Some(updater) = &self.updater {
+            updater.check();
+        } else {
+            self.feedback("Actualizaciones disponibles en el paquete instalado.");
+        }
+    }
+    fn show_about(&mut self) {
+        unsafe {
+            if self.about.is_none() {
+                let w = window(rect(0., 0., 400., 380.), 1 | 2 | 32768);
+                let _: () = msg_send![&w, setTitle:&*NSString::from_str("Acerca de AMSpace")];
+                let _: () = msg_send![&w, setTitlebarAppearsTransparent:true];
+                let _: () = msg_send![&w, setHidesOnDeactivate:false];
+                let _: () = msg_send![&w, center];
+                let root: Obj = msg_send![&w, contentView];
+                let target = Retained::as_ptr(&self.target) as Obj;
+                let image = alloc_view(class!(NSImageView), rect(158., 254., 84., 84.));
+                let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+                let icon: Obj = msg_send![app, applicationIconImage];
+                let _: () = msg_send![&image, setImage:icon];
+                let _: () = msg_send![root, addSubview:&*image];
+                for (y, title, size, weight, secondary) in [
+                    (213., "amspace", 27., 0.5, false),
+                    (
+                        183.,
+                        concat!("Versión ", env!("CARGO_PKG_VERSION")),
+                        12.,
+                        0.,
+                        true,
+                    ),
+                    (145., "Creado por Alberto Martín", 15., 0.3, false),
+                    (118., "Tu espacio. Tu foco.", 12., 0., true),
+                    (5., "© 2026 Alberto Martín · Licencia MIT", 10., 0., true),
+                ] {
+                    let label = label(
+                        root,
+                        rect(20., y, 360., 34.),
+                        title,
+                        size,
+                        weight,
+                        secondary,
+                    );
+                    let _: () = msg_send![label, setAlignment:1isize];
+                }
+                button(
+                    root,
+                    rect(33., 82., 165., 30.),
+                    "Instagram · @amartinro",
+                    target,
+                    30,
+                );
+                button(
+                    root,
+                    rect(202., 82., 165., 30.),
+                    "X · @amartinro",
+                    target,
+                    31,
+                );
+                button(
+                    root,
+                    rect(113., 48., 174., 28.),
+                    "Historial de versiones",
+                    target,
+                    32,
+                );
+                self.about = Some(w);
+            }
+            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, activateIgnoringOtherApps:true];
+            let _: () = msg_send![self.about.as_ref().unwrap(), makeKeyAndOrderFront:ptr::null::<AnyObject>()];
         }
     }
     fn refresh_permission(&self) {
@@ -718,6 +832,17 @@ impl App {
                     let app: Obj = msg_send![class!(NSApplication), sharedApplication];
                     let _: () = msg_send![app,terminate:sender];
                 }
+                8 => self.check_updates(),
+                9 => {
+                    let enabled: isize = msg_send![sender, state];
+                    if let Some(updater) = &self.updater {
+                        updater.set_automatic_checks(enabled == 1);
+                    }
+                }
+                10 => self.show_about(),
+                30 => open_url("https://www.instagram.com/amartinro/"),
+                31 => open_url("https://x.com/amartinro"),
+                32 => open_url("https://github.com/amartinrojarvis/amspace/releases"),
                 20..=23 => {
                     self.rgb = [
                         [0.42, 0.48, 0.95],
@@ -783,6 +908,12 @@ extern "C-unwind" fn settle(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn settings(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.show_settings());
 }
+extern "C-unwind" fn about(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.show_about());
+}
+extern "C-unwind" fn check_updates(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.check_updates());
+}
 extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
     with_app(|a| a.change(sender));
 }
@@ -841,6 +972,8 @@ unsafe fn make_menu(app: Obj, target: Obj) {
         let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
         let submenu: Retained<AnyObject> = msg_send![class!(NSMenu), new];
         for (title, action, key) in [
+            ("Acerca de AMSpace", sel!(about:), ""),
+            ("Buscar actualizaciones…", sel!(checkUpdates:), ""),
             ("Ajustes…", sel!(settings:), ","),
             ("Cerrar ventana", sel!(performClose:), "w"),
             ("Salir de AMSpace", sel!(quit:), "q"),
@@ -867,6 +1000,8 @@ pub fn run() {
                 sel!(settings:),
                 settings as extern "C-unwind" fn(Obj, Sel, Obj),
             ),
+            (sel!(about:), about),
+            (sel!(checkUpdates:), check_updates),
             (sel!(change:), change),
             (sel!(hover:), hover),
             (sel!(update:), update),
