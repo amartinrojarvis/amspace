@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.1</title><pubDate>Fri, 06 Nov 2026 22:46:50 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.1 — colocación y animación del selector corregidas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.2</title><pubDate>Fri, 06 Nov 2026 22:58:28 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.2 — más atajos y sugerencias disponibles.
 
-- Evita dejar ventanas a medio camino cuando falla una escritura intermedia de la animación: conserva y verifica el destino final.
-- Los clics en el selector y los ajustes ya no cancelan las transiciones. Un movimiento o redimensionado real mantiene la prioridad del ratón.
-- Coordina temporalmente la animación de Accesibilidad de cada aplicación para evitar que compita con la de AMSpace; restaura su estado al terminar o cancelar.
-- Comparte esa coordinación entre las ventanas de una misma aplicación.
-- Usa geometría final entera por bordes compartidos y reduce consultas AX durante cada fotograma.
+- Amplía el catálogo a 54 teclas y 11 combinaciones de modificadores, conservando los atajos guardados.
+- Añade Buscar atajos libres en Tiling → Plantillas y atajo…: propone hasta seis combinaciones comprobadas en el Mac donde se realiza la búsqueda.
+- Excluye atajos de sistema habilitados y comprueba reservas globales exclusivas, liberando inmediatamente cada candidato.
+- Usar sugerido vuelve a registrar la combinación para detectar si otra aplicación la ha ocupado entretanto.
+- Corrige la comprobación de disponibilidad: los registros anteriores permitían compartir atajos entre procesos.
 
-Validación: 59 pruebas automatizadas. Prueba real con cuatro ventanas de Finder y una de Ghostty: las distribuciones de tres columnas y cuadrícula alcanzan las posiciones y tamaños previstos. Duración programada de 120 ms; no se han medido FPS ni consumo. Sigue pendiente la validación física con dos monitores de distinta orientación.
+Las comprobaciones no pueden detectar todos los atajos internos o capturadores de teclado de otras aplicaciones. Busca sugerencias en cada ordenador donde vayas a usar AMSpace.
 
+Validación: 61 pruebas automatizadas y comprobación interactiva de búsqueda y aplicación de sugerencias. No se ha probado físicamente el segundo Mac del usuario.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.1/AMSpace-universal.zip" length="2685917" type="application/octet-stream" sparkle:version="10" sparkle:shortVersionString="0.6.1" sparkle:edSignature="M82uCUvv9Fq90Mvd6p4u2GDtoNQvmNWFM72TY2w0jmw/1HAQ+cCEaP+gaOVmoZtPjTBqD6qR2dLts+oTFLxUBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: zl9heI03mIGFf1ifhC1pC7tVdHrLBylQvF68HSZMWsPYCgRVG+/e+C62AHM6fCCNb7g9SG/jMf9mqOfPnJLkBQ==
-length: 2221
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.2/AMSpace-universal.zip" length="2691493" type="application/octet-stream" sparkle:version="11" sparkle:shortVersionString="0.6.2" sparkle:edSignature="qyx2gi2J9I0lQy4EZybBHTZeaAD65ZC9eY1SyJdDPvF7gmQFmmSJ+4XK7Lwe8gJk23kb+GTi2UMW833Q4C+/CA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: A3cz9vLK7W7lWBnAd+0FMArzGJB7Aq5NzjmH2U5oXuu94SqaU77aCeWwngQp9xX+2UT9O4F38wwwTlsEwwtlAg==
+length: 2208
 -->
