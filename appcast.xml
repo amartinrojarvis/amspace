@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.4.1</title><pubDate>Fri, 06 Nov 2026 17:15:16 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.4.1 — regreso al escritorio correcto.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.5.0</title><pubDate>Fri, 06 Nov 2026 21:57:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.5.0 — mosaico inteligente de ventanas.
 
-- Corrige los clics en la barra que se interpretaban siempre como una selección del escritorio 2.
-- El botón nativo de la barra recibe los clics y calcula el escritorio a partir de la posición real del cursor.
-- Evita descartar selecciones cuando hay una llamada reentrante de Accesibilidad.
-- Mantiene el clic derecho para ajustes y el cambio directo, sin abrir Mission Control.
+- Nuevo tiling opcional con cuatro plantillas: Dwindle, Espiral, Cuadrícula y Principal con secundarias. Cada monitor y escritorio mantiene su propia distribución durante la sesión.
+- Colocación inteligente con ratón y ventana fantasma: los bordes de pantalla cambian la orientación, los bordes de otra ventana dividen su tile y el centro intercambia posiciones conservando tamaños.
+- Redimensionado compartido: las ventanas vecinas se adaptan y las proporciones se conservan al intercambiar o cerrar ventanas.
+- Ventanas flotantes con atajo configurable y lista de aplicaciones que se abren flotantes. Mover una flotante no la devuelve al mosaico.
+- Rejilla virtual configurable, con guardado y restauración de proporciones para el mismo número de tiles.
+- Adaptación a monitores verticales, coordenadas globales y distribuciones independientes incluso cuando comparten un Space de macOS.
+- Animaciones de 120 ms con aceleración y deceleración suaves, temporizador adaptativo y menos consultas AX al cambiar de escritorio.
+- Integración con el borde de ventana y el foco bajo el cursor existentes.
 
-La distribución ad hoc puede requerir renovar Accesibilidad al actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.4.1/AMSpace-universal.zip" length="2490726" type="application/octet-stream" sparkle:version="7" sparkle:shortVersionString="0.4.1" sparkle:edSignature="vXPD8JJfDB44eQIF9vyLXotC1lvVLc1z30Mc9K8NKVhxc52pUmayiGxGPuoQHsOSfpTrf7pPeqs2FPaGw5WSDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: RZXH4KUFAx0dH2Y5B0p8mVX1LlPKWdDUbjHTNJZKvG/y5QbNlAgYDconveVN4nvED6+Mbcr7LrUnFYUWwT/cDg==
-length: 1559
+Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
+
+Validación: 43 pruebas automatizadas y comprobación interactiva del usuario. Pendiente la validación física con varios monitores y la ejecución en hardware Intel. El guardado actual conserva geometría; todavía no restaura aplicaciones/documentos ni identifica monitores de forma portable.
+
+La distribución ad hoc puede requerir eliminar AMSpace de Accesibilidad y añadir de nuevo la copia de Aplicaciones tras actualizar.
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.5.0/AMSpace-universal.zip" length="2648232" type="application/octet-stream" sparkle:version="8" sparkle:shortVersionString="0.5.0" sparkle:edSignature="P+yNtblei1DQHPfjPTXOiA6caupTUiztbdhxzu5kH4ghBT7+YGPmLY5LI/9POzwk1sKqPkyWhNeG111PmTUACQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: q7WZqBBnMTfXWrROkSBqCWrwO0ogATkVp6Crx2c919GOE+fb8poQsm+jaavrr9HTiibzbqGinqZ9p5zo/9quBw==
+length: 2722
 -->
