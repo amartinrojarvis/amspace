@@ -40,6 +40,11 @@ struct App {
     layout_picker: Option<crate::tile_picker::Picker>,
     picker_settings: Option<Retained<AnyObject>>,
     picker_hint: Obj,
+    picker_mods: Obj,
+    picker_keys: Obj,
+    picker_suggestions: Obj,
+    picker_apply: Obj,
+    suggested_shortcuts: Vec<(usize, usize)>,
     tile_space: Option<u64>,
     tile_controls: Vec<Obj>,
     tile_grid_window: Option<Retained<AnyObject>>,
@@ -243,6 +248,11 @@ impl App {
                 layout_picker: None,
                 picker_settings: None,
                 picker_hint: ptr::null_mut(),
+                picker_mods: ptr::null_mut(),
+                picker_keys: ptr::null_mut(),
+                picker_suggestions: ptr::null_mut(),
+                picker_apply: ptr::null_mut(),
+                suggested_shortcuts: Vec::new(),
                 tile_space: None,
                 tile_controls: vec![],
                 tile_grid_window: None,
@@ -982,13 +992,23 @@ impl App {
                 return;
             }
             self.tile_hotkey = crate::tile_hotkey::HotKey::new(
-                crate::tile_manager::pref(defaults, "tile.key").clamp(0, 3) as usize,
-                crate::tile_manager::pref(defaults, "tile.mods").clamp(0, 3) as usize,
+                crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults, "tile.key")),
+                crate::tile_hotkey::modifier_index(crate::tile_manager::pref(
+                    defaults,
+                    "tile.mods",
+                )),
                 crate::tile_hotkey::Action::Float,
             );
             self.picker_hotkey = crate::tile_hotkey::HotKey::new(
-                crate::tile_manager::pref_or(defaults, "tile.picker.key", 2).clamp(0, 3) as usize,
-                crate::tile_manager::pref(defaults, "tile.picker.mods").clamp(0, 3) as usize,
+                crate::tile_hotkey::key_index(crate::tile_manager::pref_or(
+                    defaults,
+                    "tile.picker.key",
+                    2,
+                )),
+                crate::tile_hotkey::modifier_index(crate::tile_manager::pref(
+                    defaults,
+                    "tile.picker.mods",
+                )),
                 crate::tile_hotkey::Action::Layouts,
             );
             if self.tile_hotkey.is_none() {
@@ -1194,8 +1214,8 @@ impl App {
                 target,
                 45,
             );
-            let _: () = msg_send![mods,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.mods").clamp(0,3)];
-            let _: () = msg_send![keys,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.key").clamp(0,3)];
+            let _: () = msg_send![mods,selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.mods")) as isize];
+            let _: () = msg_send![keys,selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults,"tile.key")) as isize];
             button(
                 root,
                 rect(217., 88., 198., 28.),
@@ -1233,7 +1253,7 @@ impl App {
     fn show_picker_settings(&mut self) {
         unsafe {
             if self.picker_settings.is_none() {
-                let panel = window(rect(0., 0., 480., 224.), 1 | 2 | 4);
+                let panel = window(rect(0., 0., 480., 340.), 1 | 2 | 4);
                 let _: () =
                     msg_send![&panel,setTitle:&*NSString::from_str("Selector de distribuciones")];
                 let _: () = msg_send![&panel, center];
@@ -1242,7 +1262,7 @@ impl App {
                 let defaults = Retained::as_ptr(&self.defaults) as Obj;
                 label(
                     root,
-                    rect(20., 182., 440., 24.),
+                    rect(20., 298., 440., 24.),
                     "Plantillas en la pantalla del cursor",
                     16.,
                     0.3,
@@ -1250,7 +1270,7 @@ impl App {
                 );
                 label(
                     root,
-                    rect(20., 155., 440., 22.),
+                    rect(20., 271., 440., 22.),
                     "Previsualiza con el ratón o las flechas. Intro aplica; Esc cancela.",
                     11.,
                     0.,
@@ -1258,7 +1278,7 @@ impl App {
                 );
                 label(
                     root,
-                    rect(20., 111., 160., 24.),
+                    rect(20., 227., 160., 24.),
                     "Abrir selector",
                     13.,
                     0.,
@@ -1266,7 +1286,7 @@ impl App {
                 );
                 let mods = popup(
                     root,
-                    rect(200., 108., 125., 30.),
+                    rect(200., 224., 125., 30.),
                     &crate::tile_hotkey::MODIFIERS
                         .iter()
                         .map(|v| v.0)
@@ -1276,7 +1296,7 @@ impl App {
                 );
                 let keys = popup(
                     root,
-                    rect(330., 108., 130., 30.),
+                    rect(330., 224., 130., 30.),
                     &crate::tile_hotkey::KEYS
                         .iter()
                         .map(|v| v.0)
@@ -1284,9 +1304,43 @@ impl App {
                     target,
                     56,
                 );
-                let _: () = msg_send![mods,selectItemAtIndex:crate::tile_manager::pref(defaults,"tile.picker.mods").clamp(0,3)];
-                let _: () = msg_send![keys,selectItemAtIndex:crate::tile_manager::pref_or(defaults,"tile.picker.key",2).clamp(0,3)];
-                self.picker_hint = label(root, rect(20., 70., 440., 30.), "", 11., 0., true);
+                let _: () = msg_send![mods,selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.picker.mods")) as isize];
+                let _: () = msg_send![keys,selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref_or(defaults,"tile.picker.key",2)) as isize];
+                self.picker_mods = mods;
+                self.picker_keys = keys;
+                button(
+                    root,
+                    rect(18., 142., 230., 30.),
+                    "Buscar atajos libres",
+                    target,
+                    58,
+                );
+                self.picker_suggestions = popup(
+                    root,
+                    rect(20., 100., 290., 30.),
+                    &["Busca sugerencias en este Mac"],
+                    target,
+                    59,
+                );
+                let _: () = msg_send![self.picker_suggestions,setEnabled:false];
+                self.picker_apply = button(
+                    root,
+                    rect(320., 100., 140., 30.),
+                    "Usar sugerido",
+                    target,
+                    60,
+                );
+                let _: () = msg_send![self.picker_apply,setEnabled:false];
+                label(
+                    root,
+                    rect(20., 56., 440., 36.),
+                    "Se comprueban reservas globales y atajos del sistema.
+Otras apps pueden tener atajos propios no detectables.",
+                    11.,
+                    0.,
+                    true,
+                );
+                self.picker_hint = label(root, rect(20., 186., 440., 30.), "", 11., 0., true);
                 button(
                     root,
                     rect(270., 20., 190., 32.),
@@ -1298,6 +1352,35 @@ impl App {
             }
             self.refresh_picker_hint();
             let _: () = msg_send![self.picker_settings.as_ref().unwrap(),makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn find_picker_shortcuts(&mut self) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let excluded = [(
+            crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults, "tile.key")),
+            crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults, "tile.mods")),
+        )];
+        let suggestions = crate::tile_hotkey::suggestions(&excluded);
+        self.suggested_shortcuts = suggestions.clone().unwrap_or_default();
+        unsafe {
+            let _: () = msg_send![self.picker_suggestions, removeAllItems];
+            for &(key, mods) in &self.suggested_shortcuts {
+                let _: () = msg_send![self.picker_suggestions,addItemWithTitle:&*NSString::from_str(&crate::tile_hotkey::title(key,mods))];
+            }
+            let _: () =
+                msg_send![self.picker_suggestions,setEnabled:!self.suggested_shortcuts.is_empty()];
+            let _: () =
+                msg_send![self.picker_apply,setEnabled:!self.suggested_shortcuts.is_empty()];
+            text(
+                self.picker_hint,
+                if suggestions.is_none() {
+                    "No se pudieron consultar los atajos del sistema."
+                } else if self.suggested_shortcuts.is_empty() {
+                    "No se encontraron combinaciones libres. Prueba otra tecla."
+                } else {
+                    "Sugerencias comprobadas en este Mac. Elige una y pulsa Usar sugerido."
+                },
+            );
         }
     }
     fn toggle_picker(&mut self) {
@@ -1996,6 +2079,20 @@ impl App {
                     );
                     self.configure_tiling();
                     self.refresh_picker_hint();
+                }
+                58 => self.find_picker_shortcuts(),
+                59 => {}
+                60 => {
+                    let index: isize = msg_send![self.picker_suggestions, indexOfSelectedItem];
+                    if let Some(&(key, mods)) = self.suggested_shortcuts.get(index.max(0) as usize)
+                    {
+                        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                        crate::tile_manager::save(defaults, "tile.picker.key", key as isize);
+                        crate::tile_manager::save(defaults, "tile.picker.mods", mods as isize);
+                        let _: () = msg_send![self.picker_keys,selectItemAtIndex:key as isize];
+                        let _: () = msg_send![self.picker_mods,selectItemAtIndex:mods as isize];
+                        self.configure_tiling(); // Reserve again: another app may have taken it since searching.
+                    }
                 }
                 57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),

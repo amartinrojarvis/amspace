@@ -174,3 +174,10 @@ Las escrituras finales AX se verifican después de un margen de 120 ms, mediante
 La geometría final se redondea por bordes para conservar gaps. Un fallo intermedio no cancela la escritura final. Solo un gesto real de movimiento/tamaño interrumpe las transiciones; un clic en el selector no invalida el destino. La visibilidad se consulta en lote a WindowServer durante la animación, sin leer AXFullScreen/AXMinimized por ventana y fotograma.
 
 `GeometrySession` conserva temporalmente el estado app-level AXEnhancedUserInterface. Las transiciones de una misma aplicación comparten la sesión; la última referencia restaura el valor original, también al cancelar. Las escrituras finales y los reintentos adquieren la misma sesión. La motivación y el antecedente técnico se documentan en [Rectangle PR #285](https://github.com/rxhanson/Rectangle/pull/285). No se copió código de Rectangle.
+
+
+### Sugerencias de atajos
+
+Se conservan los cuatro índices originales de teclas/modificadores para mantener preferencias. El catálogo crece a 54 teclas y 11 modificadores, con límites derivados de la longitud de cada catálogo. `CopySymbolicHotKeys` excluye combinaciones habilitadas del sistema; después se prueba `RegisterEventHotKey` con `kEventHotKeyExclusive`, liberando cada candidato inmediatamente. Los registros definitivos también son exclusivos. Antes se usaba opción cero, que admite compartir una combinación entre procesos y no prueba disponibilidad global.
+
+Buscar devuelve hasta seis candidatos y excluye el atajo flotante. Usar registra de nuevo para detectar carreras con otras apps. No se desregistran los atajos actuales durante la búsqueda ni se cambian preferencias hasta que el usuario aplica una sugerencia. Los menús internos de aplicaciones no son enumerables por esta API; esa limitación se comunica en ajustes. Fuente de constantes y contrato: CarbonEvents.h del SDK de macOS instalado.

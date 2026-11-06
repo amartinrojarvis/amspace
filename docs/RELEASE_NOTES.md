@@ -1,12 +1,13 @@
-AMSpace 0.6.1 — colocación y animación del selector corregidas.
+AMSpace 0.6.2 — más atajos y sugerencias disponibles.
 
-- Evita dejar ventanas a medio camino cuando falla una escritura intermedia de la animación: conserva y verifica el destino final.
-- Los clics en el selector y los ajustes ya no cancelan las transiciones. Un movimiento o redimensionado real mantiene la prioridad del ratón.
-- Coordina temporalmente la animación de Accesibilidad de cada aplicación para evitar que compita con la de AMSpace; restaura su estado al terminar o cancelar.
-- Comparte esa coordinación entre las ventanas de una misma aplicación.
-- Usa geometría final entera por bordes compartidos y reduce consultas AX durante cada fotograma.
+- Amplía el catálogo a 54 teclas y 11 combinaciones de modificadores, conservando los atajos guardados.
+- Añade Buscar atajos libres en Tiling → Plantillas y atajo…: propone hasta seis combinaciones comprobadas en el Mac donde se realiza la búsqueda.
+- Excluye atajos de sistema habilitados y comprueba reservas globales exclusivas, liberando inmediatamente cada candidato.
+- Usar sugerido vuelve a registrar la combinación para detectar si otra aplicación la ha ocupado entretanto.
+- Corrige la comprobación de disponibilidad: los registros anteriores permitían compartir atajos entre procesos.
 
-Validación: 59 pruebas automatizadas. Prueba real con cuatro ventanas de Finder y una de Ghostty: las distribuciones de tres columnas y cuadrícula alcanzan las posiciones y tamaños previstos. Duración programada de 120 ms; no se han medido FPS ni consumo. Sigue pendiente la validación física con dos monitores de distinta orientación.
+Las comprobaciones no pueden detectar todos los atajos internos o capturadores de teclado de otras aplicaciones. Busca sugerencias en cada ordenador donde vayas a usar AMSpace.
 
+Validación: 61 pruebas automatizadas y comprobación interactiva de búsqueda y aplicación de sugerencias. No se ha probado físicamente el segundo Mac del usuario.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

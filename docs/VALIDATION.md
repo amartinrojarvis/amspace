@@ -1,3 +1,11 @@
+# Ampliación y sugerencias de atajos (desarrollo posterior a 0.6.1)
+
+- 61 pruebas correctas, fmt/Clippy/plist sin errores y paquete universal firmado verificado. Instalada la compilación local; no se ha publicado otra release.
+- Catálogo ampliado conservando índices anteriores; prueba de unicidad y preferencias fuera de rango. Prueba nativa de reserva exclusiva: un candidato ocupado no pasa el sondeo; liberarlo permite reservarlo de nuevo y el sondeo no deja la combinación ocupada.
+- UI comprobada: Buscar atajos libres devuelve sugerencias, habilita Usar sugerido, y aplicarla actualiza los selectores y confirma Atajo listo. Probado ⌃⌥⇧Espacio; restaurado ⌃⌥Espacio al terminar.
+- Se comprueban atajos de sistema y reservas globales. No se garantiza detectar atajos internos ni capturadores de teclado de otras aplicaciones. La búsqueda se ejecuta de nuevo en cada ordenador; no se ha probado físicamente el otro Mac del usuario.
+- Respaldo anterior en `.cache/AMSpace-before-shortcut-suggestions.zip`.
+
 # Publicación de 0.6.1
 
 - Versión 0.6.1, build 10. 59 tests, fmt, Clippy y plist correctos. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42307264810) correcta sobre `41d2a4df3910370364c21b4ec0006b99be682814`.
