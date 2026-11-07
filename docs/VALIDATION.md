@@ -1,3 +1,11 @@
+# Publicación e instalación de 0.6.3
+
+- [Release v0.6.3](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.3) publicada con ZIP universal, catálogo firmado y SHA256SUMS sobre `70640c8df469573872df3bb69ad141d3e4e8a182`. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42348991525) correcta, incluyendo verificaciones y empaquetado universal.
+- Descarga pública anónima del ZIP idéntica al artefacto firmado (`da1fef593a66a079c23d12322a848e22a41392d4569c71ed027df2cbcc9fe5ff`). El catálogo de main se publicó después de verificar la descarga; su contenido público coincide con el firmado y la firma Sparkle se verificó.
+- Actualización real desde la app instalada 0.6.2 mediante Buscar… e Instalar actualización: Sparkle ofrece 0.6.3, descarga, instala y reinicia. UI confirma Versión 0.6.3; copia instalada idéntica al ejecutable universal publicado y firma estricta correcta.
+- Las 18 preferencias de usuario comparadas se conservaron. Se excluyen claves internas de AppKit, Sparkle y WebKit. La nueva UI indica que hay que renovar Accesibilidad para la firma ad hoc; no se modificó ese permiso.
+- Respaldo previo en `.cache/AMSpace-before-0.6.3.zip`. Pendiente de validación física de los incidentes del usuario en Mullvad y hardware multipantalla, después de renovar el permiso.
+
 # Preparación de 0.6.3
 
 - Versión 0.6.3, build 12. `scripts/check.sh`: 81 pruebas correctas, formato, Clippy y plist correctos. Compilación universal Apple Silicon/Intel y firma estricta del bundle verificadas.
