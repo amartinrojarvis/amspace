@@ -6,6 +6,34 @@ use objc2::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 pub type Obj = *mut AnyObject;
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenGeometry {
+    pub id: u32,
+    pub frame: NSRect,
+    pub visible: NSRect,
+    pub scale: f64,
+}
+pub fn screen_configuration() -> Vec<ScreenGeometry> {
+    unsafe {
+        let screens: Obj = msg_send![class!(NSScreen), screens];
+        let count: usize = msg_send![screens, count];
+        let mut result = Vec::with_capacity(count);
+        for index in 0..count {
+            let screen: Obj = msg_send![screens, objectAtIndex:index];
+            let description: Obj = msg_send![screen, deviceDescription];
+            let number: Obj =
+                msg_send![description, objectForKey:&*NSString::from_str("NSScreenNumber")];
+            result.push(ScreenGeometry {
+                id: msg_send![number, unsignedIntValue],
+                frame: msg_send![screen, frame],
+                visible: msg_send![screen, visibleFrame],
+                scale: msg_send![screen, backingScaleFactor],
+            });
+        }
+        result.sort_by_key(|screen| screen.id);
+        result
+    }
+}
 pub unsafe fn add_common_timer(run_loop: Obj, timer: &AnyObject) {
     unsafe {
         // Use the exported constant. Its actual value is kCFRunLoopCommonModes;
@@ -55,7 +83,12 @@ pub unsafe fn label(
 }
 pub unsafe fn text(obj: Obj, value: &str) {
     unsafe {
-        let _: () = msg_send![obj, setStringValue:&*NSString::from_str(value)];
+        let value = NSString::from_str(value);
+        let current: Obj = msg_send![obj, stringValue];
+        let equal: bool = msg_send![current, isEqualToString:&*value];
+        if !equal {
+            let _: () = msg_send![obj, setStringValue:&*value];
+        }
     }
 }
 

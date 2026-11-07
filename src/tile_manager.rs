@@ -281,7 +281,7 @@ impl Transition {
         // Preparing AX sessions for several apps can take time. Start the batch
         // on its first frame, so late enumeration cannot consume the animation.
         let started = *self.started.get_or_insert(now);
-        let progress = (now.duration_since(started).as_secs_f64() / 0.12).min(1.);
+        let progress = (now.duration_since(started).as_secs_f64() / 0.16).min(1.);
         (
             ax::integral_frame(crate::tiling::interpolate(self.from, self.to, progress)),
             progress >= 1.,
@@ -1128,7 +1128,7 @@ impl Manager {
             self.animate(&active);
         }
         if !self.transitions.is_empty() {
-            // Do not interleave full AX enumeration with the 120 ms animation.
+            // Do not interleave full AX enumeration with the 160 ms animation.
             // Space/screen changes and real gestures already cancel that batch.
             return;
         }
@@ -1576,7 +1576,7 @@ mod tests {
         for transition in manager.transitions.values_mut() {
             assert_eq!(transition.sample(now), (from, false));
         }
-        let halfway = now + Duration::from_millis(60);
+        let halfway = now + Duration::from_millis(80);
         let (sample, complete) = manager.transitions.get_mut(&1).unwrap().sample(halfway);
         assert!(!complete);
         assert_eq!(
@@ -1589,7 +1589,7 @@ mod tests {
         transition.record_write(sample, true);
         assert_eq!(transition.last, sample);
         assert_eq!(
-            transition.sample(now + Duration::from_millis(120)),
+            transition.sample(now + Duration::from_millis(160)),
             (ax::integral_frame(target), true)
         );
     }

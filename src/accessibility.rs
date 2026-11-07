@@ -78,6 +78,15 @@ pub fn number(value: Cf) -> Option<i64> {
     let mut n = 0;
     unsafe { CFNumberGetValue(value, 4, &mut n) }.then_some(n)
 }
+pub fn decimal(value: Cf) -> Option<f64> {
+    if value.is_null() || unsafe { CFGetTypeID(value) != CFNumberGetTypeID() } {
+        return None;
+    }
+    let mut value_out = 0_f64;
+    // kCFNumberDoubleType; CFNumberGetValue's C output is untyped.
+    let copied = unsafe { CFNumberGetValue(value, 13, (&mut value_out as *mut f64).cast()) };
+    (copied && value_out.is_finite()).then_some(value_out)
+}
 pub fn array(value: Cf) -> Vec<Cf> {
     if value.is_null() || unsafe { CFGetTypeID(value) != CFArrayGetTypeID() } {
         return vec![];
@@ -100,6 +109,11 @@ pub fn attr(element: Cf, key: &str) -> Option<Owned> {
 }
 pub fn equals_text(value: Cf, text: &str) -> bool {
     !value.is_null() && unsafe { CFEqual(value, cf(&NSString::from_str(text))) }
+}
+pub fn auxiliary_window_role(role: Cf) -> bool {
+    ["AXMenu", "AXMenuBar", "AXPopover", "AXToolTip"]
+        .iter()
+        .any(|name| equals_text(role, name))
 }
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
@@ -198,9 +212,13 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
     if unsafe { AXUIElementGetPid(hit_window.0, &mut hit_pid) } != 0 {
         return None;
     }
-    let (owner, id) = crate::window_server::window_at(NSPoint::new(x, y))?;
-    if hit_pid != owner {
-        return None;
+    let hit_id = window_id(hit_window.0);
+    let hits = crate::window_server::hit_windows_at(NSPoint::new(x, y));
+    #[cfg(test)]
+    eprintln!("AX-pointer pid={hit_pid} window={hit_id:?} native-hits={hits:?}");
+    let (owner, id) = crate::focus::pointer_target(&hits, hit_pid, hit_id)?;
+    if hit_pid == owner && hit_id == Some(id) {
+        return Some((hit_window, hit_pid));
     }
     let window = window_for_id(owner, id)?;
     let role = attr(window.0, "AXSubrole")?;
@@ -295,8 +313,11 @@ impl Drop for Observer {
         }
     }
 }
-extern "C" fn changed(_: Cf, _: Cf, _: Cf, _: *mut c_void) {
-    crate::ui::queue_window_update();
+extern "C" fn changed(_: Cf, _: Cf, notification: Cf, _: *mut c_void) {
+    crate::ui::queue_window_update(
+        equals_text(notification, "AXFocusedWindowChanged")
+            || equals_text(notification, "AXMainWindowChanged"),
+    );
 }
 
 /// Only standard, movable/resizable windows participate. Dialogs stay floating.
@@ -479,6 +500,28 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn unknown_or_missing_accessibility_role_does_not_hide_a_real_window() {
+        for role in ["AXWindow", "AXUnknown", "AXDialog"] {
+            assert!(!auxiliary_window_role(cf(&NSString::from_str(role))));
+        }
+        assert!(!auxiliary_window_role(ptr::null()));
+        for role in ["AXMenu", "AXPopover", "AXToolTip"] {
+            assert!(auxiliary_window_role(cf(&NSString::from_str(role))));
+        }
+    }
+    #[test]
+    fn fractional_window_opacity_is_not_truncated_to_transparent() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
+            for alpha in [0., 0.25, 0.95, 1.] {
+                let number: Retained<AnyObject> =
+                    msg_send![class!(NSNumber), numberWithDouble:alpha];
+                assert_eq!(decimal(Retained::as_ptr(&number).cast()), Some(alpha));
+            }
+            assert_eq!(decimal(ptr::null()), None);
+        });
+    }
     #[test]
     fn final_resize_cannot_displace_the_requested_position() {
         use std::cell::Cell;

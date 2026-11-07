@@ -32,11 +32,54 @@ struct BorderPaint {
     radius: f64,
     scale: f64,
 }
+unsafe fn apply_border_clip(layer: Obj, target: NSRect, regions: &[NSRect]) {
+    unsafe extern "C" {
+        fn CGPathCreateMutable() -> *mut std::ffi::c_void;
+        fn CGPathAddRect(
+            path: *mut std::ffi::c_void,
+            transform: *const std::ffi::c_void,
+            rect: NSRect,
+        );
+        fn CGPathRelease(path: *mut std::ffi::c_void);
+    }
+    unsafe {
+        if regions == [target] {
+            let _: () = msg_send![layer, setMask:ptr::null::<AnyObject>()];
+            return;
+        }
+        let path = CGPathCreateMutable();
+        if path.is_null() {
+            return;
+        }
+        for r in regions {
+            CGPathAddRect(
+                path,
+                ptr::null(),
+                rect(
+                    r.origin.x - target.origin.x,
+                    target.size.height - (r.origin.y - target.origin.y) - r.size.height,
+                    r.size.width,
+                    r.size.height,
+                ),
+            );
+        }
+        let mask: Obj = msg_send![class!(CAShapeLayer), layer];
+        let _: () = msg_send![mask, setFrame:rect(0.,0.,target.size.width,target.size.height)];
+        let _: () = msg_send![mask, setPath:path];
+        let black = color(0., 0., 0., 1.);
+        let cg: *const std::ffi::c_void = msg_send![black, CGColor];
+        let _: () = msg_send![mask, setFillColor:cg];
+        let _: () = msg_send![layer, setMask:mask];
+        CGPathRelease(path);
+    }
+}
 struct PendingFocus {
+    front_pid: i32,
     pid: i32,
     id: u32,
-    previous: Option<u32>,
     point: NSPoint,
+    verify: bool,
+    retries: u8,
 }
 struct App {
     tile_manager: crate::tile_manager::Manager,
@@ -92,17 +135,18 @@ struct App {
     tracked: Option<ws::Window>,
     border_suppressed: bool,
     border_paint: Option<BorderPaint>,
-    border_target: u32,
-    border_needs_order: bool,
+    border_clip: Option<(u32, NSRect, Vec<NSRect>)>,
     border_retry_pending: bool,
     settle_queued: bool,
     hover_timer: Option<Retained<AnyObject>>,
     last_mouse: NSPoint,
     mouse_since: Instant,
-    hover_done: bool,
+    hover_probe: focus::ProbeBudget,
     sleeping: bool,
     update_queued: bool,
     last_title: String,
+    status_detail: String,
+    screen_configuration: Vec<ScreenGeometry>,
     permission: Obj,
     width_label: Obj,
     color_well: Obj,
@@ -229,7 +273,7 @@ impl App {
             let _: () = msg_send![&border, setOpaque:false];
             let _: () = msg_send![&border, setHasShadow:false];
             let _: () = msg_send![&border, setIgnoresMouseEvents:true];
-            let _: () = msg_send![&border, setLevel:0isize];
+            let _: () = msg_send![&border, setLevel:3isize];
             let _: () = msg_send![&border, setCollectionBehavior:BORDER_COLLECTION_BEHAVIOR];
             let _: () = msg_send![&border, setHidesOnDeactivate:false];
             let _: () = msg_send![&border, setAnimationBehavior:2isize];
@@ -253,8 +297,9 @@ impl App {
             let mut a = Self {
                 border_enabled: value(Retained::as_ptr(&defaults) as Obj, "border"),
                 border_paint: None,
-                border_target: 0,
-                border_needs_order: true,
+                status_detail: String::new(),
+                screen_configuration: screen_configuration(),
+                border_clip: None,
                 border_retry_pending: false,
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
@@ -311,7 +356,7 @@ impl App {
                 hover_timer: None,
                 last_mouse: NSPoint::new(-1., -1.),
                 mouse_since: Instant::now(),
-                hover_done: false,
+                hover_probe: Default::default(),
                 sleeping: false,
                 update_queued: false,
                 last_title: String::new(),
@@ -358,10 +403,17 @@ impl App {
             let title = space_style::render(&s, Retained::as_ptr(&self.defaults) as Obj);
             self.refresh_status_buttons(&s);
             self.last_title = s.title;
-            let _: () = msg_send![b, setToolTip:&*NSString::from_str(&s.detail)];
-            let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · clic derecho para ajustes", s.detail))];
+            if self.status_detail != s.detail {
+                let _: () = msg_send![b, setToolTip:&*NSString::from_str(&s.detail)];
+                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · clic derecho para ajustes", s.detail))];
+                self.status_detail = s.detail;
+            }
             if !self.preview.is_null() {
-                let _: () = msg_send![self.preview, setAttributedStringValue:&*title];
+                let current: Obj = msg_send![self.preview, attributedStringValue];
+                let equal: bool = msg_send![current, isEqualToAttributedString:&*title];
+                if !equal {
+                    let _: () = msg_send![self.preview, setAttributedStringValue:&*title];
+                }
             }
             if !self.space_scroll.is_null() && self.space_ids != s.desktops {
                 self.rebuild_space_rows();
@@ -408,6 +460,11 @@ impl App {
                         index,
                     )
                 };
+                let current: Obj = msg_send![button, attributedTitle];
+                let equal: bool = msg_send![current, isEqualToAttributedString:&*title];
+                if equal {
+                    continue;
+                }
                 let _: () = msg_send![button, setAttributedTitle:&*title];
                 let label = if compact {
                     "Elegir escritorio".into()
@@ -525,17 +582,24 @@ impl App {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
             let pid: i32 = msg_send![app, processIdentifier];
+            // Application activation can temporarily report its former key
+            // window. Keep the existing border until the bounded focus delivery
+            // finishes, rather than flashing a border on that intermediate one.
+            if self
+                .pending_focus
+                .as_ref()
+                .is_some_and(|pending| pending.pid == pid)
+            {
+                self.update_border_geometry();
+                return;
+            }
             if pid == std::process::id() as i32 {
                 self.tracked = None;
                 ws::stop();
                 self.hide_border();
                 return;
             }
-            if self.focus_target.is_some_and(|(owner, id, since)| {
-                owner != pid
-                    || (since.elapsed() > Duration::from_millis(250)
-                        && ax::focused_id(pid).is_some_and(|actual| actual != id))
-            }) {
+            if self.focus_target.is_some_and(|(owner, _, _)| owner != pid) {
                 self.focus_target = None;
             }
             let Some(candidates) = ws::focus_windows(pid, self.focus_target.map(|(_, id, _)| id))
@@ -562,12 +626,12 @@ impl App {
                     break;
                 }
                 let element = ax::window_for_id(pid, candidate.id);
-                // Gecko/Chromium publish temporary layer-zero popup windows.
-                // A confirmed nonstandard AX window must not steal the border.
+                // Missing/unknown subroles occur on real browser windows. Only
+                // a positively identified auxiliary role excludes a candidate.
                 if element
                     .as_ref()
-                    .and_then(|w| ax::attr(w.0, "AXSubrole"))
-                    .is_some_and(|role| !ax::equals_text(role.0, "AXStandardWindow"))
+                    .and_then(|w| ax::attr(w.0, "AXRole"))
+                    .is_some_and(|role| ax::auxiliary_window_role(role.0))
                 {
                     continue;
                 }
@@ -590,11 +654,6 @@ impl App {
                     !ws::native_tracking(),
                 );
                 self.observed_pid = pid;
-            }
-            if let Some(target) = selected {
-                let border: isize = msg_send![&self.border, windowNumber];
-                self.border_needs_order = self.border_target != target.id
-                    || ws::border_needs_ordering(border as u32, target.id).unwrap_or(false);
             }
             if self
                 .observed_window
@@ -637,7 +696,16 @@ impl App {
             };
             let frame = rect(p.x, height - p.y - s.height, s.width, s.height);
             let id: isize = msg_send![&self.border, windowNumber];
+            ws::set_border(id as u32);
             let geometry_changed = ws::bounds(id as u32) != Some(target.frame);
+            let regions = ws::visible_border_regions(target.id, id as u32);
+            let clip_changed = regions.as_ref().is_some_and(|regions| {
+                self.border_clip
+                    .as_ref()
+                    .is_none_or(|(window, frame, old)| {
+                        *window != target.id || *frame != target.frame || old != regions
+                    })
+            });
             if geometry_changed {
                 let _: () = msg_send![class!(CATransaction), begin];
                 let _: () = msg_send![class!(CATransaction), setDisableActions:true];
@@ -667,16 +735,24 @@ impl App {
                 let _: () = msg_send![layer, setContentsScale:scale];
                 self.border_paint = Some(paint);
             }
-            if geometry_changed || paint_changed {
+            if clip_changed {
+                if !geometry_changed && !paint_changed {
+                    let _: () = msg_send![class!(CATransaction), begin];
+                    let _: () = msg_send![class!(CATransaction), setDisableActions:true];
+                }
+                let view: Obj = msg_send![&self.border, contentView];
+                let layer: Obj = msg_send![view, layer];
+                let regions = regions.unwrap();
+                apply_border_clip(layer, target.frame, &regions);
+                self.border_clip = Some((target.id, target.frame, regions));
+            }
+            if geometry_changed || paint_changed || clip_changed {
                 let _: () = msg_send![class!(CATransaction), commit];
                 let _: () = msg_send![class!(CATransaction), flush];
             }
             let visible: bool = msg_send![&self.border, isVisible];
-            if self.border_needs_order || self.border_target != target.id || !visible {
-                let _: () =
-                    msg_send![&self.border, orderWindow:1isize, relativeTo:target.id as isize];
-                self.border_needs_order = false;
-                self.border_target = target.id;
+            if !visible {
+                let _: () = msg_send![&self.border, orderFrontRegardless];
             }
             ws::set_border(id as u32);
         }
@@ -696,7 +772,7 @@ impl App {
             if let Some(t) = self.hover_timer.take() {
                 let _: () = msg_send![&t, invalidate];
             }
-            self.hover_done = false;
+            self.hover_probe.reset();
             if self.hover_enabled && ax::trusted() && !self.sleeping {
                 let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.08f64, target:&*self.target, selector:sel!(hover:), userInfo:ptr::null::<AnyObject>(), repeats:true];
                 let _: () = msg_send![&timer, setTolerance:0.03f64];
@@ -722,19 +798,21 @@ impl App {
             }
             if buttons != 0 || flags & (1usize << 19) != 0 {
                 self.mouse_since = Instant::now();
-                self.hover_done = false;
+                self.hover_probe.reset();
                 return;
             }
             if point != self.last_mouse {
                 self.last_mouse = point;
                 self.mouse_since = Instant::now();
-                self.hover_done = false;
+                self.hover_probe.reset();
                 return;
             }
-            if self.hover_done || self.mouse_since.elapsed() < Duration::from_millis(240) {
+            if self.pending_focus.is_some()
+                || self.mouse_since.elapsed() < Duration::from_millis(240)
+                || !self.hover_probe.attempt()
+            {
                 return;
             }
-            self.hover_done = true;
             if !ax::trusted() {
                 self.configure_hover();
                 self.hide_border();
@@ -748,6 +826,7 @@ impl App {
             let Some((w, pid)) = ax::window_at(point.x, height - point.y) else {
                 return;
             };
+            self.hover_probe.complete();
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: Obj = msg_send![ws, frontmostApplication];
             let front_pid: i32 = msg_send![front, processIdentifier];
@@ -760,61 +839,99 @@ impl App {
                 }
                 return;
             }
-            let previous = if front_pid == pid {
-                ax::focused_id(pid).filter(|old| *old != id)
-            } else {
-                None
-            };
+            let focused = (front_pid == pid).then(|| ax::focused_id(pid)).flatten();
+            let applied = self.focus_target.map(|(owner, window, _)| (owner, window));
+            if !focus::activation_needed(front_pid, applied, pid, id) {
+                self.focus_target = Some((pid, id, Instant::now()));
+                self.update_window();
+                return;
+            }
+            let previous = focused.filter(|old| *old != id);
             if let Some(previous) = previous {
                 focus::deactivate(pid, previous);
             }
             self.pending_focus = Some(PendingFocus {
+                front_pid,
                 pid,
                 id,
-                previous,
                 point,
+                verify: false,
+                retries: 0,
             });
-            let delay = if previous.is_some() { 0.04f64 } else { 0.0f64 };
+            let delay = if front_pid == pid { 0.04f64 } else { 0.0f64 };
             let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:delay];
         }
     }
     fn finish_focus(&mut self) {
-        let Some(pending) = self.pending_focus.take() else {
+        let Some(mut pending) = self.pending_focus.take() else {
             return;
         };
+        // Reconcile the border after success, cancellation or exhausted retries.
+        self.settle_focus();
         unsafe {
             let point: NSPoint = msg_send![class!(NSEvent), mouseLocation];
             let buttons: usize = msg_send![class!(NSEvent), pressedMouseButtons];
             let flags: usize = msg_send![class!(NSEvent), modifierFlags];
+            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: Obj = msg_send![workspace, frontmostApplication];
+            let front_pid: i32 = msg_send![front, processIdentifier];
             if self.switching.is_some()
                 || Instant::now() < self.hover_resume
                 || !self.hover_enabled
                 || self.sleeping
+                || front_pid != pending.front_pid
                 || point != pending.point
                 || buttons != 0
                 || flags & (1usize << 19) != 0
             {
-                // Do not override a click or an application switch during the delay.
-                let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
-                let front: Obj = msg_send![workspace, frontmostApplication];
-                let pid: i32 = msg_send![front, processIdentifier];
-                if buttons == 0 && pid == pending.pid {
-                    if let Some(previous) = pending.previous {
-                        focus::activate(pid, previous, true);
-                    }
-                }
+                // Cancellation cannot activate or reorder the previous window.
                 return;
             }
-            let Some(window) = ax::window_for_id(pending.pid, pending.id) else {
+            let Some(height) = primary_height() else {
                 return;
             };
-            let activated = focus::activate(pending.pid, pending.id, pending.previous.is_some());
+            let Some((window, pid)) = ax::window_at(point.x, height - point.y) else {
+                return;
+            };
+            if pid != pending.pid || ax::window_id(window.0) != Some(pending.id) {
+                // A floating window or layout may have moved under a stationary
+                // pointer during the delay. Never activate the obsolete surface.
+                self.hover_probe.reset();
+                self.mouse_since = Instant::now();
+                return;
+            }
+            if pending.verify {
+                let reported = ax::focused_id(pending.pid);
+                if reported == Some(pending.id) {
+                    self.focus_target = Some((pending.pid, pending.id, Instant::now()));
+                    self.update_window();
+                    return;
+                }
+                // Activating a background application may restore its previous
+                // key window after the first request. Repair that sibling switch
+                // only while the original pointer target remains valid.
+                if pending.retries >= 2 {
+                    return;
+                }
+                if let Some(previous) = reported {
+                    focus::deactivate(pending.pid, previous);
+                }
+                pending.verify = false;
+                pending.retries += 1;
+                self.pending_focus = Some(pending);
+                let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:0.04f64];
+                return;
+            }
+            let activated =
+                focus::activate(pending.pid, pending.id, pending.front_pid == pending.pid);
             if activated {
                 if self.raise_enabled {
                     ax::raise(window.0);
                 }
-                self.focus_target = Some((pending.pid, pending.id, Instant::now()));
-                self.update_window();
+                // A successful event post is not confirmation of keyboard focus.
+                // Wait for application activation to settle before checking it.
+                pending.front_pid = pending.pid;
+                pending.verify = true;
                 self.settle_focus();
             }
             if std::env::var_os("AMSPACE_TRACE_FOCUS").is_some() {
@@ -826,6 +943,10 @@ impl App {
                     self.raise_enabled,
                     ax::focused_id(pending.pid)
                 );
+            }
+            if activated {
+                self.pending_focus = Some(pending);
+                let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:0.08f64];
             }
         }
     }
@@ -2339,8 +2460,14 @@ pub fn window_server_event(focus_changed: bool, lifecycle: bool) {
         }
     });
 }
-pub fn queue_window_update() {
+pub fn queue_window_update(focus_changed: bool) {
     with_app(|a| {
+        if focus_changed
+            && a.focus_target
+                .is_some_and(|(_, _, since)| since.elapsed() > Duration::from_millis(250))
+        {
+            a.focus_target = None;
+        }
         if !a.update_queued {
             a.update_queued = true;
             unsafe {
@@ -2624,12 +2751,25 @@ extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {
 }
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
     with_app(|a| {
+        a.focus_target = None;
+        a.pending_focus = None;
         a.layout_picker = None;
         a.tile_manager.space_changed();
     });
     workspace(target, selector, notification);
 }
 extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: Obj) {
+    let mut changed = false;
+    with_app(|a| {
+        let configuration = screen_configuration();
+        if configuration != a.screen_configuration {
+            a.screen_configuration = configuration;
+            changed = true;
+        }
+    });
+    if !changed {
+        return;
+    }
     cancel_layout_picker();
     with_app(|a| a.tile_manager.screens_changed());
     workspace(target, selector, notification);

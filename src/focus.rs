@@ -55,6 +55,46 @@ fn api() -> Option<&'static Api> {
 pub fn available() -> bool {
     api().is_some()
 }
+pub fn activation_needed(
+    front_pid: i32,
+    applied: Option<(i32, u32)>,
+    pid: i32,
+    window: u32,
+) -> bool {
+    front_pid != pid || applied != Some((pid, window))
+}
+pub fn in_visible_space(window_space: Option<u64>, visible: &[u64]) -> bool {
+    !visible.is_empty() && window_space.is_none_or(|space| visible.contains(&space))
+}
+/// AX decides which surface receives input, but only a currently visible native
+/// hit corroborates its window identity. A stale sibling falls back to geometry.
+pub fn pointer_target(
+    hits: &[(i32, u32)],
+    ax_pid: i32,
+    ax_window: Option<u32>,
+) -> Option<(i32, u32)> {
+    ax_window
+        .and_then(|id| hits.iter().copied().find(|hit| *hit == (ax_pid, id)))
+        .or_else(|| hits.first().copied())
+}
+#[derive(Default)]
+pub struct ProbeBudget(u8);
+impl ProbeBudget {
+    pub fn reset(&mut self) {
+        self.0 = 0;
+    }
+    pub fn attempt(&mut self) -> bool {
+        if self.0 >= 3 {
+            return false;
+        }
+        self.0 += 1;
+        true
+    }
+    pub fn complete(&mut self) {
+        self.0 = 3;
+    }
+}
+
 fn process(pid: i32) -> Option<Process> {
     let mut process = Process::default();
     (unsafe { (api()?.process)(pid, &mut process) } == 0).then_some(process)
@@ -95,4 +135,88 @@ pub fn activate(pid: i32, window: u32, sibling: bool) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "read-only native AX diagnostic; requires Accessibility and an interactive desktop"]
+    fn inspect_pointer_focus() {
+        use crate::{accessibility as ax, window_server as ws};
+        use objc2_foundation::NSPoint;
+        use std::time::{Duration, Instant};
+        unsafe extern "C" {
+            fn CGEventCreate(source: ax::Cf) -> ax::Cf;
+            fn CGEventGetLocation(event: ax::Cf) -> NSPoint;
+        }
+        assert!(
+            ax::trusted(),
+            "Accessibility is required for this diagnostic"
+        );
+        let start = Instant::now();
+        let mut previous = String::new();
+        while start.elapsed() < Duration::from_secs(30) {
+            objc2::rc::autoreleasepool(|_| {
+                let Some(event) = ax::Owned::new(unsafe { CGEventCreate(std::ptr::null()) }) else {
+                    return;
+                };
+                let point = unsafe { CGEventGetLocation(event.0) };
+                let native = ws::window_at(point);
+                let selected = ax::window_at(point.x, point.y)
+                    .and_then(|(window, pid)| ax::window_id(window.0).map(|id| (pid, id)));
+                let reported_focus = selected.and_then(|(pid, _)| ax::focused_id(pid));
+                let line = format!(
+                    "point={point:?} native={native:?} selected={selected:?} reported_focus={reported_focus:?}"
+                );
+                if previous != line {
+                    println!("t={:.3} {line}", start.elapsed().as_secs_f64());
+                    previous = line;
+                }
+            });
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+    #[test]
+    fn a_stale_window_from_another_space_cannot_receive_pointer_focus() {
+        assert!(!super::in_visible_space(Some(7), &[8]));
+        assert!(super::in_visible_space(Some(7), &[7, 8]));
+        assert!(super::in_visible_space(None, &[8]));
+        assert!(!super::in_visible_space(None, &[]));
+    }
+    #[test]
+    fn floating_window_does_not_steal_a_corroborated_tile_hit() {
+        let hits = [(7, 100), (7, 200)];
+        assert_eq!(super::pointer_target(&hits, 7, Some(200)), Some((7, 200)));
+        // The AX sibling is stale and not under the cursor: native geometry wins.
+        assert_eq!(
+            super::pointer_target(&[(7, 200)], 7, Some(100)),
+            Some((7, 200))
+        );
+        assert_eq!(
+            super::pointer_target(&[(8, 200)], 7, Some(100)),
+            Some((8, 200))
+        );
+        assert_eq!(super::pointer_target(&[], 7, Some(100)), None);
+    }
+    #[test]
+    fn transient_hit_failures_have_three_attempts_then_stop_until_pointer_moves() {
+        let mut budget = super::ProbeBudget::default();
+        assert!(budget.attempt());
+        assert!(budget.attempt());
+        assert!(budget.attempt());
+        for _ in 0..100 {
+            assert!(!budget.attempt());
+        }
+        budget.reset();
+        assert!(budget.attempt());
+        budget.complete();
+        assert!(!budget.attempt());
+    }
+    #[test]
+    fn same_application_is_not_evidence_that_the_requested_window_has_focus() {
+        assert!(!super::activation_needed(7, Some((7, 20)), 7, 20));
+        assert!(super::activation_needed(7, Some((7, 20)), 7, 21));
+        assert!(super::activation_needed(7, Some((7, 20)), 8, 20));
+        assert!(super::activation_needed(7, None, 7, 20));
+    }
 }
