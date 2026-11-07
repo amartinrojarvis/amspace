@@ -2760,9 +2760,17 @@ extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj
 }
 extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: Obj) {
     let mut changed = false;
+    let mut physical_change = false;
     with_app(|a| {
         let configuration = screen_configuration();
         if configuration != a.screen_configuration {
+            physical_change = configuration.len() != a.screen_configuration.len()
+                || configuration
+                    .iter()
+                    .zip(&a.screen_configuration)
+                    .any(|(new, old)| {
+                        new.id != old.id || new.frame != old.frame || new.scale != old.scale
+                    });
             a.screen_configuration = configuration;
             changed = true;
         }
@@ -2771,7 +2779,14 @@ extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: O
         return;
     }
     cancel_layout_picker();
-    with_app(|a| a.tile_manager.screens_changed());
+    with_app(|a| {
+        if physical_change {
+            a.tile_manager.screens_changed();
+        } else {
+            // Dock/menu bar changes are reconciled per display by the manager.
+            a.tile_manager.invalidate();
+        }
+    });
     workspace(target, selector, notification);
 }
 extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {

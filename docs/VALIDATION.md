@@ -1,3 +1,11 @@
+## Preparación 0.6.8: escritorios independientes
+
+- Los cambios de Space cancelan únicamente las colocaciones pendientes de los escritorios que dejan de estar visibles. La pantalla secundaria conserva sus destinos, restricciones y distribución; se vuelve a comprobar la pertenencia después de la pausa nativa para cubrir notificaciones adelantadas.
+- Los cambios de área útil por Dock/barra de menús invalidan solo la pantalla afectada. Las modificaciones físicas de pantallas, resolución, orientación o escala mantienen la invalidación global de coordenadas.
+- Las decisiones de colocación y la verificación posterior usan geometría AX, en lugar de interpretar los límites del compositor durante el deslizamiento como desplazamientos que haya que corregir. Se reutiliza la lectura AX de la enumeración y la animación parte de ese mismo frame.
+- Regresión automatizada con pantalla apaisada y vertical en Spaces independientes: conserva divisiones ajustadas, colocaciones pendientes, límites estables y destinos ya aplicados ante avisos repetidos, y cancela las operaciones si después cambia también el Space secundario.
+- `scripts/check.sh`: 92 pruebas correctas, un diagnóstico interactivo ignorado; formato, Clippy y plist correctos. Pendiente de reproducir y validar físicamente el incidente en el otro Mac con dos pantallas. Versión 0.6.8, build 17; paquete universal compilado, firma estricta del bundle correcta, ZIP y catálogo Sparkle firmados y verificados. Pendiente de publicación; sin instalar localmente esta revisión.
+
 ## Validación 0.6.7
 
 - Publicada [v0.6.7](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.7) sobre 1cb252e78d241cc4ed3f13eab2eea7a171ba6922. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42369017974) correcta. ZIP descargado sin autenticación idéntico al firmado; catálogo público idéntico al generado.

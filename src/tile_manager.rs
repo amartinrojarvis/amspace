@@ -361,15 +361,18 @@ impl Manager {
         self.space_settle = Some(Instant::now() + Duration::from_millis(600));
     }
     pub fn space_changed(&mut self) {
-        self.space_changed_at(Instant::now());
+        self.space_changed_with_visible_at(Instant::now(), &spaces::visible_desktops());
     }
+    #[cfg(test)]
     fn space_changed_at(&mut self, now: Instant) {
+        self.space_changed_with_visible_at(now, &[]);
+    }
+    fn space_changed_with_visible_at(&mut self, now: Instant, visible: &[Workspace]) {
+        self.cancel_inactive_placements(visible);
         if !self.pressed && self.pending_drop.is_none() {
-            self.cancel_drag();
-        } else {
-            self.cancel_placements();
-            self.hide_preview();
+            self.drag = None;
         }
+        self.hide_preview();
         self.invalidate();
         // During the native slide both visibility and global bounds are transient.
         // Retain the trees without sampling/reconciling or writing any geometry.
@@ -382,6 +385,24 @@ impl Manager {
         }
         for handoff in self.handoffs.values_mut() {
             handoff.expires = handoff.expires.max(until + Duration::from_millis(1200));
+        }
+    }
+    fn cancel_inactive_placements(&mut self, visible: &[Workspace]) {
+        let cancelled: Vec<_> = self
+            .transitions
+            .keys()
+            .chain(self.verifications.keys())
+            .copied()
+            .filter(|id| {
+                self.windows
+                    .get(id)
+                    .is_none_or(|w| !visible.contains(&w.space))
+            })
+            .collect();
+        for id in cancelled {
+            self.transitions.remove(&id);
+            self.verifications.remove(&id);
+            self.applied.remove(&id);
         }
     }
     fn waiting_for_space(&mut self, now: Instant) -> bool {
@@ -621,10 +642,6 @@ impl Manager {
                 self.verifications.remove(&id);
                 continue;
             };
-            let Some(actual) = ws::bounds(id) else {
-                self.verifications.remove(&id);
-                continue;
-            };
             if self.floating.contains(&id)
                 || !active.iter().any(|(key, _)| *key == w.space)
                 || spaces::window_space(id) != Some(w.space.1)
@@ -633,6 +650,10 @@ impl Manager {
                 self.verifications.remove(&id);
                 continue;
             }
+            let Some((position, size)) = ax::geometry(w.element.0) else {
+                continue;
+            };
+            let actual = NSRect::new(position, size);
             let verification = self.verifications.get_mut(&id).unwrap();
             match verification.step(actual, now) {
                 VerificationStep::Wait => {}
@@ -880,8 +901,39 @@ impl Manager {
             // visibleFrame can change with the Dock/menu bar without a display
             // notification. Invalidate old destinations before animation/retries.
             if areas_changed(&self.active_areas, &areas) {
-                self.screens_changed();
+                // A Dock/menu bar change on one display does not invalidate
+                // placements or learned constraints on the other displays.
+                let changed: HashSet<_> = self
+                    .active_areas
+                    .iter()
+                    .filter_map(|(key, old)| {
+                        areas
+                            .iter()
+                            .any(|(candidate, updated)| candidate == key && updated != old)
+                            .then_some(*key)
+                    })
+                    .collect();
+                let keep: Vec<_> = areas
+                    .iter()
+                    .map(|(key, _)| *key)
+                    .filter(|key| !changed.contains(key))
+                    .collect();
+                self.cancel_inactive_placements(&keep);
+                self.applied.retain(|id, _| {
+                    self.windows
+                        .get(id)
+                        .is_some_and(|w| !changed.contains(&w.space))
+                });
+                self.constrained.retain(|id, _| {
+                    self.windows
+                        .get(id)
+                        .is_some_and(|w| !changed.contains(&w.space))
+                });
+                self.invalidate();
             }
+            // The notification can precede the native Space update. Check again
+            // after the quiet period, before resuming any deferred geometry.
+            self.cancel_inactive_placements(&areas.iter().map(|(key, _)| *key).collect::<Vec<_>>());
             self.active_areas = areas;
             self.last_area_update = Some(Instant::now());
         }
@@ -1188,6 +1240,7 @@ impl Manager {
         // Offscreen Spaces retain their trees; closed/hidden/minimized windows on
         // visible Spaces leave the current tree and rejoin when visible again.
         let mut members: HashMap<Workspace, Vec<u32>> = HashMap::new();
+        let mut actual_frames = HashMap::new();
         let mut uncertain = HashSet::new();
         for (pid, id, frame) in candidates {
             if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
@@ -1264,15 +1317,23 @@ impl Manager {
                 self.applied.remove(&id);
             }
             w.space = space;
-            if ax::geometry(w.element.0).is_none() {
+            let mut geometry = ax::geometry(w.element.0);
+            if geometry.is_none() {
                 if let Some(fresh) = ax::window_for_id(pid, id)
                     && ax::tileable(fresh.0)
                 {
                     w.element = fresh;
+                    geometry = ax::geometry(w.element.0);
                 } else {
                     uncertain.insert(id);
                     continue;
                 }
+            }
+            if let Some((position, size)) = geometry {
+                actual_frames.insert(id, NSRect::new(position, size));
+            } else {
+                uncertain.insert(id);
+                continue;
             }
             if !self.floating.contains(&id) {
                 members.entry(space).or_default().push(id);
@@ -1398,7 +1459,9 @@ impl Manager {
                 if !place_windows || !visible_ids.contains(&id) || uncertain.contains(&id) {
                     continue;
                 }
-                let actual = ws::bounds(id);
+                // WindowServer bounds can include the native Space slide offset.
+                // AX reports the app's frame, already read during membership scan.
+                let actual = actual_frames.get(&id).copied();
                 if !self.needs_placement(id, frame, actual) {
                     continue;
                 }
@@ -1414,7 +1477,7 @@ impl Manager {
                         self.verifications.insert(id, verification);
                     }
                 } else {
-                    self.transition(id, frame);
+                    self.transition_from(id, actual.unwrap(), frame);
                 }
                 // Cache destinations; animation owns intermediate frames.
                 self.applied.insert(id, frame);
@@ -1584,6 +1647,64 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn independent_space_switch_preserves_secondary_layout_and_pending_placement() {
+        let mut manager = Manager::default();
+        let primary = (1, 7);
+        let portrait = (2, 8);
+        let area = rect(-890., -390., 880., 1580.);
+        let mut desktop = Desktop::default();
+        desktop.reconcile(&[2, 3], area, 10.);
+        let from = desktop.frames(area, 10.)[0].1;
+        let mut resized = from;
+        resized.size.width -= 100.;
+        desktop.resize(2, from, resized, area, 10.);
+        let before = desktop.frames(area, 10.);
+        manager.desktops.insert(portrait, desktop);
+        for (id, space) in [(1, primary), (2, portrait), (3, portrait), (4, portrait)] {
+            manager.windows.insert(
+                id,
+                Managed {
+                    pid: std::process::id() as i32,
+                    space,
+                    original: area,
+                    original_area: area,
+                    element: ax::application(std::process::id() as i32).unwrap(),
+                },
+            );
+            manager.applied.insert(id, area);
+        }
+        manager.transition_from(1, from, area);
+        manager.transition_from(2, from, area);
+        manager.verifications.insert(3, Verification::new(area));
+        manager.constrained.insert(3, (area, resized));
+        let now = Instant::now();
+        manager.space_changed_with_visible_at(now, &[(1, 9), portrait]);
+        assert!(!manager.transitions.contains_key(&1));
+        assert!(!manager.applied.contains_key(&1));
+        assert!(manager.transitions.contains_key(&2));
+        assert!(manager.verifications.contains_key(&3));
+        assert_eq!(manager.applied[&2], area);
+        assert_eq!(manager.constrained[&3], (area, resized));
+        assert_eq!(manager.desktops[&portrait].frames(area, 10.), before);
+        assert!(!manager.needs_placement(3, area, Some(resized)));
+        // A settled window needs no geometry write on repeated notifications.
+        for offset in [100, 200, 300] {
+            manager.space_changed_with_visible_at(
+                now + Duration::from_millis(offset),
+                &[(1, 9), portrait],
+            );
+            assert_eq!(manager.applied[&4], area);
+            assert!(!manager.needs_placement(4, area, Some(area)));
+            assert_eq!(manager.desktops[&portrait].frames(area, 10.), before);
+        }
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(900)));
+        // A late native update is checked again before deferred writes resume.
+        manager.cancel_inactive_placements(&[(1, 9), (2, 10)]);
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+    }
+
     #[test]
     fn shared_space_monitor_ownership_does_not_flap_at_equal_overlap() {
         let areas = [
@@ -2251,7 +2372,7 @@ mod tests {
                 started: None,
             },
         );
-        manager.space_changed();
+        manager.space_changed_at(Instant::now());
         assert!(manager.transitions.is_empty());
         assert!(manager.settling_space());
         assert!(manager.dirty);
