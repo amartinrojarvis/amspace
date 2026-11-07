@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.2</title><pubDate>Fri, 06 Nov 2026 22:58:28 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.2 — más atajos y sugerencias disponibles.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.3</title><pubDate>Sat, 07 Nov 2026 06:52:26 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.3 — estabilidad de ventanas, borde y animaciones.
 
-- Amplía el catálogo a 54 teclas y 11 combinaciones de modificadores, conservando los atajos guardados.
-- Añade Buscar atajos libres en Tiling → Plantillas y atajo…: propone hasta seis combinaciones comprobadas en el Mac donde se realiza la búsqueda.
-- Excluye atajos de sistema habilitados y comprueba reservas globales exclusivas, liberando inmediatamente cada candidato.
-- Usar sugerido vuelve a registrar la combinación para detectar si otra aplicación la ha ocupado entretanto.
-- Corrige la comprobación de disponibilidad: los registros anteriores permitían compartir atajos entre procesos.
+- Evita reintentos de colocación innecesarios al activar aplicaciones y distingue mejor los clics de los arrastres reales.
+- Conserva el mosaico durante los cambios de escritorio y cancela escrituras de geometría anteriores mientras termina la transición nativa.
+- Refuerza los traslados entre pantallas horizontales y verticales, la estabilidad en bordes compartidos y la restauración de ventanas flotantes en el monitor de destino.
+- Abrir el selector de plantillas actualiza la previsualización sin colocar ventanas; confirmar cancela los destinos pendientes del reparto anterior.
+- Reduce las rutas que pueden provocar parpadeo del borde: evita repintados y reordenaciones redundantes e ignora eventos del propio panel y ventanas auxiliares no estándar.
+- Mejora la regularidad de las animaciones con inicio sincronizado, recuperación de escrituras intermedias fallidas y menos trabajo de Accesibilidad durante los fotogramas.
+- Tolera mejor lecturas temporales incompletas de ventanas y cambios de configuración de pantallas.
 
-Las comprobaciones no pueden detectar todos los atajos internos o capturadores de teclado de otras aplicaciones. Busca sugerencias en cada ordenador donde vayas a usar AMSpace.
-
-Validación: 61 pruebas automatizadas y comprobación interactiva de búsqueda y aplicación de sugerencias. No se ha probado físicamente el segundo Mac del usuario.
+Validación: 81 pruebas correctas en desarrollo y modo optimizado, incluida una matriz de 1.152 escenarios y 27.648 pasos del modelo. Pendiente de comprobación física del parpadeo específico de Mullvad y de monitores con escalas y frecuencias distintas; no se han medido FPS en esos equipos.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.2/AMSpace-universal.zip" length="2691493" type="application/octet-stream" sparkle:version="11" sparkle:shortVersionString="0.6.2" sparkle:edSignature="qyx2gi2J9I0lQy4EZybBHTZeaAD65ZC9eY1SyJdDPvF7gmQFmmSJ+4XK7Lwe8gJk23kb+GTi2UMW833Q4C+/CA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: A3cz9vLK7W7lWBnAd+0FMArzGJB7Aq5NzjmH2U5oXuu94SqaU77aCeWwngQp9xX+2UT9O4F38wwwTlsEwwtlAg==
-length: 2208
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.3/AMSpace-universal.zip" length="2707277" type="application/octet-stream" sparkle:version="12" sparkle:shortVersionString="0.6.3" sparkle:edSignature="d5mCeaell4aOYQE69F0DowzJotRjYk2YrpVXEogUNm49i5UcAewsgodA+nxVW7dAsSPiMtkkokW8B/bhmpusAA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 7baTrfsMseSb9MlGjoyYl9isueEvZ3o2mewlmCmi7f6tPd0XAHaJ5kRQD3yD5C72PEZzPi/wfAcV3+oSJFByBA==
+length: 2596
 -->
