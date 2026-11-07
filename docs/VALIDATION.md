@@ -1,3 +1,15 @@
+## Validación 0.6.7
+
+- Prueba local previa a publicar con la corrección instalada: Spark pid=2583, ventana=286 y Ghostty pid=774, ventana=46. Al minimizar Spark, Ghostty pasa a x=10, y=41, ancho=1660, alto=947. Al restaurarla, Ghostty queda en x=10 y Spark en x=845, ambas con ancho=825 y alto=947: hueco de 10 y sin solapamiento.
+- 91 tests correctos, incluida regresión que impide clasificar escrituras AX rechazadas como restricciones permanentes. Formato, Clippy, plist y compilación universal verificados.
+
+## Seguimiento local tras 0.6.6 (sin publicar)
+
+- Observado Ghostty id=46 en x=10, ancho=1660 y Spark id=76 en x=845, ancho=825, ambas visibles en Space 1 y aptas para tiling. Preferencias activas, sin reglas de apps flotantes y UI con Accesibilidad concedida.
+- Desactivar/reactivar tiling recuperó ambas ventanas: x=10 y x=845, anchos=825, y=41, alto=947. No se capturó el estado interno anterior; no se atribuye de forma concluyente a una referencia AX inválida ni a una restricción cacheada.
+- Se refuerzan ambas rutas: recuperar la referencia AX si falla la geometría, renovar la referencia antes del reintento de colocación y no cachear escrituras AX rechazadas como límites permanentes. Los mínimos solo se aprenden tras una escritura final aceptada.
+- 91 tests correctos, Clippy/formato/plist correctos, paquete universal compilado y copia de desarrollo instalada localmente conservando el número 0.6.6. No sustituye los artefactos publicados. Prueba nativa posterior: ambas ventanas siguen en sus mitades sin solapamiento.
+
 ## Validación 0.6.6
 
 - Publicada [v0.6.6](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.6) sobre b74c12cf113d863967f3caf1d52f5a6b8c8a14da. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42368107317) correcta, incluido empaquetado universal. ZIP público anónimo idéntico al firmado y catálogo público idéntico al generado.

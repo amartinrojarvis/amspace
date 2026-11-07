@@ -1,9 +1,9 @@
-AMSpace 0.6.6 — tamaños mínimos de Brave y Spark.
+AMSpace 0.6.7 — recuperación de ventanas en el mosaico.
 
-- Detecta los tamaños mínimos que las aplicaciones imponen al rechazar un ajuste del mosaico.
-- Redistribuye las ventanas en columnas o filas cuando esos límites provocarían solapamientos, conservando la plantilla elegida cuando cabe.
-- Amplía el diagnóstico de ventanas para comprobar su disponibilidad y geometría de Accesibilidad.
+- Renueva las referencias de Accesibilidad cuando dejan de ofrecer geometría y antes de reintentar un ajuste rechazado.
+- Distingue los fallos de escritura de los límites reales de tamaño: un ajuste rechazado ya no bloquea permanentemente la colocación de la ventana ni genera un falso tamaño mínimo.
+- Conserva la redistribución según los tamaños mínimos de Brave y Spark incorporada en 0.6.6.
 
-Validación: 90 pruebas automáticas correctas y prueba local con Brave, Spark y Ghostty. Reproducido el mínimo de 700 píxeles de alto de Spark y verificada la redistribución sin solapamientos, incluida la recuperación del espacio al cerrar la ventana de prueba. Si los tamaños mínimos de todas las ventanas superan el espacio disponible, sigue siendo necesario reducir el número de ventanas o usar flotantes.
+Validación: 91 pruebas automáticas correctas. Prueba local con Ghostty y Spark: Ghostty recupera todo el espacio al minimizar Spark y ambas vuelven al mosaico al restaurarla, sin solapamientos. Esta revisión refuerza la recuperación tras fallos de Accesibilidad; no se ha identificado de forma concluyente el estado interno que causó el atasco anterior.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel; ejecución local comprobada en Apple Silicon.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

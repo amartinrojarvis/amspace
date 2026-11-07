@@ -238,6 +238,7 @@ struct Verification {
     target: NSRect,
     due: Instant,
     retried: bool,
+    accepted: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationStep {
@@ -245,6 +246,7 @@ enum VerificationStep {
     Complete,
     Retry,
     Limited,
+    Rejected,
 }
 impl Verification {
     fn new(target: NSRect) -> Self {
@@ -252,6 +254,7 @@ impl Verification {
             target,
             due: Instant::now() + Duration::from_millis(120),
             retried: false,
+            accepted: false,
         }
     }
     fn step(&mut self, actual: NSRect, now: Instant) -> VerificationStep {
@@ -262,7 +265,11 @@ impl Verification {
             return VerificationStep::Wait;
         }
         if self.retried {
-            return VerificationStep::Limited;
+            return if self.accepted {
+                VerificationStep::Limited
+            } else {
+                VerificationStep::Rejected
+            };
         }
         self.retried = true;
         self.due = now + Duration::from_millis(120);
@@ -590,7 +597,9 @@ impl Manager {
             t.record_write(frame, accepted);
             // A rejected intermediate sample must not abandon the final destination.
             if complete {
-                self.verifications.insert(*id, Verification::new(t.to));
+                let mut verification = Verification::new(t.to);
+                verification.accepted = accepted;
+                self.verifications.insert(*id, verification);
                 done.push(*id);
             }
         }
@@ -632,7 +641,20 @@ impl Manager {
                     self.constrained.remove(&id);
                 }
                 VerificationStep::Retry => {
-                    ax::set_frame(w.element.0, verification.target);
+                    // Electron and permission changes can invalidate a retained
+                    // AX proxy while the compositor identity stays unchanged.
+                    let fresh = ax::window_for_id(w.pid, id);
+                    let element = fresh.as_ref().map_or(w.element.0, |w| w.0);
+                    verification.accepted = ax::set_frame(element, verification.target);
+                    if let Some(fresh) = fresh {
+                        self.windows.get_mut(&id).unwrap().element = fresh;
+                    }
+                }
+                VerificationStep::Rejected => {
+                    // A transport/permission failure is not an app-imposed
+                    // size constraint. Let the next scan retry placement.
+                    self.applied.remove(&id);
+                    self.verifications.remove(&id);
                 }
                 VerificationStep::Limited => {
                     let minimum = self
@@ -1243,8 +1265,14 @@ impl Manager {
             }
             w.space = space;
             if ax::geometry(w.element.0).is_none() {
-                uncertain.insert(id);
-                continue;
+                if let Some(fresh) = ax::window_for_id(pid, id)
+                    && ax::tileable(fresh.0)
+                {
+                    w.element = fresh;
+                } else {
+                    uncertain.insert(id);
+                    continue;
+                }
             }
             if !self.floating.contains(&id) {
                 members.entry(space).or_default().push(id);
@@ -1381,8 +1409,9 @@ impl Manager {
                     self.transitions.remove(&id);
                     self.verifications.remove(&id);
                     if let Some(w) = self.windows.get(&id) {
-                        ax::set_frame(w.element.0, frame);
-                        self.verifications.insert(id, Verification::new(frame));
+                        let mut verification = Verification::new(frame);
+                        verification.accepted = ax::set_frame(w.element.0, frame);
+                        self.verifications.insert(id, verification);
                     }
                 } else {
                     self.transition(id, frame);
@@ -1971,6 +2000,7 @@ mod tests {
     #[test]
     fn application_constraints_have_only_one_bounded_retry() {
         let mut verification = Verification::new(rect(0., 0., 400., 300.));
+        verification.accepted = true;
         let actual = rect(0., 0., 600., 500.);
         let due = verification.due;
         assert_eq!(verification.step(actual, due), VerificationStep::Retry);
@@ -1981,6 +2011,23 @@ mod tests {
         assert_eq!(
             verification.step(actual, due + Duration::from_secs(1)),
             VerificationStep::Limited
+        );
+    }
+
+    #[test]
+    fn rejected_ax_writes_cannot_become_permanent_size_limits() {
+        let mut verification = Verification::new(rect(10., 41., 825., 947.));
+        let old = rect(10., 41., 1660., 947.);
+        let due = verification.due;
+        assert_eq!(verification.step(old, due), VerificationStep::Retry);
+        assert_eq!(
+            verification.step(old, due + Duration::from_secs(1)),
+            VerificationStep::Rejected
+        );
+        verification.accepted = true; // A fresh AX proxy recovers transport.
+        assert_eq!(
+            verification.step(verification.target, due + Duration::from_secs(2)),
+            VerificationStep::Complete
         );
     }
 
