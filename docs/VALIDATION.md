@@ -1,5 +1,7 @@
 ## Validación 0.6.9: pestañas nativas
 
+- Publicada [v0.6.9](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.9) sobre 7d5aba55df4915f08da2cf5cf35b1fe8f933d29f. [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42391615482). ZIP descargado sin autenticación idéntico al paquete firmado.
+
 - Incidente comunicado en Finder y Ghostty: crear o seleccionar una pestaña produce una división temporal del mosaico y su posterior reversión. La reconciliación trataba el nuevo ID seleccionado y el ID inactivo conservado durante la gracia como dos ventanas distintas.
 - Metadatos locales: Ghostty publica únicamente el ID 44 en AXWindows y mantiene el ID 100 fuera de pantalla, sin Space nativo. Finder reproduce la sustitución de ID al seleccionar pestañas (262 → 245); el grupo AX retenido antes y después es igual por CFEqual, aunque el AXWindow saliente ya no permite leer sus hijos. Al crear la primera pestaña no existía grupo previo: adopción inicial limitada a un único hueco vivo del mismo proceso, pantalla, Space y frame, ausente de AXWindows.
 - Se conserva el hueco del árbol y la distribución ajustada al sustituir el ID seleccionado. Se transfieren restricciones, tamaños mínimos, geometría original y estado flotante. Las pestañas inactivas no se reinsertan por la gracia de pertenencia ni por el asentamiento de un Space. Los grupos conocidos se comparan por identidad AX, sin títulos ni inferirlos por tamaño.

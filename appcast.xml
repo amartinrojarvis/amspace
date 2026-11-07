@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.8</title><pubDate>Sat, 07 Nov 2026 16:05:41 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.8 — estabilidad al cambiar de escritorio con varias pantallas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.9</title><pubDate>Sat, 07 Nov 2026 16:29:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.9 — estabilidad al usar pestañas nativas.
 
-- Conserva la distribución y el estado de colocación de las pantallas cuyo escritorio no cambia.
-- Limita a la pantalla afectada los reajustes por cambios de área útil del Dock o la barra de menús.
-- Usa la geometría de Accesibilidad para decidir y verificar colocaciones, evitando reajustes por posiciones transitorias del compositor durante la animación de escritorio.
-- Comprueba de nuevo los escritorios visibles antes de reanudar colocaciones pendientes.
+- Reconoce el grupo nativo de pestañas para conservar un único hueco del mosaico al crear o seleccionar pestañas en Finder, Ghostty y otras apps que publican ese grupo.
+- Sustituye el ID de la pestaña seleccionada conservando la posición en la distribución, sus proporciones, tamaños mínimos y estado flotante.
+- Evita que las pestañas inactivas se reincorporen como ventanas adicionales durante la reconciliación.
+- Incluye las correcciones multipantalla de 0.6.8.
 
-Validación: 92 pruebas automáticas correctas, incluida una regresión con pantalla apaisada y vertical en escritorios independientes. Pendiente de validación física del incidente en el Mac con dos pantallas.
-Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel; ejecución local comprobada en Apple Silicon en versiones anteriores.
+Validación: 95 pruebas automáticas correctas, con alternancia entre pestañas en todas las plantillas y ambas orientaciones. Se ha comprobado en Finder que el ID de ventana cambia y la identidad AX del grupo permanece estable; pendiente de validación de uso de la corrección por el usuario.
+Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.8/AMSpace-universal.zip" length="2730988" type="application/octet-stream" sparkle:version="17" sparkle:shortVersionString="0.6.8" sparkle:edSignature="fPUb9HFo4bL9hXr3HmF2aH61rxoHuRMNPFxg+OnUNvjpsTtkM+/H4AYadbE0tt2nAicjwXt36HyA4LHgPm0HBg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: WjNCzbF5IPYuIN/J7TXIjwG8HCijuAR8yyJqX+v5R+ZEFCH/7GXE54SrZV5wXqzN9oaKu+rn6Yt4l9Vr0MS+CA==
-length: 2024
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.9/AMSpace-universal.zip" length="2740225" type="application/octet-stream" sparkle:version="18" sparkle:shortVersionString="0.6.9" sparkle:edSignature="RQytiyuRdGNCTqLMQpLwDQ6ma68wREA0AWOSIWBaS8Yf63MIoMx3rdyD9GW/2EwPtF5WOjKkboax2zoRfC2zDA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 7gGpFdlR62pumy0lZBBii6qgPuTqzyQLx7aBpqesaHmDujGvGOsOgUCGOr1SsNnshKFYb2m8/D/+5iJzSQ/xAQ==
+length: 2026
 -->
