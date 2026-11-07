@@ -1,5 +1,8 @@
 ## Validación 0.6.7
 
+- Publicada [v0.6.7](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.7) sobre 1cb252e78d241cc4ed3f13eab2eea7a171ba6922. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42369017974) correcta. ZIP descargado sin autenticación idéntico al firmado; catálogo público idéntico al generado.
+- Actualización real mediante Sparkle desde 0.6.6 completada: UI confirma 0.6.7; ejecutable instalado idéntico al universal publicado y firma estricta correcta. Preferencias de uso comparadas sin cambios. La UI requiere renovar Accesibilidad por el cambio de firma ad hoc; no se modificó ese permiso.
+
 - Prueba local previa a publicar con la corrección instalada: Spark pid=2583, ventana=286 y Ghostty pid=774, ventana=46. Al minimizar Spark, Ghostty pasa a x=10, y=41, ancho=1660, alto=947. Al restaurarla, Ghostty queda en x=10 y Spark en x=845, ambas con ancho=825 y alto=947: hueco de 10 y sin solapamiento.
 - 91 tests correctos, incluida regresión que impide clasificar escrituras AX rechazadas como restricciones permanentes. Formato, Clippy, plist y compilación universal verificados.
 
