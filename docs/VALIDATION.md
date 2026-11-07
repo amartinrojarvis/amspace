@@ -1,3 +1,11 @@
+## Validación 0.6.6
+
+- Reproducido con Brave, Spark y Ghostty en un monitor de 1680 × 1019: Spark conserva 700 píxeles de alto ante un destino de 468 y solapa el tile de Brave.
+- Corregida la redistribución a partir de los mínimos observados. Prueba real: Ghostty x=10 ancho=198, Spark x=218 ancho=758 y Brave x=986 ancho=684; todas con y=41 y alto=947, sin solapamientos y con huecos de 10 píxeles.
+- Al cerrar la ventana temporal de Brave, Spark y Ghostty recuperan el espacio, sin solaparse.
+- 90 tests correctos, un diagnóstico interactivo ignorado en la suite; Clippy sin advertencias. Prueba de regresión del mínimo de Spark y estabilidad de la distribución.
+- No se ha reproducido por separado el caso de Brave ocupando toda la pantalla en el otro ordenador. El ajuste resuelve el solapamiento reproducido aquí. No se han probado físicamente Intel ni varios monitores en esta revisión.
+
 ## Validación de uso y publicación 0.6.5
 
 El usuario confirma que el foco llega a la ventana correcta de Finder cuando otra ventana de Finder flota sobre los tiles, y que la revisión posterior elimina el destello del borde intermedio. La entrega verifica el foco y limita la corrección a dos reintentos; el borde conserva su objetivo durante la entrega. Transiciones de distribución ampliadas de 120 a 160 ms para repartir el movimiento en más fotogramas sin aumentar la frecuencia del temporizador. La matriz automatizada multipantalla no sustituye las pruebas físicas pendientes con varias escalas y orientaciones.

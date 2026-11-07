@@ -31,10 +31,46 @@ fn main() {
                     "Tile candidate: pid={pid} id={id} space={:?} frame={frame:?}",
                     spaces::window_space(id)
                 );
+                if let Some(window) = accessibility::window_for_id(pid, id) {
+                    println!(
+                        "  AX: tileable={} geometry={:?}",
+                        accessibility::tileable(window.0),
+                        accessibility::geometry(window.0)
+                    );
+                } else {
+                    println!("  AX: window unavailable");
+                }
             }
             unsafe {
                 use objc2::{class, msg_send, runtime::AnyObject};
                 let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+                let apps: *mut AnyObject = msg_send![workspace, runningApplications];
+                let count: usize = msg_send![apps, count];
+                for i in 0..count {
+                    let running: *mut AnyObject = msg_send![apps, objectAtIndex:i];
+                    let pid: i32 = msg_send![running, processIdentifier];
+                    let Some(bundle) = tile_rules::application_id(pid) else {
+                        continue;
+                    };
+                    if !bundle.contains("brave") && !bundle.contains("Spark") {
+                        continue;
+                    }
+                    println!("App {bundle} pid={pid}");
+                    if let Some(app) = accessibility::application(pid)
+                        && let Some(windows) = accessibility::attr(app.0, "AXWindows")
+                    {
+                        for w in accessibility::array(windows.0) {
+                            let id = accessibility::window_id(w);
+                            println!(
+                                "  Window {id:?} space={:?} tileable={} geometry={:?} fullscreen={}",
+                                id.and_then(spaces::window_space),
+                                accessibility::tileable(w),
+                                accessibility::geometry(w),
+                                accessibility::flag(w, "AXFullScreen")
+                            );
+                        }
+                    }
+                }
                 let app: *mut AnyObject = msg_send![workspace, frontmostApplication];
                 let pid: i32 = msg_send![app, processIdentifier];
                 println!("Front window: {:?}", window_server::front_window(pid));

@@ -320,6 +320,7 @@ pub struct Manager {
     transitions: HashMap<u32, Transition>,
     verifications: HashMap<u32, Verification>,
     constrained: HashMap<u32, (NSRect, NSRect)>,
+    minimum_sizes: HashMap<u32, objc2_foundation::NSSize>,
     membership_grace: MembershipGrace,
     drag: Option<Drag>,
     pending_drop: Option<PendingDrop>,
@@ -634,6 +635,16 @@ impl Manager {
                     ax::set_frame(w.element.0, verification.target);
                 }
                 VerificationStep::Limited => {
+                    let minimum = self
+                        .minimum_sizes
+                        .entry(id)
+                        .or_insert(objc2_foundation::NSSize::new(80., 60.));
+                    if actual.size.width > verification.target.size.width + 2. {
+                        minimum.width = minimum.width.max(actual.size.width);
+                    }
+                    if actual.size.height > verification.target.size.height + 2. {
+                        minimum.height = minimum.height.max(actual.size.height);
+                    }
                     self.constrained.insert(id, (verification.target, actual));
                     self.verifications.remove(&id);
                     self.last_error=Some("Una ventana limita su tamaño o posición; prueba otra plantilla o déjala flotante.".into());
@@ -1342,7 +1353,10 @@ impl Manager {
             ids.sort_unstable();
             d.reconcile_at(ids, r, 10., focused);
             d.fit(r, 10.);
-            let frames = d.frames(r, 10.);
+            let proposed = d.frames(r, 10.);
+            let frames =
+                crate::tiling::respect_minimum_sizes(&proposed, &self.minimum_sizes, r, 10.)
+                    .unwrap_or(proposed);
             // Do not create unusably small tiles; retain the layout until space is available.
             if frames
                 .iter()
@@ -1380,6 +1394,7 @@ impl Manager {
         self.dirty = false;
     }
     fn forget_window(&mut self, id: u32) {
+        self.minimum_sizes.remove(&id);
         if let Some(w) = self.windows.remove(&id) {
             if let Some(d) = self.desktops.get_mut(&w.space) {
                 d.remove(id);

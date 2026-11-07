@@ -943,6 +943,79 @@ impl Desktop {
     }
 }
 
+/// Keep the requested layout when possible. Apps such as Spark enforce a native
+/// minimum size even when AX reports a successful resize. Repack into bands
+/// when those limits would make the requested tiles overlap.
+pub fn respect_minimum_sizes(
+    frames: &[(u32, NSRect)],
+    minimums: &std::collections::HashMap<u32, objc2_foundation::NSSize>,
+    area: NSRect,
+    gap: f64,
+) -> Option<Vec<(u32, NSRect)>> {
+    let minimum = |id: &u32| {
+        minimums
+            .get(id)
+            .copied()
+            .unwrap_or(objc2_foundation::NSSize::new(80., 60.))
+    };
+    if frames.iter().all(|(id, r)| {
+        let m = minimum(id);
+        r.size.width + 1. >= m.width && r.size.height + 1. >= m.height
+    }) {
+        return Some(frames.to_vec());
+    }
+    for columns in [
+        area.size.width >= area.size.height,
+        area.size.width < area.size.height,
+    ] {
+        let required: f64 = frames
+            .iter()
+            .map(|(id, _)| {
+                let m = minimum(id);
+                if columns { m.width } else { m.height }
+            })
+            .sum::<f64>()
+            + gap * frames.len().saturating_sub(1) as f64;
+        let span = if columns {
+            area.size.width
+        } else {
+            area.size.height
+        };
+        let cross = if columns {
+            area.size.height
+        } else {
+            area.size.width
+        };
+        if required > span
+            || frames.iter().any(|(id, _)| {
+                let m = minimum(id);
+                (if columns { m.height } else { m.width }) > cross
+            })
+        {
+            continue;
+        }
+        let extra = (span - required) / frames.len() as f64;
+        let mut offset = 0.;
+        return Some(
+            frames
+                .iter()
+                .map(|(id, _)| {
+                    let m = minimum(id);
+                    let length = (if columns { m.width } else { m.height }) + extra;
+                    let r = if columns {
+                        rect(area.origin.x + offset, area.origin.y, length, cross)
+                    } else {
+                        rect(area.origin.x, area.origin.y + offset, cross, length)
+                    };
+                    offset += length + gap;
+                    (*id, r)
+                })
+                .collect(),
+        );
+    }
+    None
+}
+
 /// Quintic easing has zero velocity AND acceleration at both endpoints.
 pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
     let t = progress.clamp(0., 1.);
@@ -958,6 +1031,33 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn spark_minimum_height_repacks_browser_and_mail_without_overlap() {
+        let area = rect(10., 41., 1660., 947.);
+        let frames = vec![
+            (1, rect(10., 41., 825., 947.)),
+            (2, rect(845., 41., 825., 468.)),
+            (3, rect(845., 519., 825., 469.)),
+        ];
+        let minimums = [(2, objc2_foundation::NSSize::new(720., 700.))]
+            .into_iter()
+            .collect();
+        let result = respect_minimum_sizes(&frames, &minimums, area, 10.).unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(result[1].1.size.height >= 700.);
+        assert!(result[1].1.size.width >= 720.);
+        for pair in result.windows(2) {
+            assert!(
+                (pair[0].1.origin.x + pair[0].1.size.width + 10. - pair[1].1.origin.x).abs() < 0.01
+            );
+        }
+        let last = result.last().unwrap().1;
+        assert!((last.origin.x + last.size.width - 1670.).abs() < 0.01);
+        assert_eq!(
+            respect_minimum_sizes(&result, &minimums, area, 10.),
+            Some(result)
+        );
+    }
     fn assert_layout_invariants(desktop: &Desktop, area: NSRect) {
         let frames = desktop.frames(area, 10.);
         let mut ids: Vec<_> = frames.iter().map(|(id, _)| *id).collect();
