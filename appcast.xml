@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.6</title><pubDate>Sat, 07 Nov 2026 11:25:26 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.6 — tamaños mínimos de Brave y Spark.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.7</title><pubDate>Sat, 07 Nov 2026 11:38:27 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.7 — recuperación de ventanas en el mosaico.
 
-- Detecta los tamaños mínimos que las aplicaciones imponen al rechazar un ajuste del mosaico.
-- Redistribuye las ventanas en columnas o filas cuando esos límites provocarían solapamientos, conservando la plantilla elegida cuando cabe.
-- Amplía el diagnóstico de ventanas para comprobar su disponibilidad y geometría de Accesibilidad.
+- Renueva las referencias de Accesibilidad cuando dejan de ofrecer geometría y antes de reintentar un ajuste rechazado.
+- Distingue los fallos de escritura de los límites reales de tamaño: un ajuste rechazado ya no bloquea permanentemente la colocación de la ventana ni genera un falso tamaño mínimo.
+- Conserva la redistribución según los tamaños mínimos de Brave y Spark incorporada en 0.6.6.
 
-Validación: 90 pruebas automáticas correctas y prueba local con Brave, Spark y Ghostty. Reproducido el mínimo de 700 píxeles de alto de Spark y verificada la redistribución sin solapamientos, incluida la recuperación del espacio al cerrar la ventana de prueba. Si los tamaños mínimos de todas las ventanas superan el espacio disponible, sigue siendo necesario reducir el número de ventanas o usar flotantes.
+Validación: 91 pruebas automáticas correctas. Prueba local con Ghostty y Spark: Ghostty recupera todo el espacio al minimizar Spark y ambas vuelven al mosaico al restaurarla, sin solapamientos. Esta revisión refuerza la recuperación tras fallos de Accesibilidad; no se ha identificado de forma concluyente el estado interno que causó el atasco anterior.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel; ejecución local comprobada en Apple Silicon.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.6/AMSpace-universal.zip" length="2726200" type="application/octet-stream" sparkle:version="15" sparkle:shortVersionString="0.6.6" sparkle:edSignature="BpmMCMQ498NnhTyjwr0GBQin3lCLNbbQa9U7IpVFftNZUpY+rKVb3VPvwjMihEuOGdNJ/V3ixPi/46i/R6GVDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: ZEDS5s/FdW3JYLqxQ0iPicqQU7BJIg/qDDrm/1Lfl1fO1+r6CcyTDfp6yWjyUjyhpRSfuc76gPr5ah+vQUsNDA==
-length: 2056
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.7/AMSpace-universal.zip" length="2726731" type="application/octet-stream" sparkle:version="16" sparkle:shortVersionString="0.6.7" sparkle:edSignature="u0hFYXN7bWU5ufjjf+EeKgl3/5SZvKjv7CCzLRacVjMxWeHfPPzsGoldnEr/y6ST4Q3+SLTLNSl3aDmakdBGCQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 9tIxQVZBMczSmfSriVQ9VRZnQHovO3sYH07T2P9GwOZunkQnErgykmtjTZnQLyq1MuKMAN8Oti+t+sbwEsafCA==
+length: 2067
 -->
