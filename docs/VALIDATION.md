@@ -1,5 +1,8 @@
 ## Validación 0.6.6
 
+- Publicada [v0.6.6](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.6) sobre b74c12cf113d863967f3caf1d52f5a6b8c8a14da. [CI](https://github.com/amartinrojarvis/amspace/actions/runs/42368107317) correcta, incluido empaquetado universal. ZIP público anónimo idéntico al firmado y catálogo público idéntico al generado.
+- Actualización real desde 0.6.5: Buscar…, Instalar actualización e Instalar y volver a abrir. UI confirma 0.6.6; ejecutable instalado idéntico al universal publicado y firma estricta correcta. Tras reiniciar, la UI requiere renovar Accesibilidad por la firma ad hoc; no se modificó ese permiso.
+
 - Reproducido con Brave, Spark y Ghostty en un monitor de 1680 × 1019: Spark conserva 700 píxeles de alto ante un destino de 468 y solapa el tile de Brave.
 - Corregida la redistribución a partir de los mínimos observados. Prueba real: Ghostty x=10 ancho=198, Spark x=218 ancho=758 y Brave x=986 ancho=684; todas con y=41 y alto=947, sin solapamientos y con huecos de 10 píxeles.
 - Al cerrar la ventana temporal de Brave, Spark y Ghostty recuperan el espacio, sin solaparse.
