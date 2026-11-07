@@ -1,3 +1,12 @@
+## Validación 0.6.9: pestañas nativas
+
+- Incidente comunicado en Finder y Ghostty: crear o seleccionar una pestaña produce una división temporal del mosaico y su posterior reversión. La reconciliación trataba el nuevo ID seleccionado y el ID inactivo conservado durante la gracia como dos ventanas distintas.
+- Metadatos locales: Ghostty publica únicamente el ID 44 en AXWindows y mantiene el ID 100 fuera de pantalla, sin Space nativo. Finder reproduce la sustitución de ID al seleccionar pestañas (262 → 245); el grupo AX retenido antes y después es igual por CFEqual, aunque el AXWindow saliente ya no permite leer sus hijos. Al crear la primera pestaña no existía grupo previo: adopción inicial limitada a un único hueco vivo del mismo proceso, pantalla, Space y frame, ausente de AXWindows.
+- Se conserva el hueco del árbol y la distribución ajustada al sustituir el ID seleccionado. Se transfieren restricciones, tamaños mínimos, geometría original y estado flotante. Las pestañas inactivas no se reinsertan por la gracia de pertenencia ni por el asentamiento de un Space. Los grupos conocidos se comparan por identidad AX, sin títulos ni inferirlos por tamaño.
+- Versión 0.6.9, build 18: paquete universal compilado, firma estricta del bundle correcta, ZIP y catálogo Sparkle firmados y verificados.
+- 95 pruebas correctas, un diagnóstico interactivo ignorado; formato, Clippy y plist correctos. Regresión de alternancia, estado flotante y mínimos, más todas las plantillas con proporciones modificadas en áreas apaisada y vertical.
+- Las ventanas temporales de Finder creadas para el diagnóstico se cerraron. La prueba interactiva de Ghostty no estuvo disponible mediante la herramienta de UI; no se presenta la inspección de metadatos como prueba de uso de la corrección. Pendiente de validación de uso del usuario. Sin instalar localmente esta revisión.
+
 ## Validación 0.6.8: escritorios independientes
 
 - Los cambios de Space cancelan únicamente las colocaciones pendientes de los escritorios que dejan de estar visibles. La pantalla secundaria conserva sus destinos, restricciones y distribución; se vuelve a comprobar la pertenencia después de la pausa nativa para cubrir notificaciones adelantadas.

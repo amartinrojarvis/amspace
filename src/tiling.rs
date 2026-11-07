@@ -490,6 +490,31 @@ impl Desktop {
             ..Default::default()
         }
     }
+    /// Selecting an AppKit tab changes its NSWindow ID, not its layout slot.
+    pub fn replace_window(&mut self, old: u32, new: u32) -> bool {
+        if !self.order.contains(&old) || self.order.contains(&new) {
+            return false;
+        }
+        let before = self.order.clone();
+        for id in &mut self.order {
+            if *id == old {
+                *id = new;
+            }
+        }
+        if let Some(tree) = &mut self.tree {
+            tree.remap(&before, &self.order);
+        }
+        if let Some((_, order, tree)) = &mut self.resized {
+            let before = order.clone();
+            for id in order.iter_mut() {
+                if *id == old {
+                    *id = new;
+                }
+            }
+            tree.remap(&before, order);
+        }
+        true
+    }
     pub fn remove(&mut self, id: u32) {
         if !self.order.contains(&id) {
             return;

@@ -52,6 +52,11 @@ unsafe extern "C" {
     fn AXObserverGetRunLoopSource(observer: Cf) -> Cf;
 }
 pub struct Owned(pub Cf);
+impl Clone for Owned {
+    fn clone(&self) -> Self {
+        Self(unsafe { CFRetain(self.0) })
+    }
+}
 impl Owned {
     pub fn new(p: Cf) -> Option<Self> {
         (!p.is_null()).then_some(Self(p))
@@ -158,6 +163,21 @@ pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
         }
     }
     None
+}
+pub fn application_window_ids(pid: i32) -> Option<Vec<u32>> {
+    let windows = attr(application(pid)?.0, "AXWindows")?;
+    Some(array(windows.0).into_iter().filter_map(window_id).collect())
+}
+/// The AXTabGroup element identifies the native tabbed window across selected
+/// NSWindow IDs. Retain that identity; tab buttons and titles are not stable.
+pub fn native_tab_group(window: Cf) -> Option<Owned> {
+    let children = attr(window, "AXChildren")?;
+    array(children.0).into_iter().find_map(|child| {
+        attr(child, "AXRole")
+            .is_some_and(|role| equals_text(role.0, "AXTabGroup"))
+            .then(|| Owned::new(unsafe { CFRetain(child) }))
+            .flatten()
+    })
 }
 pub fn flag(element: Cf, name: &str) -> bool {
     attr(element, name).is_some_and(|v| unsafe {

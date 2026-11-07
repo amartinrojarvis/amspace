@@ -323,6 +323,8 @@ pub struct Manager {
     desktops: HashMap<Workspace, Desktop>,
     windows: HashMap<u32, Managed>,
     floating: HashSet<u32>,
+    tab_groups: HashMap<u32, ax::Owned>,
+    inactive_tabs: HashSet<u32>,
     applied: HashMap<u32, NSRect>,
     transitions: HashMap<u32, Transition>,
     verifications: HashMap<u32, Verification>,
@@ -443,7 +445,10 @@ impl Manager {
     pub fn restore(&mut self) {
         self.cancel_drag();
         for (id, w) in &self.windows {
-            if !self.floating.contains(id) && !ax::flag(w.element.0, "AXFullScreen") {
+            if !self.inactive_tabs.contains(id)
+                && !self.floating.contains(id)
+                && !ax::flag(w.element.0, "AXFullScreen")
+            {
                 if let Some(current) = area(w.space.0) {
                     ax::set_frame(
                         w.element.0,
@@ -455,6 +460,8 @@ impl Manager {
         self.applied.clear();
         self.constrained.clear();
         self.windows.clear();
+        self.tab_groups.clear();
+        self.inactive_tabs.clear();
         self.handoffs.clear();
         self.membership_grace.since.clear();
         self.invalidate();
@@ -541,6 +548,47 @@ impl Manager {
                 .desktops
                 .get(&space)
                 .is_some_and(|d| d.order.contains(&id))
+    }
+    fn inherit_tab_slot(&mut self, old: u32, new: u32) {
+        let Some(source) = self.windows.get(&old) else {
+            return;
+        };
+        let (space, original, original_area) =
+            (source.space, source.original, source.original_area);
+        let floating = self.floating.contains(&old);
+        if !floating
+            && !self
+                .desktops
+                .get_mut(&space)
+                .is_some_and(|d| d.replace_window(old, new))
+        {
+            return;
+        }
+        self.transitions.remove(&old);
+        self.verifications.remove(&old);
+        self.transitions.remove(&new);
+        self.verifications.remove(&new);
+        if let Some(target) = self.applied.remove(&old) {
+            self.applied.insert(new, target);
+        }
+        if let Some(limit) = self.constrained.remove(&old) {
+            self.constrained.insert(new, limit);
+        }
+        if let Some(minimum) = self.minimum_sizes.remove(&old) {
+            self.minimum_sizes.insert(new, minimum);
+        }
+        if floating {
+            self.floating.insert(new);
+        } else {
+            self.floating.remove(&new);
+        }
+        if let Some(destination) = self.windows.get_mut(&new) {
+            destination.original = original;
+            destination.original_area = original_area;
+        }
+        self.inactive_tabs.insert(old);
+        self.inactive_tabs.remove(&new);
+        self.membership_grace.since.remove(&old);
     }
     fn needs_placement(&self, id: u32, target: NSRect, actual: Option<NSRect>) -> bool {
         let pending = self
@@ -1236,6 +1284,12 @@ impl Manager {
             ax::focused_id(pid)
         };
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
+        let all_ids = if self.windows.keys().any(|id| !visible_ids.contains(id)) {
+            ws::all_window_ids()
+        } else {
+            None
+        };
+        let mut app_window_ids = HashMap::new();
         let mut transferred: HashSet<u32> = self.handoffs.keys().copied().collect();
         // Offscreen Spaces retain their trees; closed/hidden/minimized windows on
         // visible Spaces leave the current tree and rejoin when visible again.
@@ -1335,6 +1389,89 @@ impl Manager {
                 uncertain.insert(id);
                 continue;
             }
+            self.inactive_tabs.remove(&id); // A detached tab can become an ordinary window.
+            let owns_slot = self
+                .desktops
+                .get(&space)
+                .is_some_and(|d| d.order.contains(&id));
+            if !owns_slot {
+                if let Some(group) =
+                    ax::native_tab_group(w.element.0).or_else(|| self.tab_groups.get(&id).cloned())
+                {
+                    // AXTabGroup is shared by the tabs of ONE window. Matching
+                    // its AX identity avoids merging unrelated windows, even if
+                    // they have identical frames, titles, process and Space.
+                    let possible: Vec<_> = self
+                        .windows
+                        .iter()
+                        .filter_map(|(old, source)| {
+                            (*old != id
+                                && source.pid == pid
+                                && source.space == space
+                                && !visible_ids.contains(old)
+                                && (self.floating.contains(old)
+                                    || self
+                                        .desktops
+                                        .get(&space)
+                                        .is_some_and(|d| d.order.contains(old))))
+                            .then_some(*old)
+                        })
+                        .collect();
+                    let mut matches = Vec::new();
+                    let mut first_tabs = Vec::new();
+                    for old in possible {
+                        // The first Cmd+T can add the tab bar after the source's
+                        // last scan; query its retained AX element once if needed.
+                        if !self.tab_groups.contains_key(&old)
+                            && let Some(previous) =
+                                ax::native_tab_group(self.windows[&old].element.0)
+                        {
+                            self.tab_groups.insert(old, previous);
+                        }
+                        if spaces::window_space(old).is_some_and(|native| native != space.1) {
+                            continue;
+                        }
+                        if let Some(previous) = self.tab_groups.get(&old) {
+                            if unsafe { ax::CFEqual(previous.0, group.0) } {
+                                matches.push(old);
+                            }
+                        } else if all_ids
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(&(pid, old)))
+                        {
+                            // The first tab creates a group after the outgoing
+                            // AXWindow has become unreadable. Bootstrap only from
+                            // one live slot at this frame, absent from AXWindows.
+                            let ax_ids = app_window_ids
+                                .entry(pid)
+                                .or_insert_with(|| ax::application_window_ids(pid));
+                            let previous = self
+                                .constrained
+                                .get(&old)
+                                .map(|(_, actual)| *actual)
+                                .or_else(|| self.applied.get(&old).copied())
+                                .or_else(|| ws::bounds(old));
+                            if ax_ids.as_ref().is_some_and(|ids| !ids.contains(&old))
+                                && previous.is_some_and(|previous| same_tab_frame(previous, frame))
+                            {
+                                first_tabs.push(old);
+                            }
+                        }
+                    }
+                    if matches.is_empty() {
+                        matches = first_tabs;
+                    }
+                    if let [old] = matches.as_slice() {
+                        self.tab_groups.insert(*old, group.clone());
+                        self.inherit_tab_slot(*old, id);
+                        // A stale inactive tab can retain an older frame. Restore
+                        // this slot directly, never animate it as a new tile.
+                        transferred.insert(id);
+                    }
+                    self.tab_groups.insert(id, group);
+                }
+            }
+            let w = self.windows.get_mut(&id).unwrap();
             if !self.floating.contains(&id) {
                 members.entry(space).or_default().push(id);
             } else if !self.transitions.contains_key(&id) {
@@ -1347,13 +1484,9 @@ impl Manager {
         }
         // Offscreen apps can take the full AX timeout per call. Use one native
         // window list, and fail closed if the compositor query is unavailable.
-        let all_ids = if self.windows.keys().any(|id| !visible_ids.contains(id)) {
-            ws::all_window_ids()
-        } else {
-            None
-        };
         for (id, w) in &self.windows {
             if !visible_ids.contains(id)
+                && !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && active.iter().any(|(key, _)| *key == w.space)
                 && all_ids
@@ -1392,7 +1525,10 @@ impl Manager {
         // around the focused window. Genuine ineligibility still expires promptly.
         for id in self.membership_grace.retained(&uncertain, Instant::now()) {
             if let Some(w) = self.windows.get(&id) {
-                if !self.floating.contains(&id) && active.iter().any(|(key, _)| *key == w.space) {
+                if !self.floating.contains(&id)
+                    && !self.inactive_tabs.contains(&id)
+                    && active.iter().any(|(key, _)| *key == w.space)
+                {
                     members.entry(w.space).or_default().push(id);
                 }
             }
@@ -1415,6 +1551,7 @@ impl Manager {
             // membership. Do not erase a live desktop's ratios in that gap.
             for (id, w) in &self.windows {
                 if !visible_ids.contains(id)
+                    && !self.inactive_tabs.contains(id)
                     && !self.floating.contains(id)
                     && active.iter().any(|(space, _)| *space == w.space)
                     && spaces::window_space(*id) == Some(w.space.1)
@@ -1486,6 +1623,8 @@ impl Manager {
         self.dirty = false;
     }
     fn forget_window(&mut self, id: u32) {
+        self.tab_groups.remove(&id);
+        self.inactive_tabs.remove(&id);
         self.minimum_sizes.remove(&id);
         if let Some(w) = self.windows.remove(&id) {
             if let Some(d) = self.desktops.get_mut(&w.space) {
@@ -1509,6 +1648,7 @@ impl Manager {
     pub fn restore_space(&mut self, space: u64) {
         for (id, w) in &self.windows {
             if w.space.1 == space
+                && !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && !ax::flag(w.element.0, "AXFullScreen")
             {
@@ -1608,6 +1748,15 @@ fn overlap(frame: NSRect, area: NSRect) -> f64 {
         - frame.origin.y.max(area.origin.y);
     width.max(0.) * height.max(0.)
 }
+
+fn same_tab_frame(a: NSRect, b: NSRect) -> bool {
+    // The first native tab bar may extend the top edge by one titlebar height.
+    (a.origin.x - b.origin.x).abs() < 3.
+        && (a.size.width - b.size.width).abs() < 3.
+        && (a.origin.y - b.origin.y).abs() <= 40.
+        && ((a.origin.y + a.size.height) - (b.origin.y + b.size.height)).abs() < 3.
+}
+
 fn stable_overlap_workspace(
     native: u64,
     frame: NSRect,
@@ -1703,6 +1852,101 @@ mod tests {
         manager.cancel_inactive_placements(&[(1, 9), (2, 10)]);
         assert!(manager.transitions.is_empty());
         assert!(manager.verifications.is_empty());
+    }
+
+    #[test]
+    fn selecting_native_tabs_keeps_one_slot_and_preserves_constraints_and_floating_state() {
+        let mut manager = Manager::default();
+        let space = (1, 7);
+        let area = rect(10., 41., 1660., 947.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let frames = desktop.frames(area, 10.);
+        let mut resized = frames[0].1;
+        resized.size.width += 80.;
+        desktop.resize(1, frames[0].1, resized, area, 10.);
+        let before = desktop.frames(area, 10.);
+        let target = before.iter().find(|(id, _)| *id == 2).unwrap().1;
+        manager.desktops.insert(space, desktop);
+        for id in [2, 4, 5] {
+            manager.windows.insert(
+                id,
+                Managed {
+                    pid: std::process::id() as i32,
+                    space,
+                    original: area,
+                    original_area: area,
+                    element: ax::application(std::process::id() as i32).unwrap(),
+                },
+            );
+        }
+        manager.applied.insert(2, target);
+        manager.constrained.insert(2, (target, target));
+        manager.minimum_sizes.insert(2, target.size);
+        let mut selected = 2;
+        for next in [4, 5, 2, 5, 4, 2] {
+            manager.inherit_tab_slot(selected, next);
+            assert!(manager.inactive_tabs.contains(&selected));
+            assert!(!manager.inactive_tabs.contains(&next));
+            let frames = manager.desktops[&space].frames(area, 10.);
+            assert_eq!(
+                frames.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                before.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+            );
+            assert_eq!(manager.desktops[&space].order, vec![1, next, 3]);
+            assert_eq!(manager.applied[&next], target);
+            assert_eq!(manager.minimum_sizes[&next], target.size);
+            assert!(!manager.needs_placement(next, target, Some(target)));
+            selected = next;
+        }
+        manager.desktops.get_mut(&space).unwrap().remove(selected);
+        manager.floating.insert(selected);
+        manager.inherit_tab_slot(selected, 4);
+        assert!(manager.floating.contains(&4));
+        assert_eq!(manager.desktops[&space].order, vec![1, 3]);
+    }
+
+    #[test]
+    fn tab_switches_preserve_adjusted_frames_in_every_template_and_orientation() {
+        for area in [rect(10., 41., 1660., 947.), rect(-890., -390., 880., 1580.)] {
+            for layout in Layout::ALL {
+                let mut desktop = Desktop::configured(layout, Some((12, 6)));
+                desktop.reconcile(&[1, 2, 3], area, 10.);
+                let from = desktop.frames(area, 10.)[0].1;
+                let mut resized = from;
+                resized.size.width += 70.;
+                desktop.resize(1, from, resized, area, 10.);
+                let before = desktop.frames(area, 10.);
+                for (old, new) in [(2, 10), (10, 11), (11, 2)] {
+                    assert!(desktop.replace_window(old, new));
+                    desktop.reconcile_at(&[1, new, 3], area, 10., Some(new));
+                    desktop.fit(area, 10.);
+                    let frames = desktop.frames(area, 10.);
+                    assert_eq!(
+                        frames.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                        before.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+                    );
+                }
+                assert!(!desktop.replace_window(2, 3));
+                assert!(!desktop.replace_window(99, 4));
+                assert_eq!(desktop.frames(area, 10.), before);
+            }
+        }
+    }
+
+    #[test]
+    fn first_native_tab_matches_its_frame_but_not_other_tiles_or_monitors() {
+        let frame = rect(10., 41., 825., 947.);
+        assert!(same_tab_frame(frame, frame));
+        assert!(same_tab_frame(frame, rect(10., 13., 825., 975.)));
+        for other in [
+            rect(845., 41., 825., 947.),
+            rect(10., 41., 1660., 947.),
+            rect(-890., -390., 880., 1580.),
+            rect(10., 41., 825., 600.),
+        ] {
+            assert!(!same_tab_frame(frame, other));
+        }
     }
 
     #[test]
