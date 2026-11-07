@@ -958,6 +958,144 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn assert_layout_invariants(desktop: &Desktop, area: NSRect) {
+        let frames = desktop.frames(area, 10.);
+        let mut ids: Vec<_> = frames.iter().map(|(id, _)| *id).collect();
+        let mut expected = desktop.order.clone();
+        ids.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(ids, expected);
+        assert!(ids.windows(2).all(|pair| pair[0] != pair[1]));
+        for (index, (_, a)) in frames.iter().enumerate() {
+            assert!(
+                [a.origin.x, a.origin.y, a.size.width, a.size.height]
+                    .iter()
+                    .all(|n| n.is_finite())
+            );
+            assert!(
+                a.size.width > 0. && a.size.height > 0.,
+                "invalid tile {a:?} in {area:?}"
+            );
+            assert!(a.origin.x >= area.origin.x - 0.001 && a.origin.y >= area.origin.y - 0.001);
+            assert!(a.origin.x + a.size.width <= area.origin.x + area.size.width + 0.001);
+            assert!(a.origin.y + a.size.height <= area.origin.y + area.size.height + 0.001);
+            for (_, b) in &frames[index + 1..] {
+                let width = (a.origin.x + a.size.width).min(b.origin.x + b.size.width)
+                    - a.origin.x.max(b.origin.x);
+                let height = (a.origin.y + a.size.height).min(b.origin.y + b.size.height)
+                    - a.origin.y.max(b.origin.y);
+                assert!(width <= 0.001 || height <= 0.001, "overlap {a:?} / {b:?}");
+            }
+        }
+        if !frames.is_empty() {
+            let left = frames
+                .iter()
+                .map(|(_, r)| r.origin.x)
+                .fold(f64::INFINITY, f64::min);
+            let top = frames
+                .iter()
+                .map(|(_, r)| r.origin.y)
+                .fold(f64::INFINITY, f64::min);
+            let right = frames
+                .iter()
+                .map(|(_, r)| r.origin.x + r.size.width)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let bottom = frames
+                .iter()
+                .map(|(_, r)| r.origin.y + r.size.height)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((left - area.origin.x).abs() < 0.001 && (top - area.origin.y).abs() < 0.001);
+            assert!((right - area.origin.x - area.size.width).abs() < 0.001);
+            assert!((bottom - area.origin.y - area.size.height).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn lifecycle_matrix_preserves_identity_bounds_and_nonoverlap_in_all_templates() {
+        let areas = [
+            rect(0., 41., 1660., 947.),
+            rect(-900., -400., 880., 1580.),
+            rect(200., -1080., 1900., 1040.),
+            rect(300., 1080., 1260., 760.),
+            rect(-1500.5, 30.5, 1480.5, 929.5),
+            rect(0., 0., 640., 480.),
+        ];
+        for (layout_index, layout) in Layout::ALL.into_iter().enumerate() {
+            for area in areas {
+                for grid in [None, Some((120, 6)), Some((2, 2)), Some((240, 60))] {
+                    for count in 1..=8 {
+                        let ids: Vec<u32> = (1..=count).collect();
+                        let mut desktop = Desktop::configured(layout, grid);
+                        desktop.reconcile(&ids, area, 10.);
+                        for step in 0..24 {
+                            let id = ids[step % ids.len()];
+                            let target = ids[(step + 1) % ids.len()];
+                            match step % 6 {
+                                0 => desktop.reset_template(
+                                    Layout::ALL[(layout_index + step / 6) % 6],
+                                    area,
+                                ),
+                                1 => {
+                                    let from = desktop
+                                        .frames(area, 10.)
+                                        .into_iter()
+                                        .find(|(w, _)| *w == id)
+                                        .unwrap()
+                                        .1;
+                                    desktop.resize(
+                                        id,
+                                        from,
+                                        rect(
+                                            from.origin.x - 35.,
+                                            from.origin.y + 20.,
+                                            from.size.width + 70.,
+                                            from.size.height - 40.,
+                                        ),
+                                        area,
+                                        10.,
+                                    );
+                                }
+                                2 | 3 => {
+                                    let side = [Zone::Left, Zone::Top, Zone::Right, Zone::Bottom]
+                                        [step / 6];
+                                    let intent = if step % 6 == 2 {
+                                        DropIntent::Screen(side)
+                                    } else {
+                                        DropIntent::Window(target, side)
+                                    };
+                                    if let Some(proposed) =
+                                        desktop.proposed_drop(id, intent, area, 10.)
+                                    {
+                                        desktop = proposed;
+                                    }
+                                }
+                                4 => {
+                                    desktop.remove(id);
+                                    desktop.reconcile_at(&ids, area, 10., Some(target));
+                                }
+                                _ => {
+                                    let saved = desktop.save_distribution(area).unwrap();
+                                    let mut restored = desktop.clone();
+                                    assert!(restored.restore_distribution(&saved));
+                                    assert_eq!(
+                                        restored.frames(area, 10.),
+                                        desktop.frames(area, 10.)
+                                    );
+                                }
+                            }
+                            desktop.fit(area, 10.);
+                            assert_layout_invariants(&desktop, area);
+                            let before = desktop.frames(area, 10.);
+                            let mut reordered = ids.clone();
+                            reordered.reverse();
+                            desktop.reconcile_at(&reordered, area, 10., Some(target));
+                            assert_eq!(desktop.frames(area, 10.), before);
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn adaptive_three_and_four_bands_cover_and_round_trip() {
         for (layout, count) in [(Layout::ThreeBands, 3), (Layout::FourBands, 4)] {

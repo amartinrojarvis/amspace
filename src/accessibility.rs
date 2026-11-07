@@ -376,7 +376,7 @@ impl Drop for GeometrySession {
     }
 }
 /// Keep shared edges aligned and never pass fractional AX geometry to apps.
-fn integral_frame(frame: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
+pub(crate) fn integral_frame(frame: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
     let x = frame.origin.x.round();
     let y = frame.origin.y.round();
     crate::native::rect(
@@ -467,15 +467,58 @@ fn frame_changes(a: objc2_foundation::NSRect, b: objc2_foundation::NSRect) -> (b
 
 // An app may clamp the first expansion against the old screen edge. Apply the
 // size again at the final position so an expanded sibling fills its entire tile.
+// Resizing can itself shift the origin (screen constraints/anchored edges), so
+// commit the position once more after the final size.
 fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> bool) -> bool {
     size();
-    let moved = position();
+    position();
     let sized = size();
+    let moved = position();
     moved && sized
 }
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn final_resize_cannot_displace_the_requested_position() {
+        use std::cell::Cell;
+        let x = Cell::new(700.);
+        let writes = Cell::new(0);
+        assert!(apply_frame(
+            || {
+                writes.set(writes.get() + 1);
+                // An app anchors its right edge when its final size changes.
+                x.set(x.get() - 100.);
+                true
+            },
+            || {
+                x.set(-890.);
+                true
+            },
+        ));
+        assert_eq!(writes.get(), 2);
+        assert_eq!(x.get(), -890.);
+    }
+
+    #[test]
+    fn placement_reports_final_writes_even_when_initial_writes_fail() {
+        use std::cell::Cell;
+        let sizes = Cell::new(0);
+        let positions = Cell::new(0);
+        assert!(apply_frame(
+            || {
+                sizes.set(sizes.get() + 1);
+                sizes.get() > 1
+            },
+            || {
+                positions.set(positions.get() + 1);
+                positions.get() > 1
+            },
+        ));
+        assert!(!apply_frame(|| true, || false));
+        assert!(!apply_frame(|| false, || true));
+    }
+
     #[test]
     fn fractional_tiles_have_integer_final_geometry_and_shared_edges() {
         let a = integral_frame(crate::native::rect(-900., 41., 1660. / 3., 947.));

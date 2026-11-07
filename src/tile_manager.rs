@@ -97,6 +97,9 @@ fn area(display: u32) -> Option<NSRect> {
     unsafe {
         let screens: Obj = msg_send![class!(NSScreen), screens];
         let first: Obj = msg_send![screens, firstObject];
+        if first.is_null() {
+            return None;
+        }
         let primary: NSRect = msg_send![first, frame];
         let count: usize = msg_send![screens, count];
         for i in 0..count {
@@ -121,13 +124,16 @@ fn area(display: u32) -> Option<NSRect> {
         None
     }
 }
-fn pointer() -> NSPoint {
+fn pointer() -> Option<NSPoint> {
     unsafe {
         let screens: Obj = msg_send![class!(NSScreen), screens];
         let first: Obj = msg_send![screens, firstObject];
+        if first.is_null() {
+            return None;
+        }
         let r: NSRect = msg_send![first, frame];
         let p: NSPoint = msg_send![class!(NSEvent), mouseLocation];
-        NSPoint::new(p.x, r.size.height - p.y)
+        Some(NSPoint::new(p.x, r.size.height - p.y))
     }
 }
 fn near(a: NSRect, b: NSRect) -> bool {
@@ -140,6 +146,7 @@ struct Managed {
     pid: i32,
     space: Workspace,
     original: NSRect,
+    original_area: NSRect,
     element: ax::Owned,
 }
 struct Drag {
@@ -191,10 +198,19 @@ fn arrival_proposal(
         .then_some(proposed)
 }
 impl Drag {
-    fn observe(&mut self, frame: NSRect, pointer_workspace: Option<Workspace>) {
+    fn observe(&mut self, frame: NSRect, point: NSPoint, pointer_workspace: Option<Workspace>) {
         // Once a move is underway, a native size change on another screen is
         // still a move. Never reinterpret it as resizing the source layout.
         if self.moved || self.resized {
+            return;
+        }
+        // Activation and delayed AX writes can change geometry under a stationary
+        // click. A native gesture requires actual pointer movement as well.
+        if (point.x - self.point.x)
+            .abs()
+            .max((point.y - self.point.y).abs())
+            <= 3.
+        {
             return;
         }
         let size_changed = (frame.size.width - self.start.size.width).abs() > 3.
@@ -257,8 +273,43 @@ struct Transition {
     _geometry_session: Option<std::rc::Rc<ax::GeometrySession>>,
     from: NSRect,
     to: NSRect,
-    started: Instant,
+    started: Option<Instant>,
     last: NSRect,
+}
+impl Transition {
+    fn sample(&mut self, now: Instant) -> (NSRect, bool) {
+        // Preparing AX sessions for several apps can take time. Start the batch
+        // on its first frame, so late enumeration cannot consume the animation.
+        let started = *self.started.get_or_insert(now);
+        let progress = (now.duration_since(started).as_secs_f64() / 0.12).min(1.);
+        (
+            ax::integral_frame(crate::tiling::interpolate(self.from, self.to, progress)),
+            progress >= 1.,
+        )
+    }
+    fn record_write(&mut self, frame: NSRect, accepted: bool) {
+        // A failed intermediate write must be retried, not cached as delivered.
+        if accepted {
+            self.last = frame;
+        }
+    }
+}
+#[derive(Default)]
+struct MembershipGrace {
+    since: HashMap<u32, Instant>,
+}
+impl MembershipGrace {
+    fn retained(&mut self, uncertain: &HashSet<u32>, now: Instant) -> HashSet<u32> {
+        self.since.retain(|id, _| uncertain.contains(id));
+        uncertain
+            .iter()
+            .copied()
+            .filter(|id| {
+                let since = self.since.entry(*id).or_insert(now);
+                now.duration_since(*since) < Duration::from_millis(650)
+            })
+            .collect()
+    }
 }
 #[derive(Default)]
 pub struct Manager {
@@ -269,6 +320,7 @@ pub struct Manager {
     transitions: HashMap<u32, Transition>,
     verifications: HashMap<u32, Verification>,
     constrained: HashMap<u32, (NSRect, NSRect)>,
+    membership_grace: MembershipGrace,
     drag: Option<Drag>,
     pending_drop: Option<PendingDrop>,
     handoffs: HashMap<u32, MonitorHandoff>,
@@ -279,6 +331,7 @@ pub struct Manager {
     active_areas: Vec<(Workspace, NSRect)>,
     dirty: bool,
     space_settle: Option<Instant>,
+    space_quiet_until: Option<Instant>,
     pub last_error: Option<String>,
 }
 impl Manager {
@@ -287,31 +340,72 @@ impl Manager {
         self.last_scan = None;
         self.last_area_update = None;
     }
-    pub fn space_changed(&mut self) {
-        if !self.pressed && self.pending_drop.is_none() {
-            self.cancel_drag();
-        }
+    pub fn screens_changed(&mut self) {
+        // Coordinates and app-imposed limits belong to the previous screen setup.
+        // Do not let a deferred write run before the next membership scan.
+        let pressed = self.pressed;
+        self.cancel_drag();
+        self.pressed = pressed; // Never recapture a gesture already in progress.
+        self.handoffs.clear();
+        self.applied.clear();
+        self.constrained.clear();
         self.invalidate();
         self.space_settle = Some(Instant::now() + Duration::from_millis(600));
+    }
+    pub fn space_changed(&mut self) {
+        self.space_changed_at(Instant::now());
+    }
+    fn space_changed_at(&mut self, now: Instant) {
+        if !self.pressed && self.pending_drop.is_none() {
+            self.cancel_drag();
+        } else {
+            self.cancel_placements();
+            self.hide_preview();
+        }
+        self.invalidate();
+        // During the native slide both visibility and global bounds are transient.
+        // Retain the trees without sampling/reconciling or writing any geometry.
+        let until = now + Duration::from_millis(600);
+        self.space_quiet_until = Some(until);
+        self.space_settle = Some(until + Duration::from_millis(600));
+        self.membership_grace.since.clear();
+        if let Some(drop) = &mut self.pending_drop {
+            drop.expires = drop.expires.max(until + Duration::from_millis(700));
+        }
+        for handoff in self.handoffs.values_mut() {
+            handoff.expires = handoff.expires.max(until + Duration::from_millis(1200));
+        }
+    }
+    fn waiting_for_space(&mut self, now: Instant) -> bool {
+        if let Some(until) = self.space_quiet_until {
+            if now < until {
+                return true;
+            }
+            self.space_quiet_until = None;
+            self.invalidate(); // Never resume from pre-transition display/Space data.
+        }
+        false
     }
     fn settling_space(&self) -> bool {
         self.space_settle
             .is_some_and(|until| Instant::now() < until)
     }
-    pub fn cancel_drag(&mut self) {
+    fn cancel_placements(&mut self) {
         // Cached destinations are not evidence that cancelled animations arrived.
         for id in self.transitions.keys().chain(self.verifications.keys()) {
             self.applied.remove(id);
         }
-        if !self.transitions.is_empty()
-            || !self.verifications.is_empty()
-            || self.drag.is_some()
-            || self.pending_drop.is_some()
-        {
+        if !self.transitions.is_empty() || !self.verifications.is_empty() {
             self.invalidate();
         }
         self.transitions.clear();
         self.verifications.clear();
+    }
+    pub fn cancel_drag(&mut self) {
+        self.cancel_placements();
+        if self.drag.is_some() || self.pending_drop.is_some() {
+            self.invalidate();
+        }
         self.drag = None;
         self.pending_drop = None;
         self.pressed = false;
@@ -321,13 +415,19 @@ impl Manager {
         self.cancel_drag();
         for (id, w) in &self.windows {
             if !self.floating.contains(id) && !ax::flag(w.element.0, "AXFullScreen") {
-                ax::set_frame(w.element.0, w.original);
+                if let Some(current) = area(w.space.0) {
+                    ax::set_frame(
+                        w.element.0,
+                        restoration_frame(w.original, w.original_area, current),
+                    );
+                }
             }
         }
         self.applied.clear();
         self.constrained.clear();
         self.windows.clear();
         self.handoffs.clear();
+        self.membership_grace.since.clear();
         self.invalidate();
     }
     fn hide_preview(&self) {
@@ -353,6 +453,10 @@ impl Manager {
             }
             let screens: Obj = msg_send![class!(NSScreen), screens];
             let first: Obj = msg_send![screens, firstObject];
+            if first.is_null() {
+                self.hide_preview();
+                return;
+            }
             let primary: NSRect = msg_send![first, frame];
             let p = self.preview.as_ref().unwrap();
             let _: () = msg_send![&**p,setFrame:rect(r.origin.x,primary.size.height-r.origin.y-r.size.height,r.size.width,r.size.height),display:true];
@@ -380,6 +484,9 @@ impl Manager {
                 if let Some(w) = self.windows.get_mut(&id) {
                     if let Some((p, s)) = ax::geometry(w.element.0) {
                         w.original = NSRect::new(p, s);
+                        if let Some(current) = area(w.space.0) {
+                            w.original_area = current;
+                        }
                     }
                 }
                 self.invalidate();
@@ -390,7 +497,10 @@ impl Manager {
             if let Some(d) = self.desktops.get_mut(&w.space) {
                 d.remove(id);
             }
-            let original = w.original;
+            let Some(current) = area(w.space.0) else {
+                return;
+            };
+            let original = restoration_frame(w.original, w.original_area, current);
             ax::raise(w.element.0);
             self.transition(id, original);
             self.invalidate();
@@ -403,6 +513,17 @@ impl Manager {
                 .get(&space)
                 .is_some_and(|d| d.order.contains(&id))
     }
+    fn needs_placement(&self, id: u32, target: NSRect, actual: Option<NSRect>) -> bool {
+        let pending = self
+            .transitions
+            .get(&id)
+            .map(|t| t.to)
+            .or_else(|| self.verifications.get(&id).map(|v| v.target));
+        // A focus/application notification requests a scan, not a new placement.
+        // Limits expire when the target or observed geometry changes, never just
+        // because `dirty` was set by a workspace callback.
+        needs_placement(target, actual, pending, self.constrained.get(&id).copied())
+    }
     #[cfg(test)]
     fn place_drag(&mut self, id: u32, space: Workspace, target: u32, zone: Zone) {
         if self.can_tile_drag(id, space) {
@@ -413,9 +534,13 @@ impl Manager {
     }
     fn transition(&mut self, id: u32, to: NSRect) {
         let from = ws::bounds(id).unwrap_or(to);
+        self.transition_from(id, from, to);
+    }
+    fn transition_from(&mut self, id: u32, from: NSRect, to: NSRect) {
+        // A retry for an older destination must not fight the new animation.
+        self.verifications.remove(&id);
         if near(from, to) {
             self.transitions.remove(&id);
-            self.verifications.remove(&id);
             return;
         }
         self.transitions.insert(
@@ -427,7 +552,7 @@ impl Manager {
                     .and_then(|w| ax::GeometrySession::shared(w.element.0)),
                 from,
                 to,
-                started: Instant::now(),
+                started: None,
                 last: from,
             },
         );
@@ -437,7 +562,10 @@ impl Manager {
             return;
         }
         // One compositor snapshot replaces synchronous AX flag reads per frame/window.
-        let visible: HashSet<_> = ws::tile_windows().iter().map(|(_, id, _)| *id).collect();
+        let Some(candidates) = ws::try_tile_windows() else {
+            return;
+        };
+        let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let mut done = vec![];
         let now = Instant::now();
         for (id, t) in &mut self.transitions {
@@ -447,27 +575,20 @@ impl Manager {
             };
             if !active.iter().any(|(space, _)| *space == w.space)
                 || spaces::window_space(*id) != Some(w.space.1)
-                || !visible.contains(id)
+                || !visible.contains(&(w.pid, *id))
             {
                 done.push(*id);
                 continue;
             }
-            let progress = (now.duration_since(t.started).as_secs_f64() / 0.12).min(1.);
-            let mut frame = crate::tiling::interpolate(t.from, t.to, progress);
-            if progress < 1. {
-                frame.origin.x = frame.origin.x.round();
-                frame.origin.y = frame.origin.y.round();
-                frame.size.width = frame.size.width.round();
-                frame.size.height = frame.size.height.round();
-            }
-            if progress >= 1. {
-                ax::set_frame(w.element.0, frame);
+            let (frame, complete) = t.sample(now);
+            let accepted = if complete {
+                ax::set_frame(w.element.0, frame)
             } else {
-                ax::set_frame_step(w.element.0, t.last, frame);
-            }
-            t.last = frame;
+                ax::set_frame_step(w.element.0, t.last, frame)
+            };
+            t.record_write(frame, accepted);
             // A rejected intermediate sample must not abandon the final destination.
-            if progress >= 1. {
+            if complete {
                 self.verifications.insert(*id, Verification::new(t.to));
                 done.push(*id);
             }
@@ -477,6 +598,13 @@ impl Manager {
         }
     }
     fn verify_placements(&mut self, active: &[(Workspace, NSRect)]) {
+        if self.verifications.is_empty() {
+            return;
+        }
+        let Some(candidates) = ws::try_tile_windows() else {
+            return;
+        };
+        let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let now = Instant::now();
         for id in self.verifications.keys().copied().collect::<Vec<_>>() {
             let Some(w) = self.windows.get(&id) else {
@@ -487,7 +615,11 @@ impl Manager {
                 self.verifications.remove(&id);
                 continue;
             };
-            if self.floating.contains(&id) || !active.iter().any(|(key, _)| *key == w.space) {
+            if self.floating.contains(&id)
+                || !active.iter().any(|(key, _)| *key == w.space)
+                || spaces::window_space(id) != Some(w.space.1)
+                || !visible.contains(&(w.pid, id))
+            {
                 self.verifications.remove(&id);
                 continue;
             }
@@ -499,11 +631,7 @@ impl Manager {
                     self.constrained.remove(&id);
                 }
                 VerificationStep::Retry => {
-                    if spaces::window_space(id) == Some(w.space.1) {
-                        ax::set_frame(w.element.0, verification.target);
-                    } else {
-                        self.verifications.remove(&id);
-                    }
+                    ax::set_frame(w.element.0, verification.target);
                 }
                 VerificationStep::Limited => {
                     self.constrained.insert(id, (verification.target, actual));
@@ -521,7 +649,8 @@ impl Manager {
             return;
         };
         let pointer_workspace = (pointer_display() == Some(drag.space.0)).then_some(drag.space);
-        drag.observe(frame, pointer_workspace);
+        let Some(point) = pointer() else { return };
+        drag.observe(frame, point, pointer_workspace);
         if !drag.resized
             || self.floating.contains(&drag.id)
             || spaces::window_space(drag.id) != Some(drag.space.1)
@@ -552,6 +681,9 @@ impl Manager {
         self.desktops.insert(drag.space, layout);
     }
     pub fn current_workspace(&self) -> Option<Workspace> {
+        if self.space_quiet_until.is_some() {
+            return None; // Cached display/Space data still belongs to the transition.
+        }
         let display = pointer_display()?;
         self.active_areas
             .iter()
@@ -582,7 +714,8 @@ impl Manager {
         layout: Layout,
     ) -> bool {
         // A picker is tied to one display/Space and one window set for its entire lifetime.
-        if !spaces::visible_desktops().contains(&context.workspace)
+        if self.space_quiet_until.is_some()
+            || !spaces::visible_desktops().contains(&context.workspace)
             || area(context.workspace.0) != Some(context.area)
             || pref(defaults, &format!("tile.off.{}", context.workspace.1)) != 0
             || !self
@@ -595,6 +728,9 @@ impl Manager {
         let Some(proposed) = context.proposal(layout) else {
             return false;
         };
+        for id in &context.desktop.order {
+            self.cancel_window_placement(*id);
+        }
         save(defaults, &layout_key(context.workspace), layout.index());
         self.desktops.insert(context.workspace, proposed);
         self.invalidate();
@@ -641,6 +777,7 @@ impl Manager {
         if !desktop.restore_distribution(&text) {
             return false;
         }
+        let ids = desktop.order.clone();
         save(
             defaults,
             "tile.grid.enabled",
@@ -651,17 +788,38 @@ impl Manager {
             save(defaults, "tile.grid.rows", rows as isize);
         }
         save(defaults, &layout_key(space), desktop.layout.index());
+        for id in ids {
+            self.cancel_window_placement(id);
+        }
         self.invalidate();
         true
     }
     pub fn tick_interval(&self) -> f64 {
-        if !self.transitions.is_empty() || self.drag.is_some() || self.pending_drop.is_some() {
+        if self
+            .space_quiet_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            0.08
+        } else if !self.transitions.is_empty() || self.drag.is_some() || self.pending_drop.is_some()
+        {
             1. / 60.
         } else {
             0.08
         }
     }
     pub fn tick(&mut self, defaults: Obj) {
+        self.tick_mode(defaults, true);
+    }
+    pub fn refresh_for_picker(&mut self, defaults: Obj) {
+        self.cancel_drag();
+        self.invalidate();
+        self.tick_mode(defaults, false);
+    }
+    fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
+        let resuming_space = self.space_quiet_until.is_some();
+        if self.waiting_for_space(Instant::now()) {
+            return;
+        }
         if !ax::trusted() {
             self.cancel_drag();
             return;
@@ -670,7 +828,7 @@ impl Manager {
             .last_area_update
             .is_none_or(|last| last.elapsed() >= Duration::from_millis(500))
         {
-            self.active_areas = spaces::visible_desktops()
+            let areas: Vec<_> = spaces::visible_desktops()
                 .iter()
                 .filter_map(|(display, space)| {
                     if pref(defaults, &format!("tile.off.{space}")) != 0 {
@@ -680,6 +838,18 @@ impl Manager {
                     }
                 })
                 .collect();
+            // Notifications may arrive late or be skipped during native reentry.
+            // A changed visible Space also starts the quiet period before writes.
+            if !resuming_space && desktop_keys_changed(&self.active_areas, &areas) {
+                self.space_changed();
+                return;
+            }
+            // visibleFrame can change with the Dock/menu bar without a display
+            // notification. Invalidate old destinations before animation/retries.
+            if areas_changed(&self.active_areas, &areas) {
+                self.screens_changed();
+            }
+            self.active_areas = areas;
             self.last_area_update = Some(Instant::now());
         }
         let active = self.active_areas.clone();
@@ -699,8 +869,11 @@ impl Manager {
             });
         }
         let down: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
-        let down = down & 1 != 0;
-        let p = pointer();
+        let down = place_windows && down & 1 != 0;
+        let Some(p) = pointer() else {
+            self.cancel_drag();
+            return;
+        };
         let pointer_workspace = pointer_display().and_then(|display| {
             active
                 .iter()
@@ -754,9 +927,10 @@ impl Manager {
                         .min_by(|a, b| a.0.total_cmp(&b.0))
                         .map(|(_, pid, id)| (pid, id))
                 })
-                .and_then(|(_, id)| {
+                .and_then(|(pid, id)| {
                     self.windows.get(&id).and_then(|w| {
-                        if !self.can_tile_drag(id, w.space)
+                        if w.pid != pid
+                            || !self.can_tile_drag(id, w.space)
                             || !active.iter().any(|(s, _)| *s == w.space)
                         {
                             return None;
@@ -802,7 +976,7 @@ impl Manager {
                     return;
                 }
                 if let Some(frame) = ws::bounds(drag.id) {
-                    drag.observe(frame, pointer_workspace);
+                    drag.observe(frame, p, pointer_workspace);
                 }
                 if drag.moved || drag.resized {
                     self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
@@ -928,6 +1102,11 @@ impl Manager {
                             }
                             self.desktops.insert(drop.destination, proposed);
                             if let Some(w) = self.windows.get_mut(&drop.id) {
+                                if w.space != drop.destination {
+                                    w.original =
+                                        restoration_frame(w.original, w.original_area, *area);
+                                    w.original_area = *area;
+                                }
                                 w.space = drop.destination;
                             }
                             self.invalidate();
@@ -944,8 +1123,15 @@ impl Manager {
             return;
         }
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
-        self.verify_placements(&active);
-        self.animate(&active);
+        if place_windows {
+            self.verify_placements(&active);
+            self.animate(&active);
+        }
+        if !self.transitions.is_empty() {
+            // Do not interleave full AX enumeration with the 120 ms animation.
+            // Space/screen changes and real gestures already cancel that batch.
+            return;
+        }
         let scan_interval = if self.settling_space() { 100 } else { 500 };
         if self
             .last_scan
@@ -954,6 +1140,9 @@ impl Manager {
         {
             return;
         }
+        let Some(candidates) = ws::try_tile_windows() else {
+            return;
+        };
         self.last_scan = Some(Instant::now());
         let focused = unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -961,21 +1150,27 @@ impl Manager {
             let pid: i32 = msg_send![app, processIdentifier];
             ax::focused_id(pid)
         };
-        let candidates = ws::tile_windows();
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
         let mut transferred: HashSet<u32> = self.handoffs.keys().copied().collect();
         // Offscreen Spaces retain their trees; closed/hidden/minimized windows on
         // visible Spaces leave the current tree and rejoin when visible again.
         let mut members: HashMap<Workspace, Vec<u32>> = HashMap::new();
+        let mut uncertain = HashSet::new();
         for (pid, id, frame) in candidates {
+            if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
+                self.forget_window(id);
+                transferred.remove(&id);
+            }
             let Some(space) = spaces::window_space(id) else {
+                if self.windows.get(&id).is_some_and(|w| w.pid == pid) {
+                    uncertain.insert(id);
+                }
                 continue;
             };
             if self
                 .handoffs
                 .get(&id)
                 .is_some_and(|h| h.destination.1 != space)
-                || self.windows.get(&id).is_some_and(|w| w.pid != pid)
             {
                 self.handoffs.remove(&id);
                 transferred.remove(&id);
@@ -985,22 +1180,22 @@ impl Manager {
                 .get(&id)
                 .filter(|w| w.pid == pid)
                 .map(|w| w.space);
-            let retained = self.handoffs.get(&id).map(|h| h.destination).or_else(|| {
-                let expected = self.applied.get(&id).copied();
-                let limited = self.constrained.get(&id).map(|(_, observed)| *observed);
-                (expected.is_some_and(|r| near(r, frame))
-                    || limited.is_some_and(|r| near(r, frame)))
-                .then_some(previous)
-                .flatten()
-            });
+            let retained = self
+                .handoffs
+                .get(&id)
+                .map(|h| h.destination)
+                .or_else(|| {
+                    let expected = self.applied.get(&id).copied();
+                    let limited = self.constrained.get(&id).map(|(_, observed)| *observed);
+                    (expected.is_some_and(|r| near(r, frame))
+                        || limited.is_some_and(|r| near(r, frame)))
+                    .then_some(previous)
+                    .flatten()
+                })
+                .or_else(|| stable_overlap_workspace(space, frame, &active, previous));
             let Some(space) = retained_workspace(space, frame, &active, retained) else {
                 continue;
             };
-            if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
-                self.windows.remove(&id);
-                self.floating.remove(&id);
-                self.applied.remove(&id);
-            }
             if let std::collections::hash_map::Entry::Vacant(entry) = self.windows.entry(id) {
                 let Some(element) = ax::window_for_id(pid, id) else {
                     continue;
@@ -1015,12 +1210,17 @@ impl Manager {
                     pid,
                     space,
                     original: frame,
+                    original_area: active.iter().find(|(key, _)| *key == space).unwrap().1,
                     element,
                 });
                 self.dirty = true;
             }
             let w = self.windows.get_mut(&id).unwrap();
             if w.space != space {
+                if let Some((_, destination)) = active.iter().find(|(key, _)| *key == space) {
+                    w.original = restoration_frame(w.original, w.original_area, *destination);
+                    w.original_area = *destination;
+                }
                 if let Some(previous) = self.desktops.get_mut(&w.space) {
                     previous.remove(id);
                 }
@@ -1032,6 +1232,7 @@ impl Manager {
             }
             w.space = space;
             if ax::geometry(w.element.0).is_none() {
+                uncertain.insert(id);
                 continue;
             }
             if !self.floating.contains(&id) {
@@ -1039,6 +1240,9 @@ impl Manager {
             } else if !self.transitions.contains_key(&id) {
                 // Floating windows are user-owned: never snap, preview or reinsert.
                 w.original = frame;
+                if let Some((_, current)) = active.iter().find(|(key, _)| *key == space) {
+                    w.original_area = *current;
+                }
             }
         }
         // Offscreen apps can take the full AX timeout per call. Use one native
@@ -1048,6 +1252,20 @@ impl Manager {
         } else {
             None
         };
+        for (id, w) in &self.windows {
+            if !visible_ids.contains(id)
+                && !self.floating.contains(id)
+                && active.iter().any(|(key, _)| *key == w.space)
+                && all_ids
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&(w.pid, *id)))
+                && spaces::window_space(*id).is_none_or(|native| native == w.space.1)
+            {
+                // Being temporarily offscreen is not proof of destruction. A
+                // confirmed native Space transfer never retains the old leaf.
+                uncertain.insert(*id);
+            }
+        }
         let gone: Vec<_> = self
             .windows
             .iter()
@@ -1059,17 +1277,25 @@ impl Manager {
             .map(|(id, _)| *id)
             .collect();
         for id in gone {
-            if let Some(w) = self.windows.remove(&id) {
-                if let Some(d) = self.desktops.get_mut(&w.space) {
-                    d.remove(id);
+            self.forget_window(id);
+        }
+        for id in &uncertain {
+            // Retaining a leaf preserves its layout, not permission to continue
+            // writing through an AX/native-visibility uncertainty.
+            let was_animating = self.transitions.remove(id).is_some();
+            let was_verifying = self.verifications.remove(id).is_some();
+            if was_animating || was_verifying {
+                self.applied.remove(id);
+            }
+        }
+        // A transient AX/Space read must not remove and reinsert a visible tile
+        // around the focused window. Genuine ineligibility still expires promptly.
+        for id in self.membership_grace.retained(&uncertain, Instant::now()) {
+            if let Some(w) = self.windows.get(&id) {
+                if !self.floating.contains(&id) && active.iter().any(|(key, _)| *key == w.space) {
+                    members.entry(w.space).or_default().push(id);
                 }
             }
-            self.handoffs.remove(&id);
-            self.floating.remove(&id);
-            self.applied.remove(&id);
-            self.transitions.remove(&id);
-            self.verifications.remove(&id);
-            self.constrained.remove(&id);
         }
         for (id, handoff) in &self.handoffs {
             if self
@@ -1112,11 +1338,9 @@ impl Manager {
                 d.layout = layout;
                 self.dirty = true;
             }
-            let old = d.order.clone();
             let ids = members.entry(space).or_default();
             ids.sort_unstable();
             d.reconcile_at(ids, r, 10., focused);
-            let changed = old != d.order || self.dirty;
             d.fit(r, 10.);
             let frames = d.frames(r, 10.);
             // Do not create unusably small tiles; retain the layout until space is available.
@@ -1129,17 +1353,11 @@ impl Manager {
                 continue;
             }
             for (id, frame) in frames {
-                if !visible_ids.contains(&id) {
+                if !place_windows || !visible_ids.contains(&id) || uncertain.contains(&id) {
                     continue;
                 }
                 let actual = ws::bounds(id);
-                let pending = self
-                    .transitions
-                    .get(&id)
-                    .map(|t| t.to)
-                    .or_else(|| self.verifications.get(&id).map(|v| v.target));
-                let limited = self.constrained.get(&id).copied();
-                if !needs_placement(frame, actual, pending, if changed { None } else { limited }) {
+                if !self.needs_placement(id, frame, actual) {
                     continue;
                 }
                 self.constrained.remove(&id);
@@ -1161,13 +1379,38 @@ impl Manager {
         }
         self.dirty = false;
     }
+    fn forget_window(&mut self, id: u32) {
+        if let Some(w) = self.windows.remove(&id) {
+            if let Some(d) = self.desktops.get_mut(&w.space) {
+                d.remove(id);
+            }
+        }
+        self.handoffs.remove(&id);
+        self.floating.remove(&id);
+        self.applied.remove(&id);
+        self.transitions.remove(&id);
+        self.verifications.remove(&id);
+        self.constrained.remove(&id);
+        self.membership_grace.since.remove(&id);
+    }
+    fn cancel_window_placement(&mut self, id: u32) {
+        self.transitions.remove(&id);
+        self.verifications.remove(&id);
+        self.applied.remove(&id);
+        self.constrained.remove(&id);
+    }
     pub fn restore_space(&mut self, space: u64) {
         for (id, w) in &self.windows {
             if w.space.1 == space
                 && !self.floating.contains(id)
                 && !ax::flag(w.element.0, "AXFullScreen")
             {
-                ax::set_frame(w.element.0, w.original);
+                if let Some(current) = area(w.space.0) {
+                    ax::set_frame(
+                        w.element.0,
+                        restoration_frame(w.original, w.original_area, current),
+                    );
+                }
                 self.applied.remove(id);
                 self.transitions.remove(id);
                 self.verifications.remove(id);
@@ -1176,6 +1419,54 @@ impl Manager {
         self.windows.retain(|_, w| w.space.1 != space);
         self.invalidate();
     }
+}
+
+fn restoration_frame(original: NSRect, source: NSRect, destination: NSRect) -> NSRect {
+    if source == destination {
+        return original;
+    }
+    let width = original.size.width.min(destination.size.width);
+    let height = original.size.height.min(destination.size.height);
+    let relative = |position: f64, start: f64, span: f64, size: f64| {
+        if span > size {
+            ((position - start) / (span - size)).clamp(0., 1.)
+        } else {
+            0.
+        }
+    };
+    rect(
+        destination.origin.x
+            + relative(
+                original.origin.x,
+                source.origin.x,
+                source.size.width,
+                original.size.width,
+            ) * (destination.size.width - width),
+        destination.origin.y
+            + relative(
+                original.origin.y,
+                source.origin.y,
+                source.size.height,
+                original.size.height,
+            ) * (destination.size.height - height),
+        width,
+        height,
+    )
+}
+
+fn areas_changed(old: &[(Workspace, NSRect)], new: &[(Workspace, NSRect)]) -> bool {
+    old.iter().any(|(key, area)| {
+        new.iter()
+            .any(|(candidate, updated)| candidate == key && updated != area)
+    })
+}
+
+fn desktop_keys_changed(old: &[(Workspace, NSRect)], new: &[(Workspace, NSRect)]) -> bool {
+    !old.is_empty()
+        && (old.len() != new.len()
+            || old
+                .iter()
+                .any(|(key, _)| !new.iter().any(|(candidate, _)| candidate == key)))
 }
 
 fn retained_workspace(
@@ -1197,16 +1488,36 @@ fn workspace_at_frame(
     areas
         .iter()
         .filter(|(key, _)| key.1 == native)
-        .map(|(key, r)| {
-            let w = (frame.origin.x + frame.size.width).min(r.origin.x + r.size.width)
-                - frame.origin.x.max(r.origin.x);
-            let h = (frame.origin.y + frame.size.height).min(r.origin.y + r.size.height)
-                - frame.origin.y.max(r.origin.y);
-            (*key, w.max(0.) * h.max(0.))
-        })
+        .map(|(key, r)| (*key, overlap(frame, *r)))
         .filter(|(_, overlap)| *overlap > 0.)
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(key, _)| key)
+}
+
+fn overlap(frame: NSRect, area: NSRect) -> f64 {
+    let width = (frame.origin.x + frame.size.width).min(area.origin.x + area.size.width)
+        - frame.origin.x.max(area.origin.x);
+    let height = (frame.origin.y + frame.size.height).min(area.origin.y + area.size.height)
+        - frame.origin.y.max(area.origin.y);
+    width.max(0.) * height.max(0.)
+}
+fn stable_overlap_workspace(
+    native: u64,
+    frame: NSRect,
+    areas: &[(Workspace, NSRect)],
+    previous: Option<Workspace>,
+) -> Option<Workspace> {
+    let previous = previous.filter(|key| key.1 == native)?;
+    let (_, area) = areas.iter().find(|(key, _)| *key == previous)?;
+    let retained = overlap(frame, *area);
+    let best = areas
+        .iter()
+        .filter(|(key, _)| key.1 == native)
+        .map(|(_, area)| overlap(frame, *area))
+        .fold(0., f64::max);
+    // Avoid ownership flapping around a shared edge from 1–2 point compositor
+    // differences. A clear majority or native Space change still transfers.
+    (retained > 0. && retained >= best * 0.95).then_some(previous)
 }
 
 /// Compare actual geometry, not just the last requested destination. A stable
@@ -1229,6 +1540,387 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_space_monitor_ownership_does_not_flap_at_equal_overlap() {
+        let areas = [
+            ((1, 7), rect(0., 30., 1600., 900.)),
+            ((2, 7), rect(-900., -400., 900., 1600.)),
+        ];
+        for x in [-302., -300., -298.] {
+            assert_eq!(
+                stable_overlap_workspace(7, rect(x, 40., 600., 500.), &areas, Some((2, 7))),
+                Some((2, 7))
+            );
+        }
+        assert_eq!(
+            stable_overlap_workspace(7, rect(-200., 40., 600., 500.), &areas, Some((2, 7))),
+            None
+        );
+        assert_eq!(
+            stable_overlap_workspace(8, rect(-300., 40., 600., 500.), &areas, Some((2, 7))),
+            None
+        );
+        assert_eq!(
+            stable_overlap_workspace(7, rect(-300., 40., 600., 500.), &areas[..1], Some((2, 7))),
+            None
+        );
+    }
+    #[test]
+    fn animation_batch_starts_together_after_slow_preparation_and_retries_failed_samples() {
+        let mut manager = Manager::default();
+        let from = rect(-900., -400., 880., 1580.);
+        let target = rect(10., 41., 1660. / 3., 947.);
+        manager.transition_from(1, from, target);
+        manager.transition_from(2, from, target);
+        let now = Instant::now() + Duration::from_secs(4);
+        for transition in manager.transitions.values_mut() {
+            assert_eq!(transition.sample(now), (from, false));
+        }
+        let halfway = now + Duration::from_millis(60);
+        let (sample, complete) = manager.transitions.get_mut(&1).unwrap().sample(halfway);
+        assert!(!complete);
+        assert_eq!(
+            manager.transitions.get_mut(&2).unwrap().sample(halfway).0,
+            sample
+        );
+        let transition = manager.transitions.get_mut(&1).unwrap();
+        transition.record_write(sample, false);
+        assert_eq!(transition.last, from);
+        transition.record_write(sample, true);
+        assert_eq!(transition.last, sample);
+        assert_eq!(
+            transition.sample(now + Duration::from_millis(120)),
+            (ax::integral_frame(target), true)
+        );
+    }
+
+    #[test]
+    fn replacing_a_template_cancels_only_its_windows_old_animation_and_retry() {
+        let mut manager = Manager::default();
+        for id in [1, 2] {
+            let from = rect(10., 41., 1600., 900.);
+            let target = rect(-890., -390., 880., 1580.);
+            manager.transition_from(id, from, target);
+            manager.verifications.insert(id, Verification::new(target));
+            manager.applied.insert(id, target);
+            manager.constrained.insert(id, (target, from));
+        }
+        manager.cancel_window_placement(1);
+        assert!(!manager.transitions.contains_key(&1));
+        assert!(!manager.verifications.contains_key(&1));
+        assert!(!manager.applied.contains_key(&1));
+        assert!(!manager.constrained.contains_key(&1));
+        assert!(manager.transitions.contains_key(&2));
+        assert!(manager.verifications.contains_key(&2));
+        assert!(manager.applied.contains_key(&2));
+        assert!(manager.constrained.contains_key(&2));
+    }
+
+    #[test]
+    fn floating_restore_after_monitor_transfer_or_rotation_stays_on_destination() {
+        let areas = [
+            rect(10., 41., 1660., 947.),
+            rect(-890., -390., 880., 1580.),
+            rect(210., -1040., 1900., 1000.),
+            rect(310., 1120., 1260., 760.),
+        ];
+        for source in areas {
+            for destination in areas {
+                for (x, y) in [(0., 0.), (0.5, 0.5), (1., 1.)] {
+                    let original = rect(
+                        source.origin.x + x * (source.size.width - 600.),
+                        source.origin.y + y * (source.size.height - 500.),
+                        600.,
+                        500.,
+                    );
+                    let restored = restoration_frame(original, source, destination);
+                    assert!(restored.origin.x >= destination.origin.x);
+                    assert!(restored.origin.y >= destination.origin.y);
+                    assert!(
+                        restored.origin.x + restored.size.width
+                            <= destination.origin.x + destination.size.width + 0.001
+                    );
+                    assert!(
+                        restored.origin.y + restored.size.height
+                            <= destination.origin.y + destination.size.height + 0.001
+                    );
+                    assert_eq!(restored.size, original.size);
+                    if source == destination {
+                        assert_eq!(restored, original);
+                    }
+                }
+            }
+        }
+        let restored = restoration_frame(rect(10., 41., 1500., 900.), areas[0], areas[1]);
+        assert_eq!(restored.size.width, areas[1].size.width);
+        assert_eq!(restored.origin.x, areas[1].origin.x);
+    }
+
+    #[test]
+    fn polling_detects_space_changes_without_confusing_order_or_geometry() {
+        let a = ((1, 7), rect(0., 30., 1600., 900.));
+        let b = ((2, 8), rect(-900., -400., 900., 1600.));
+        assert!(!desktop_keys_changed(&[], &[a, b]));
+        assert!(!desktop_keys_changed(&[a, b], &[b, a]));
+        assert!(!desktop_keys_changed(&[a], &[(a.0, b.1)]));
+        assert!(desktop_keys_changed(&[a, b], &[((1, 9), a.1), b]));
+        assert!(desktop_keys_changed(&[a, b], &[a]));
+    }
+
+    #[test]
+    fn space_change_freezes_layout_and_cancels_writes_even_with_mouse_held() {
+        let mut manager = Manager::default();
+        let drag = test_drag();
+        let original = drag.baseline.frames(drag.area, 10.);
+        manager.desktops.insert(drag.space, drag.baseline.clone());
+        manager.transition_from(1, drag.start, original[0].1);
+        manager.applied.insert(1, original[0].1);
+        manager
+            .verifications
+            .insert(2, Verification::new(original[1].1));
+        manager.applied.insert(2, original[1].1);
+        manager.drag = Some(drag);
+        manager.pressed = true;
+        let now = Instant::now();
+        manager.space_changed_at(now);
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+        assert!(manager.applied.is_empty());
+        assert!(manager.drag.is_some());
+        assert!(manager.pressed);
+        assert_eq!(manager.tick_interval(), 0.08);
+        assert!(manager.current_workspace().is_none());
+        assert!(manager.picker_context().is_none());
+        let context = PickerContext {
+            workspace: (1, 7),
+            area: rect(0., 30., 1600., 900.),
+            desktop: manager.desktops[&(1, 7)].clone(),
+        };
+        assert!(!manager.apply_template(ptr::null_mut(), &context, Layout::Grid));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(100)));
+        assert!(manager.drag.is_some());
+        assert!(manager.pressed);
+        assert_eq!(
+            manager.desktops[&(1, 7)].frames(rect(0., 30., 1600., 900.), 10.),
+            original
+        );
+        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.last_scan.is_none());
+        assert!(manager.last_area_update.is_none());
+    }
+
+    #[test]
+    fn consecutive_space_changes_restart_quiet_period_without_rebuilding_tree() {
+        let mut manager = Manager::default();
+        let drag = test_drag();
+        manager.desktops.insert(drag.space, drag.baseline.clone());
+        let before = drag.baseline.frames(drag.area, 10.);
+        let now = Instant::now();
+        manager.space_changed_at(now);
+        manager.space_changed_at(now + Duration::from_millis(400));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(999)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(1000)));
+        assert_eq!(manager.desktops[&drag.space].frames(drag.area, 10.), before);
+    }
+
+    #[test]
+    fn native_space_transition_does_not_consume_pending_drop_or_monitor_handoff_timeout() {
+        let mut manager = Manager::default();
+        let now = Instant::now();
+        let source = (1, 7);
+        let destination = (2, 8);
+        manager.pending_drop = Some(PendingDrop {
+            id: 1,
+            source,
+            destination,
+            intent: None,
+            expires: now + Duration::from_millis(700),
+        });
+        manager.handoffs.insert(
+            1,
+            MonitorHandoff {
+                destination,
+                expires: now + Duration::from_millis(1200),
+            },
+        );
+        manager
+            .verifications
+            .insert(1, Verification::new(rect(0., 30., 800., 600.)));
+        manager.space_changed_at(now);
+        assert!(manager.verifications.is_empty());
+        assert_eq!(
+            manager.pending_drop.as_ref().unwrap().expires,
+            now + Duration::from_millis(1300)
+        );
+        assert_eq!(
+            manager.handoffs[&1].expires,
+            now + Duration::from_millis(1800)
+        );
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.pending_drop.is_some());
+    }
+
+    #[test]
+    fn app_activation_does_not_retry_a_stable_constraint() {
+        let mut manager = Manager::default();
+        let target = rect(-890., -390., 880., 1580.);
+        let actual = rect(-890., -390., 1100., 1580.);
+        manager.constrained.insert(1, (target, actual));
+        manager.applied.insert(1, target);
+        for _ in 0..10 {
+            // Same invalidate used by the NSWorkspace activation callback.
+            manager.invalidate();
+            assert!(!manager.needs_placement(1, target, Some(actual)));
+        }
+        assert!(manager.needs_placement(1, rect(-890., -390., 1200., 1580.), Some(actual)));
+        assert!(manager.needs_placement(1, target, Some(rect(-800., -390., 1100., 1580.))));
+    }
+
+    #[test]
+    fn stationary_click_and_small_pointer_jitter_cannot_resize_or_move_a_tile() {
+        for frame in [rect(10., 40., 1200., 650.), rect(110., 140., 1400., 700.)] {
+            let mut drag = test_drag();
+            let before = drag.baseline.frames(drag.area, 10.);
+            for point in [
+                drag.point,
+                NSPoint::new(drag.point.x + 2., drag.point.y - 2.),
+            ] {
+                drag.observe(frame, point, Some(drag.space));
+                assert!(!drag.moved && !drag.resized);
+                assert_eq!(drag.baseline.frames(drag.area, 10.), before);
+            }
+        }
+        let mut drag = test_drag();
+        drag.observe(drag.start, NSPoint::new(300., 100.), Some(drag.space));
+        assert!(!drag.moved && !drag.resized); // Selection alone is not window motion.
+    }
+
+    #[test]
+    fn brief_membership_read_failure_preserves_resized_tree_and_expires_if_persistent() {
+        let mut grace = MembershipGrace::default();
+        let now = Instant::now();
+        let area = rect(0., 30., 1600., 900.);
+        let mut desktop = Desktop::default();
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let from = desktop.frames(area, 10.)[0].1;
+        let mut to = from;
+        to.size.width += 100.;
+        desktop.resize(1, from, to, area, 10.);
+        let before = desktop.frames(area, 10.);
+        let uncertain = HashSet::from([1]);
+        for millis in [0, 100, 500, 649] {
+            let retained = grace.retained(&uncertain, now + Duration::from_millis(millis));
+            let mut members = vec![2, 3];
+            members.extend(retained);
+            desktop.reconcile_at(&members, area, 10., Some(2));
+            assert_eq!(desktop.frames(area, 10.), before);
+        }
+        assert!(
+            grace
+                .retained(&uncertain, now + Duration::from_millis(650))
+                .is_empty()
+        );
+        assert!(
+            grace
+                .retained(&uncertain, now + Duration::from_secs(5))
+                .is_empty()
+        );
+        // Recovery resets the grace period for a later, independent failure.
+        grace.retained(&HashSet::new(), now + Duration::from_secs(6));
+        assert_eq!(
+            grace.retained(&uncertain, now + Duration::from_secs(7)),
+            uncertain
+        );
+    }
+
+    #[test]
+    fn forgotten_window_has_no_remaining_deferred_geometry_or_ownership() {
+        let mut manager = Manager::default();
+        let target = rect(0., 30., 800., 600.);
+        manager.transition_from(1, rect(10., 50., 600., 400.), target);
+        manager.verifications.insert(1, Verification::new(target));
+        manager.constrained.insert(1, (target, target));
+        manager.applied.insert(1, target);
+        manager.floating.insert(1);
+        manager.membership_grace.since.insert(1, Instant::now());
+        manager.handoffs.insert(
+            1,
+            MonitorHandoff {
+                destination: (1, 7),
+                expires: Instant::now() + Duration::from_secs(1),
+            },
+        );
+        manager.forget_window(1);
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+        assert!(manager.constrained.is_empty());
+        assert!(manager.applied.is_empty());
+        assert!(manager.floating.is_empty());
+        assert!(manager.membership_grace.since.is_empty());
+        assert!(manager.handoffs.is_empty());
+    }
+
+    #[test]
+    fn new_destination_discards_retry_for_previous_monitor() {
+        let mut manager = Manager::default();
+        let old = rect(10., 30., 1500., 800.);
+        let destination = rect(-890., -390., 880., 1580.);
+        manager.verifications.insert(1, Verification::new(old));
+        manager.transition_from(1, old, destination);
+        assert!(!manager.verifications.contains_key(&1));
+        assert_eq!(manager.transitions[&1].to, destination);
+    }
+
+    #[test]
+    fn screen_changes_cancel_old_coordinates_and_keep_mouse_gesture_latched() {
+        let mut manager = Manager::default();
+        let old = rect(-890., -390., 880., 1580.);
+        manager.transition_from(1, rect(10., 30., 1500., 800.), old);
+        manager.verifications.insert(2, Verification::new(old));
+        manager.applied.insert(1, old);
+        manager.constrained.insert(2, (old, old));
+        manager.handoffs.insert(
+            1,
+            MonitorHandoff {
+                destination: (2, 7),
+                expires: Instant::now() + Duration::from_secs(1),
+            },
+        );
+        manager.drag = Some(test_drag());
+        manager.pressed = true;
+        manager.screens_changed();
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+        assert!(manager.applied.is_empty());
+        assert!(manager.constrained.is_empty());
+        assert!(manager.handoffs.is_empty());
+        assert!(manager.drag.is_none());
+        assert!(manager.pressed);
+        assert!(manager.settling_space());
+        assert!(manager.last_area_update.is_none());
+    }
+
+    #[test]
+    fn work_area_changes_are_detected_without_confusing_space_switches_or_order() {
+        let primary = ((1, 7), rect(10., 30., 1580., 860.));
+        let portrait = ((2, 8), rect(-890., -390., 880., 1580.));
+        assert!(!areas_changed(&[primary, portrait], &[portrait, primary]));
+        assert!(!areas_changed(
+            &[primary, portrait],
+            &[((1, 9), primary.1), portrait]
+        ));
+        assert!(areas_changed(
+            &[primary, portrait],
+            &[primary, ((2, 8), rect(-890., -350., 880., 1540.))]
+        ));
+        assert!(areas_changed(
+            &[primary],
+            &[((1, 7), rect(10., 30., 1900., 1040.))]
+        ));
+    }
+
     #[test]
     fn cancelling_does_not_leave_a_deferred_write_to_an_old_monitor() {
         let mut manager = Manager::default();
@@ -1300,20 +1992,32 @@ mod tests {
     fn crossing_to_portrait_does_not_resize_the_source_tree() {
         let mut drag = test_drag();
         let original = drag.baseline.frames(drag.area, 10.);
-        drag.observe(rect(40., 60., 1500., 800.), Some((1, 7)));
+        drag.observe(
+            rect(40., 60., 1500., 800.),
+            NSPoint::new(230., 65.),
+            Some((1, 7)),
+        );
         assert!(drag.moved && !drag.resized);
-        drag.observe(rect(-850., -300., 850., 1300.), Some((2, 8)));
+        drag.observe(
+            rect(-850., -300., 850., 1300.),
+            NSPoint::new(-650., -295.),
+            Some((2, 8)),
+        );
         assert!(drag.moved && !drag.resized);
         assert_eq!(drag.baseline.frames(drag.area, 10.), original);
         let mut fast = test_drag();
-        fast.observe(rect(-850., -300., 850., 1300.), Some((2, 8)));
+        fast.observe(
+            rect(-850., -300., 850., 1300.),
+            NSPoint::new(-650., -295.),
+            Some((2, 8)),
+        );
         assert!(fast.moved && !fast.resized);
     }
     #[test]
     fn genuine_resize_handles_remain_resizes() {
         for frame in [rect(10., 40., 1200., 650.), rect(110., 140., 1400., 700.)] {
             let mut drag = test_drag();
-            drag.observe(frame, Some((1, 7)));
+            drag.observe(frame, NSPoint::new(300., 145.), Some((1, 7)));
             assert!(drag.resized && !drag.moved);
         }
     }
@@ -1482,7 +2186,7 @@ mod tests {
                 from,
                 to,
                 last: from,
-                started: Instant::now(),
+                started: None,
             },
         );
         manager.space_changed();
@@ -1506,7 +2210,7 @@ mod tests {
                 from,
                 to,
                 last: from,
-                started: Instant::now(),
+                started: None,
             },
         );
         assert_eq!(manager.tick_interval(), 1. / 60.);
@@ -1555,7 +2259,7 @@ mod tests {
                 _geometry_session: None,
                 from,
                 to,
-                started: Instant::now(),
+                started: None,
                 last: from,
             },
         );

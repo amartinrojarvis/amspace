@@ -25,6 +25,13 @@ thread_local! { static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 // NSWindowCollectionBehavior: transient panels are hidden by Mission Control.
 // Stationary panels remain visible like the desktop and must not be used here.
 const BORDER_COLLECTION_BEHAVIOR: usize = (1 << 0) | (1 << 3) | (1 << 6) | (1 << 8);
+#[derive(Clone, Copy, PartialEq)]
+struct BorderPaint {
+    width: f64,
+    rgb: [f64; 3],
+    radius: f64,
+    scale: f64,
+}
 struct PendingFocus {
     pid: i32,
     id: u32,
@@ -84,6 +91,10 @@ struct App {
     observed_pid: i32,
     tracked: Option<ws::Window>,
     border_suppressed: bool,
+    border_paint: Option<BorderPaint>,
+    border_target: u32,
+    border_needs_order: bool,
+    border_retry_pending: bool,
     settle_queued: bool,
     hover_timer: Option<Retained<AnyObject>>,
     last_mouse: NSPoint,
@@ -185,12 +196,15 @@ unsafe fn card(parent: Obj, frame: NSRect) {
         let _: () = msg_send![parent, addSubview:&*b];
     }
 }
-unsafe fn primary_height() -> f64 {
+unsafe fn primary_height() -> Option<f64> {
     unsafe {
         let screens: Obj = msg_send![class!(NSScreen), screens];
         let screen: Obj = msg_send![screens, firstObject];
+        if screen.is_null() {
+            return None;
+        }
         let frame: NSRect = msg_send![screen, frame];
-        frame.size.height
+        (frame.size.height.is_finite() && frame.size.height > 0.).then_some(frame.size.height)
     }
 }
 impl App {
@@ -238,6 +252,10 @@ impl App {
             };
             let mut a = Self {
                 border_enabled: value(Retained::as_ptr(&defaults) as Obj, "border"),
+                border_paint: None,
+                border_target: 0,
+                border_needs_order: true,
+                border_retry_pending: false,
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
                 tile_manager: Default::default(),
@@ -444,6 +462,7 @@ impl App {
         match space_switch::Switch::start(id) {
             Ok(switch) => {
                 self.switching = Some(switch);
+                self.tile_manager.space_changed();
                 self.pending_focus = None;
                 self.focus_target = None;
                 self.border_suppressed = true;
@@ -467,6 +486,7 @@ impl App {
             Ok(space_switch::Progress::Waiting) => self.schedule_switch_step(),
             result => {
                 self.switching = None;
+                self.tile_manager.space_changed();
                 self.hover_resume = Instant::now() + Duration::from_millis(400);
                 self.refresh_spaces();
                 self.update_window();
@@ -514,23 +534,67 @@ impl App {
             if self.focus_target.is_some_and(|(owner, id, since)| {
                 owner != pid
                     || (since.elapsed() > Duration::from_millis(250)
-                        && ax::focused_id(pid) != Some(id))
+                        && ax::focused_id(pid).is_some_and(|actual| actual != id))
             }) {
                 self.focus_target = None;
             }
-            let selected = ws::window_for_focus(pid, self.focus_target.map(|(_, id, _)| id));
+            let Some(candidates) = ws::focus_windows(pid, self.focus_target.map(|(_, id, _)| id))
+            else {
+                // One bounded retry for a failed compositor query, preserving
+                // a same-process border instead of hiding/showing it immediately.
+                if self.observed_pid == pid && self.tracked.is_some() && !self.border_retry_pending
+                {
+                    self.border_retry_pending = true;
+                    self.settle_focus();
+                } else {
+                    self.border_suppressed = true;
+                    self.hide_border();
+                }
+                return;
+            };
+            self.border_retry_pending = false;
+            let mut selected = None;
+            let mut selected_element = None;
+            for mut candidate in candidates {
+                if self.observed_pid == pid && self.tracked.is_some_and(|w| w.id == candidate.id) {
+                    candidate.radius = self.tracked.unwrap().radius;
+                    selected = Some(candidate);
+                    break;
+                }
+                let element = ax::window_for_id(pid, candidate.id);
+                // Gecko/Chromium publish temporary layer-zero popup windows.
+                // A confirmed nonstandard AX window must not steal the border.
+                if element
+                    .as_ref()
+                    .and_then(|w| ax::attr(w.0, "AXSubrole"))
+                    .is_some_and(|role| !ax::equals_text(role.0, "AXStandardWindow"))
+                {
+                    continue;
+                }
+                candidate.radius = ws::corner_radius(candidate.id);
+                selected = Some(candidate);
+                selected_element = element;
+                break;
+            }
+            ws::track_target(selected.map_or(0, |w| w.id));
             let changed =
                 self.observed_pid != pid || self.tracked.map(|w| w.id) != selected.map(|w| w.id);
             self.tracked = selected;
             if changed || self.observer.is_none() {
                 self.observer = None;
-                self.observed_window = selected.and_then(|w| ax::window_for_id(pid, w.id));
+                self.observed_window = selected_element
+                    .or_else(|| selected.and_then(|w| ax::window_for_id(pid, w.id)));
                 self.observer = ax::Observer::new(
                     pid,
                     self.observed_window.as_ref().map(|w| w.0),
                     !ws::native_tracking(),
                 );
                 self.observed_pid = pid;
+            }
+            if let Some(target) = selected {
+                let border: isize = msg_send![&self.border, windowNumber];
+                self.border_needs_order = self.border_target != target.id
+                    || ws::border_needs_ordering(border as u32, target.id).unwrap_or(false);
             }
             if self
                 .observed_window
@@ -567,22 +631,53 @@ impl App {
             let p = target.frame.origin;
             let s = target.frame.size;
             // Stroke is entirely INSIDE the real window boundary: no outer gap.
-            let frame = rect(p.x, primary_height() - p.y - s.height, s.width, s.height);
-            let _: () = msg_send![class!(CATransaction), begin];
-            let _: () = msg_send![class!(CATransaction), setDisableActions:true];
-            let _: () = msg_send![&self.border, setFrame:frame, display:true];
-            let view: Obj = msg_send![&self.border, contentView];
-            let layer: Obj = msg_send![view, layer];
-            let c = color(self.rgb[0], self.rgb[1], self.rgb[2], 0.95);
-            let cg: *const std::ffi::c_void = msg_send![c, CGColor];
-            let _: () = msg_send![layer, setBorderColor:cg];
-            let _: () = msg_send![layer, setBorderWidth:self.width];
-            let _: () = msg_send![layer, setCornerRadius:target.radius];
-            let _: () = msg_send![layer, setCornerCurve:&*NSString::from_str("continuous")];
-            let _: () = msg_send![class!(CATransaction), commit];
-            let _: () = msg_send![class!(CATransaction), flush];
-            let _: () = msg_send![&self.border, orderWindow:1isize, relativeTo:target.id as isize];
+            let Some(height) = primary_height() else {
+                self.hide_border();
+                return;
+            };
+            let frame = rect(p.x, height - p.y - s.height, s.width, s.height);
             let id: isize = msg_send![&self.border, windowNumber];
+            let geometry_changed = ws::bounds(id as u32) != Some(target.frame);
+            if geometry_changed {
+                let _: () = msg_send![class!(CATransaction), begin];
+                let _: () = msg_send![class!(CATransaction), setDisableActions:true];
+                let _: () = msg_send![&self.border, setFrame:frame, display:true];
+            }
+            let scale: f64 = msg_send![&self.border, backingScaleFactor];
+            let paint = BorderPaint {
+                width: self.width,
+                rgb: self.rgb,
+                radius: target.radius,
+                scale,
+            };
+            let paint_changed = self.border_paint != Some(paint);
+            if paint_changed {
+                if !geometry_changed {
+                    let _: () = msg_send![class!(CATransaction), begin];
+                    let _: () = msg_send![class!(CATransaction), setDisableActions:true];
+                }
+                let view: Obj = msg_send![&self.border, contentView];
+                let layer: Obj = msg_send![view, layer];
+                let c = color(self.rgb[0], self.rgb[1], self.rgb[2], 0.95);
+                let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+                let _: () = msg_send![layer, setBorderColor:cg];
+                let _: () = msg_send![layer, setBorderWidth:self.width];
+                let _: () = msg_send![layer, setCornerRadius:target.radius];
+                let _: () = msg_send![layer, setCornerCurve:&*NSString::from_str("continuous")];
+                let _: () = msg_send![layer, setContentsScale:scale];
+                self.border_paint = Some(paint);
+            }
+            if geometry_changed || paint_changed {
+                let _: () = msg_send![class!(CATransaction), commit];
+                let _: () = msg_send![class!(CATransaction), flush];
+            }
+            let visible: bool = msg_send![&self.border, isVisible];
+            if self.border_needs_order || self.border_target != target.id || !visible {
+                let _: () =
+                    msg_send![&self.border, orderWindow:1isize, relativeTo:target.id as isize];
+                self.border_needs_order = false;
+                self.border_target = target.id;
+            }
             ws::set_border(id as u32);
         }
     }
@@ -647,7 +742,10 @@ impl App {
             }
             // Hit-testing excludes our own windows. Having settings active must
             // not block focusing another app after the pointer leaves settings.
-            let Some((w, pid)) = ax::window_at(point.x, primary_height() - point.y) else {
+            let Some(height) = primary_height() else {
+                return;
+            };
+            let Some((w, pid)) = ax::window_at(point.x, height - point.y) else {
                 return;
             };
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -1398,18 +1496,17 @@ Otras apps pueden tener atajos propios no detectables.",
             return;
         }
         self.pending_focus = None;
-        self.tile_manager.cancel_drag();
-        self.tile_manager.invalidate();
-        self.tile_manager.tick(defaults);
+        self.tile_manager.refresh_for_picker(defaults);
         let Some(context) = self.tile_manager.picker_context() else {
             self.feedback("Activa el mosaico en el escritorio de esta pantalla.");
             return;
         };
-        self.layout_picker = Some(crate::tile_picker::Picker::new(
-            context,
-            Retained::as_ptr(&self.target) as Obj,
-        ));
-        self.layout_picker.as_ref().unwrap().show();
+        self.layout_picker =
+            crate::tile_picker::Picker::new(context, Retained::as_ptr(&self.target) as Obj);
+        let Some(picker) = &self.layout_picker else {
+            return;
+        };
+        picker.show();
         self.update_tile_timer();
     }
     fn commit_picker(&mut self) {
@@ -1423,8 +1520,7 @@ Otras apps pueden tener atajos propios no detectables.",
         let context = picker.context.clone();
         drop(picker);
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
-        self.tile_manager.invalidate();
-        self.tile_manager.tick(defaults);
+        self.tile_manager.refresh_for_picker(defaults);
         if self.tile_manager.apply_template(defaults, &context, layout) {
             self.tile_manager.tick(defaults);
         } else {
@@ -2535,6 +2631,7 @@ extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj
 }
 extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: Obj) {
     cancel_layout_picker();
+    with_app(|a| a.tile_manager.screens_changed());
     workspace(target, selector, notification);
 }
 extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {

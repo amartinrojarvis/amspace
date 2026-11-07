@@ -129,13 +129,17 @@ fn valid(frame: NSRect) -> bool {
 /// The compositor returns front-to-back order. A normal window of the active
 /// process wins even when AXFocus incorrectly continues reporting another one.
 pub fn front_window(pid: i32) -> Option<Window> {
-    window_for_focus(pid, None)
+    let mut window = focus_windows(pid, None)?.first().copied()?;
+    window.radius = corner_radius(window.id);
+    Some(window)
 }
-pub fn window_for_focus(pid: i32, focused: Option<u32>) -> Option<Window> {
+/// Ordered candidates, so the UI can reject AX popups without losing the real
+/// browser window underneath. None is query failure, Some(empty) is no window.
+pub fn focus_windows(pid: i32, focused: Option<u32>) -> Option<Vec<Window>> {
     ENABLED.store(true, Ordering::Release);
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
     let mut ids = Vec::new();
-    let mut front = None;
+    let mut windows = Vec::new();
     for info in array(list.0) {
         if number(get(info, "kCGWindowOwnerPID")) != Some(i64::from(pid))
             || number(get(info, "kCGWindowLayer")) != Some(0)
@@ -154,16 +158,23 @@ pub fn window_for_focus(pid: i32, focused: Option<u32>) -> Option<Window> {
             continue;
         }
         ids.push(id);
-        if front.is_none() || focused == Some(id) {
-            front = Some(Window {
-                id,
-                frame,
-                radius: corner_radius(id),
-            });
-        }
+        windows.push(Window {
+            id,
+            frame,
+            radius: 10.,
+        });
     }
-    watch(ids, front.map_or(0, |w| w.id));
-    front
+    if let Some(index) = windows.iter().position(|w| Some(w.id) == focused) {
+        let preferred = windows.remove(index);
+        windows.insert(0, preferred);
+    }
+    let previous = TARGET.load(Ordering::Acquire);
+    let target = if ids.contains(&previous) { previous } else { 0 };
+    watch(ids, target); // Only the UI promotes a candidate after AX validation.
+    Some(windows)
+}
+pub fn track_target(id: u32) {
+    TARGET.store(id, Ordering::Release);
 }
 /// Find the visible window at the pointer, independently of stale AX hit tests.
 /// Our click-through border is ignored; menus and own settings block targeting.
@@ -203,7 +214,7 @@ pub fn bounds(id: u32) -> Option<NSRect> {
     (unsafe { (api.bounds)((api.connection)(), id, &mut frame) } == 0 && valid(frame))
         .then_some(frame)
 }
-fn corner_radius(id: u32) -> f64 {
+pub fn corner_radius(id: u32) -> f64 {
     let read = || unsafe {
         let api = api()?;
         let radii = api.radii?;
@@ -224,7 +235,9 @@ fn corner_radius(id: u32) -> f64 {
     };
     read().unwrap_or(10.)
 }
-fn watch(ids: Vec<u32>, target: u32) {
+fn watch(mut ids: Vec<u32>, target: u32) {
+    ids.sort_unstable();
+    ids.dedup(); // Stacking changes do not change the notification subscription.
     TARGET.store(target, Ordering::Release);
     let Some(api) = api() else {
         return;
@@ -271,7 +284,7 @@ extern "C" fn notification(event: u32, data: *const c_void, len: usize, _: *mut 
         None
     };
     let watched = id.is_some_and(|id| WATCHED.lock().is_ok_and(|ids| ids.contains(&id)));
-    let flag = classify_event(event, id, target, watched);
+    let flag = classify_event(event, id, target, watched, BORDER.load(Ordering::Acquire));
     if flag == 0 {
         return;
     }
@@ -286,7 +299,10 @@ extern "C" fn notification(event: u32, data: *const c_void, len: usize, _: *mut 
         }
     }
 }
-fn classify_event(event: u32, id: Option<u32>, target: u32, watched: bool) -> u32 {
+fn classify_event(event: u32, id: Option<u32>, target: u32, watched: bool, border: u32) -> u32 {
+    if border != 0 && id == Some(border) {
+        return 0; // Own-panel lifecycle/stacking cannot feed back into the border.
+    }
     match event {
         // Creation/closure must work even while no target exists yet.
         1325 | 1326 => 2 | 4,
@@ -313,6 +329,23 @@ fn move_border(target: u32) -> bool {
     };
     unsafe { move_window((api.connection)(), border, &frame.origin) == 0 }
 }
+
+pub fn border_needs_ordering(border: u32, target: u32) -> Option<bool> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    let ids: Vec<_> = array(list.0)
+        .into_iter()
+        .filter_map(|info| {
+            (number(get(info, "kCGWindowLayer")) == Some(0))
+                .then(|| number(get(info, "kCGWindowNumber")).map(|id| id as u32))
+                .flatten()
+        })
+        .collect();
+    Some(needs_ordering(&ids, border, target))
+}
+fn needs_ordering(ids: &[u32], border: u32, target: u32) -> bool {
+    let target_index = ids.iter().position(|id| *id == target);
+    target_index.is_some_and(|index| index == 0 || ids[index - 1] != border)
+}
 extern "C" fn deliver(_: *mut c_void) {
     QUEUED.store(false, Ordering::Release);
     let flags = PENDING.swap(0, Ordering::AcqRel);
@@ -321,24 +354,31 @@ extern "C" fn deliver(_: *mut c_void) {
 
 /// Visible normal windows, including occluded windows. Excludes our UI/overlays.
 pub fn tile_windows() -> Vec<(i32, u32, NSRect)> {
-    let Some(list) = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }) else {
-        return vec![];
-    };
-    array(list.0)
-        .into_iter()
-        .filter_map(|info| {
-            let pid = number(get(info, "kCGWindowOwnerPID"))? as i32;
-            if pid == std::process::id() as i32 || number(get(info, "kCGWindowLayer")) != Some(0) {
-                return None;
-            }
-            let id = number(get(info, "kCGWindowNumber"))? as u32;
-            let mut frame = NSRect::ZERO;
-            (unsafe {
-                CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
-            } && valid(frame))
-            .then_some((pid, id, frame))
-        })
-        .collect()
+    try_tile_windows().unwrap_or_default()
+}
+
+/// Preserve query failure separately from a successfully observed empty desktop.
+pub fn try_tile_windows() -> Option<Vec<(i32, u32, NSRect)>> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    Some(
+        array(list.0)
+            .into_iter()
+            .filter_map(|info| {
+                let pid = number(get(info, "kCGWindowOwnerPID"))? as i32;
+                if pid == std::process::id() as i32
+                    || number(get(info, "kCGWindowLayer")) != Some(0)
+                {
+                    return None;
+                }
+                let id = number(get(info, "kCGWindowNumber"))? as u32;
+                let mut frame = NSRect::ZERO;
+                (unsafe {
+                    CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+                } && valid(frame))
+                .then_some((pid, id, frame))
+            })
+            .collect(),
+    )
 }
 
 /// Compositor identities include offscreen/minimized windows. Avoid synchronous
@@ -360,19 +400,37 @@ pub fn all_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_event;
+    use super::{classify_event, needs_ordering};
+    #[test]
+    fn correctly_stacked_border_does_not_reorder_on_repeated_focus_notifications() {
+        for _ in 0..100 {
+            assert!(!needs_ordering(&[99, 40, 10, 20], 40, 10));
+        }
+        assert!(needs_ordering(&[10, 40, 20], 40, 10));
+        assert!(needs_ordering(&[40, 99, 10, 20], 40, 10));
+        assert!(needs_ordering(&[10, 20], 40, 10));
+        assert!(!needs_ordering(&[40, 20], 40, 10)); // Target disappeared.
+    }
+    #[test]
+    fn own_border_events_cannot_create_a_lifecycle_feedback_loop() {
+        for event in [804, 806, 807, 808, 815, 816, 723, 1325, 1326, 1508] {
+            assert_eq!(classify_event(event, Some(40), 10, true, 40), 0);
+        }
+        assert_eq!(classify_event(1325, Some(41), 10, false, 40), 6);
+        assert_eq!(classify_event(1326, Some(10), 10, true, 40), 6);
+    }
     #[test]
     fn new_windows_are_detected_without_an_existing_border() {
-        assert_eq!(classify_event(1325, None, 0, false), 6);
-        assert_eq!(classify_event(1508, None, 0, false), 2);
-        assert_eq!(classify_event(1326, None, 42, false), 6);
+        assert_eq!(classify_event(1325, None, 0, false, 0), 6);
+        assert_eq!(classify_event(1508, None, 0, false, 0), 2);
+        assert_eq!(classify_event(1326, None, 42, false, 0), 6);
     }
     #[test]
     fn focus_and_geometry_do_not_confuse_sibling_windows() {
-        assert_eq!(classify_event(806, Some(10), 20, true), 0);
-        assert_eq!(classify_event(807, Some(20), 20, true), 1);
-        assert_eq!(classify_event(808, Some(10), 20, true), 2);
-        assert_eq!(classify_event(808, Some(99), 20, false), 0);
-        assert_eq!(classify_event(806, None, 20, false), 0);
+        assert_eq!(classify_event(806, Some(10), 20, true, 0), 0);
+        assert_eq!(classify_event(807, Some(20), 20, true, 0), 1);
+        assert_eq!(classify_event(808, Some(10), 20, true, 0), 2);
+        assert_eq!(classify_event(808, Some(99), 20, false, 0), 0);
+        assert_eq!(classify_event(806, None, 20, false, 0), 0);
     }
 }

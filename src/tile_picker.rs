@@ -230,10 +230,13 @@ pub struct Picker {
     status: Obj,
 }
 impl Picker {
-    pub fn new(context: PickerContext, target: Obj) -> Self {
+    pub fn new(context: PickerContext, target: Obj) -> Option<Self> {
         unsafe {
             let screens: Obj = msg_send![class!(NSScreen), screens];
             let primary: Obj = msg_send![screens, firstObject];
+            if primary.is_null() {
+                return None;
+            }
             let primary: NSRect = msg_send![primary, frame];
             let area = context.area;
             let appkit = rect(
@@ -390,7 +393,7 @@ impl Picker {
                 status,
             };
             picker.render();
-            picker
+            Some(picker)
         }
     }
     pub fn show(&self) {
