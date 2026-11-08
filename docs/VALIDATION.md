@@ -1,3 +1,10 @@
+## Publicación 0.6.12, build 28
+
+- Autorizada por el usuario tras aceptar la candidata. Release estable: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.12 sobre `ecf4ae851343b5616a566b09118e0b387b284e4d`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42489695905.
+- ZIP universal, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.12/AMSpace-universal.zip`, descargada mediante HTTPS público normal sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `00e92ea53368de2b4cfcee8ab36c9911b9916896add44bb65cab95c8dbf1a169`; tamaño: 2.408.561 bytes.
+- ZIP y catálogo verificados mediante Sparkle antes de publicar. Ejecutable instalado idéntico al del paquete. Se anuncia versión 0.6.12, build 28, mediante el catálogo firmado de la raíz. No se sustituye el ZIP ni el tag de 0.6.11.
+- Se mantiene el alcance de validación descrito a continuación; no se atribuye una instalación física mediante Sparkle ni una comprobación del hardware remoto a esta publicación.
+
 ## Candidata 0.6.12, build 28: gestos nativos y traslados
 
 - Arreglo común al gestor, sin excepciones por aplicación. Durante un redimensionamiento nativo no se escriben rectángulos AX ni se modifica la distribución guardada. Cada muestra genera una propuesta desde la misma distribución inicial y muestra los huecos previstos. Al soltar se confirma por la ruta normal de colocación, verificación y reintento limitado. La principal de las variantes centradas conserva su simetría.
