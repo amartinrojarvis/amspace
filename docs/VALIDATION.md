@@ -1,3 +1,10 @@
+## Publicación 0.6.14, build 30
+
+- Release estable autorizada: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.14 sobre `a1f0c7af10051e1303c83eb0dd87031a66c02513`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42494962010.
+- ZIP universal, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.14/AMSpace-universal.zip`, descargada mediante HTTPS público sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `5796f2227d5ae348d3a5c7bcd2613261ea04537219d1d3570342189ef65dc479`; tamaño: 2414680 bytes.
+- ZIP y catálogo verificados mediante Sparkle antes de publicar. Se anuncia 0.6.14, build 30, mediante el catálogo firmado de la raíz. Las versiones previas conservan sus archivos y tags.
+- El diagnóstico nativo de dos minutos terminó; contiene pulsaciones/liberaciones sin una previsualización de arrastre capturada. No se presenta como prueba física del parpadeo ni como medida de latencia total. El arreglo se fundamenta en el recorrido que mostraba y ocultaba el panel en el mismo tick y las regresiones descritas a continuación.
+
 ## Preparación 0.6.14, build 30: parpadeo y eficiencia del arrastre
 
 - Causa concreta encontrada en 0.6.13: el tick mostraba el destino de un movimiento y después llamaba a `resize_drag(false, ..., preview=false)`, que ocultaba el mismo panel antes de comprobar el tipo de gesto. El cambio de 0.6.13 que omitía el cálculo del redimensionamiento al desactivar su previsualización introdujo esa interferencia.
