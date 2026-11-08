@@ -9,7 +9,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 #[derive(Default)]
 pub struct Preview {
-    pub pending: Option<(u64, usize, NSRect)>,
+    pub pending: Option<(u64, NSRect)>,
     panel: Option<Retained<AnyObject>>,
 }
 impl Preview {
@@ -22,7 +22,7 @@ impl Preview {
         }
     }
     pub fn show(&mut self) {
-        let Some((id, index, anchor)) = self.pending else {
+        let Some((id, anchor)) = self.pending else {
             return;
         };
         let Some(destination) = spaces::destination(id) else {
@@ -44,8 +44,9 @@ impl Preview {
                 return;
             }
             let thumb = thumbnail(id, screen.frame);
-            let width = 264.;
-            let height = 172.;
+            let image_size: NSSize = msg_send![&thumb, size];
+            let width = image_size.width + 12.;
+            let height = image_size.height + 12.;
             let frame = popup_frame(anchor, screen.frame, width, height);
             let panel = self.panel.get_or_insert_with(|| {
                 let panel: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
@@ -68,17 +69,12 @@ impl Preview {
             let _: () = msg_send![&root, setState:1isize];
             let _: () = msg_send![&root, setWantsLayer:true];
             let layer: Obj = msg_send![&root, layer];
-            let _: () = msg_send![layer, setCornerRadius:14f64];
+            let _: () = msg_send![layer, setCornerRadius:10f64];
             let _: () = msg_send![layer, setMasksToBounds:true];
-            label(
-                Retained::as_ptr(&root) as Obj,
-                rect(13., 142., 238., 20.),
-                &format!("Escritorio {}", index + 1),
-                12.,
-                0.3,
-                false,
+            let image = alloc_view(
+                class!(NSImageView),
+                rect(6., 6., image_size.width, image_size.height),
             );
-            let image = alloc_view(class!(NSImageView), rect(12., 9., 240., 130.));
             let _: () = msg_send![&image, setImage:&*thumb];
             let _: () = msg_send![&root, addSubview:&*image];
             let _: () = msg_send![&*panel, setContentView:&*root];
@@ -123,11 +119,17 @@ fn union(screens: &[ScreenGeometry]) -> Option<NSRect> {
         )
     }))
 }
+fn thumbnail_size(canvas: NSRect) -> NSSize {
+    let scale = (280. / canvas.size.width).min(180. / canvas.size.height);
+    NSSize::new(canvas.size.width * scale, canvas.size.height * scale)
+}
 fn project(frame: NSRect, canvas: NSRect) -> NSRect {
-    let scale = (240. / canvas.size.width).min(130. / canvas.size.height);
+    let size = thumbnail_size(canvas);
+    let scale = (size.width / canvas.size.width).min(size.height / canvas.size.height);
     rect(
-        (240. - canvas.size.width * scale) / 2. + (frame.origin.x - canvas.origin.x) * scale,
-        (130. - canvas.size.height * scale) / 2. + (frame.origin.y - canvas.origin.y) * scale,
+        (size.width - canvas.size.width * scale) / 2. + (frame.origin.x - canvas.origin.x) * scale,
+        (size.height - canvas.size.height * scale) / 2.
+            + (frame.origin.y - canvas.origin.y) * scale,
         frame.size.width * scale,
         frame.size.height * scale,
     )
@@ -153,11 +155,11 @@ fn miniature(frame: NSRect, screen: NSRect, primary_height: f64, canvas: NSRect)
 }
 fn thumbnail(space: u64, screen: NSRect) -> Retained<AnyObject> {
     unsafe {
-        let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
-        let image: Retained<AnyObject> = msg_send![image, initWithSize:NSSize::new(240.,130.)];
-        let _: () = msg_send![&image, lockFocus];
         let screens = screen_configuration();
         let canvas = union(&screens).unwrap_or(screen);
+        let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
+        let image: Retained<AnyObject> = msg_send![image, initWithSize:thumbnail_size(canvas)];
+        let _: () = msg_send![&image, lockFocus];
         let visible = spaces::visible_desktops();
         let selected_display = spaces::destination(space).map(|d| d.display);
         // With shared Spaces, choosing a desktop affects every physical monitor.
@@ -185,14 +187,18 @@ fn thumbnail(space: u64, screen: NSRect) -> Retained<AnyObject> {
         let stroke = color(0.48, 0.60, 1., 0.65);
         for display in &screens {
             let viewport = project(display.frame, canvas);
-            let base = color(0.10, 0.12, 0.18, 0.12);
+            // A faint surface marks each monitor without an exterior frame.
+            // Inset adjoining displays slightly to retain their separation.
+            let base = color(0.48, 0.60, 1., 0.035);
             let _: () = msg_send![base, setFill];
-            let outline: Obj = msg_send![class!(NSBezierPath), bezierPathWithRoundedRect:viewport, xRadius:3f64, yRadius:3f64];
+            let surface = rect(
+                viewport.origin.x + 0.5,
+                viewport.origin.y + 0.5,
+                (viewport.size.width - 1.).max(0.),
+                (viewport.size.height - 1.).max(0.),
+            );
+            let outline: Obj = msg_send![class!(NSBezierPath), bezierPathWithRoundedRect:surface, xRadius:3f64, yRadius:3f64];
             let _: () = msg_send![outline, fill];
-            let separator: Obj = msg_send![class!(NSColor), separatorColor];
-            let _: () = msg_send![separator, setStroke];
-            let _: () = msg_send![outline, setLineWidth:1f64];
-            let _: () = msg_send![outline, stroke];
             let display_space = if shared || Some(display.id) == selected_display {
                 Some(space)
             } else {
@@ -305,6 +311,24 @@ mod tests {
         }
     }
     #[test]
+    fn thumbnail_uses_its_whole_surface_at_each_monitor_aspect_ratio() {
+        for canvas in [
+            rect(0., 0., 1680., 1050.),
+            rect(-4000., 0., 6000., 1000.),
+            rect(0., -1200., 900., 2400.),
+        ] {
+            let size = thumbnail_size(canvas);
+            assert!(size.width <= 280. && size.height <= 180.);
+            assert!(
+                (size.width / size.height - canvas.size.width / canvas.size.height).abs() < 1e-9
+            );
+            assert_eq!(
+                project(canvas, canvas),
+                rect(0., 0., size.width, size.height)
+            );
+        }
+    }
+    #[test]
     fn monitor_projection_preserves_offsets_and_shared_boundaries() {
         let screens = [
             ScreenGeometry {
@@ -336,7 +360,7 @@ mod tests {
                 900.,
                 rect(-1200., 0., 1200., 800.)
             ),
-            Some(rect(38.75, 24.375, 130., 97.5))
+            Some(rect(22.5, 33.75, 180., 135.))
         );
         assert_eq!(
             miniature(

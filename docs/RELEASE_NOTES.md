@@ -1,14 +1,10 @@
-AMSpace 0.6.17 — ajustes sin desplazamiento y navegación renovada.
+AMSpace 0.6.18 — preview más limpia y aprovechada.
 
-- Mosaico muestra todas las plantillas y opciones sin scroll vertical.
-- Ventana de ajustes más amplia, con adaptación al espacio disponible de la pantalla.
-- Barra lateral con listas nativas, iconos y selección de sección, sin botones.
-- Acerca de y Salir integrados como filas de la barra lateral.
-- Muestras de color centradas, con selección discreta y contorno redondeado.
-- Lista de iconos basada en los escritorios reales de todas las pantallas, actualizada mientras se consulta.
-- Preview compacta al detener el cursor sobre un indicador de escritorio: distribución de sus ventanas con los iconos de sus aplicaciones, sin capturar su contenido.
-- Popup compacto sin textos auxiliares, con divisiones azules translúcidas basadas en la geometría real de las ventanas y los monitores.
-- Aparición suave, esquinas redondeadas y opción de desactivarlo en Barra de menús. El clic izquierdo sigue cambiando de escritorio; el derecho abre ajustes.
+- El desplegable muestra únicamente la simulación, sin títulos ni marco exterior.
+- El gráfico azul ocupa casi todo el popup, con solo seis puntos de margen.
+- Tamaño adaptado a la proporción real del conjunto de pantallas, sin bandas vacías.
+- Se conservan las divisiones de ventanas y monitores, los iconos centrados, la entrada suave y la opción de desactivar la preview.
+- El clic izquierdo sigue cambiando de escritorio y el derecho abre ajustes.
 
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

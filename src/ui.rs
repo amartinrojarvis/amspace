@@ -2972,7 +2972,7 @@ extern "C-unwind" fn preview_enter(_: Obj, _: Sel, event: Obj) {
         let local: NSRect = msg_send![button, convertRect:bounds, toView:ptr::null::<AnyObject>()];
         let window: Obj = msg_send![button, window];
         let anchor: NSRect = msg_send![window, convertRectToScreen:local];
-        a.desktop_preview.pending = Some((id, index, anchor));
+        a.desktop_preview.pending = Some((id, anchor));
         let _: () = msg_send![target, performSelector:sel!(showDesktopPreview:), withObject:ptr::null::<AnyObject>(), afterDelay:0.3f64];
     });
 }

@@ -1,3 +1,12 @@
+## Preparación 0.6.18, build 36
+
+- Preview reducida a la simulación: se eliminan título y contorno exterior del monitor. Cada monitor conserva una superficie azul muy tenue y separación entre pantallas; las ventanas mantienen sus divisiones azules e iconos centrados.
+- La imagen conserva exactamente la proporción del conjunto real de pantallas y cabe en un máximo de 280×180 puntos. El popup suma solo seis puntos de margen por lado; no reserva espacio para cabeceras ni bandas vacías.
+- Se mantiene el panel no activable y transparente al ratón, la aparición suave, el ajuste de desactivación y el enrutamiento existente de clic izquierdo/derecho.
+- `scripts/check.sh`: formato, Clippy, plist y 149 pruebas correctas; ocho diagnósticos/benchmarks excluidos. Regresión nueva: aprovechamiento completo de la imagen en configuraciones horizontales, verticales y varias pantallas, conservando la proporción real.
+- Bundle universal arm64/x86_64 con firma estricta correcta; ZIP y catálogo Ed25519 generados y verificados. Renderizado nativo de tres escritorios mediante `--render-desktop-previews`, con inspección de las imágenes de Brave y de Ghostty/Finder. Se observan posiciones actuales diferentes a la muestra anterior, sin usar ejemplos de plantilla ni capturar contenido.
+- No se atribuye a este cambio una nueva prueba física del cambio de Space, renovación de Accesibilidad o varias pantallas reales; se conserva el comportamiento anterior en esas rutas.
+
 ## Publicación 0.6.17, build 35
 
 - Publicada la versión solicitada: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.17 sobre `30439d837cd81690814148bcaa0e34200b115db0`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42519121650.
