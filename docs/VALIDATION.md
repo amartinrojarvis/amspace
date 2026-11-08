@@ -1,5 +1,6 @@
 ## Comprobación de calidad 0.6.15, build 32
 
+- CI completa correcta sobre `9436462b352e13a742af265153b78416ee5bff93`: https://github.com/amartinrojarvis/amspace/actions/runs/42498838150. Comparación final de solo lectura: Accesibilidad concedida y dos ventanas con idéntica elegibilidad/geometría AX entre instalada y candidata. Firma del paquete y del catálogo público verificadas; ejecutable instalado idéntico al ZIP publicado de 0.6.14.
 - Tres fallos reproducidos y corregidos antes de publicar la candidata. La instalación y el feed permanecen en 0.6.14.
 - Rejilla: al ajustar un padre, un hijo sin línea de rejilla disponible conservaba una proporción calculada sobre el tamaño anterior. Podía quedar por debajo de su mínimo, incluso después de `fit`. Regresión mínima con contenedor de 1000×1000, rejilla 2×2, padre de proporción 0,2 y mínimos del hijo de 90/250 puntos. Ahora se ajusta la división en el rectángulo nuevo antes de buscar una línea. Los huecos compatibles conservan su geometría.
 - Datos guardados: se aceptaban un árbol centrado sin el núcleo principal correcto y ramas vacías no permitidas. Podían perder el ajuste guardado o dejar parte de la pantalla sin ocupar. El parser comprueba el núcleo centrado y los huecos permitidos (solo el reservado en una plantilla centrada con dos ventanas), antes de modificar el estado.

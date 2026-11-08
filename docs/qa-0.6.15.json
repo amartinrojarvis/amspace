@@ -29,5 +29,15 @@
     "multi-monitor and multi-Space combinations are modeled, not tested on the remote physical Mac",
     "native diagnostics only read Accessibility/WindowServer state",
     "installed/public version remains 0.6.14"
-  ]
+  ],
+  "ci": {
+    "status": "success",
+    "commit": "9436462b352e13a742af265153b78416ee5bff93",
+    "url": "https://github.com/amartinrojarvis/amspace/actions/runs/42498838150"
+  },
+  "native_readonly_comparison": {
+    "windows": 2,
+    "accessibility": true,
+    "eligibility_and_geometry_identical": true
+  }
 }
