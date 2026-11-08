@@ -2,7 +2,7 @@
 //! potentially stale AXFocusedWindow. Private symbols are optional and isolated.
 use crate::accessibility::{Cf, Owned, array, get, number};
 use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
-use objc2_foundation::{NSPoint, NSRect};
+use objc2_foundation::{NSPoint, NSRect, ns_string};
 use std::{
     ffi::{CStr, c_void},
     ptr,
@@ -145,17 +145,17 @@ pub fn focus_windows(pid: i32, focused: Option<u32>) -> Option<Vec<Window>> {
     let mut ids = Vec::new();
     let mut windows = Vec::new();
     for info in array(list.0) {
-        let Some(layer) = number(get(info, "kCGWindowLayer")) else {
+        let Some(layer) = number(get(info, ns_string!("kCGWindowLayer"))) else {
             continue;
         };
         if !(0..=3).contains(&layer) {
             continue;
         }
-        let Some(id) = number(get(info, "kCGWindowNumber")).map(|n| n as u32) else {
+        let Some(id) = number(get(info, ns_string!("kCGWindowNumber"))).map(|n| n as u32) else {
             continue;
         };
         let mut frame = NSRect::ZERO;
-        let dictionary = get(info, "kCGWindowBounds");
+        let dictionary = get(info, ns_string!("kCGWindowBounds"));
         if dictionary.is_null()
             || !unsafe { CGRectMakeWithDictionaryRepresentation(dictionary, &mut frame) }
             || !valid(frame)
@@ -163,10 +163,11 @@ pub fn focus_windows(pid: i32, focused: Option<u32>) -> Option<Vec<Window>> {
             continue;
         }
         ids.push(id);
-        if layer != 0 || number(get(info, "kCGWindowOwnerPID")) != Some(i64::from(pid)) {
+        if layer != 0 || number(get(info, ns_string!("kCGWindowOwnerPID"))) != Some(i64::from(pid))
+        {
             continue;
         }
-        if crate::accessibility::decimal(get(info, "kCGWindowAlpha"))
+        if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
             .is_some_and(|alpha| alpha <= 0.)
             || (!visible_spaces.is_empty()
                 && !crate::focus::in_visible_space(
@@ -212,18 +213,21 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
     };
     let mut hits = Vec::new();
     for info in array(list.0) {
-        let Some(id) = number(get(info, "kCGWindowNumber")).map(|id| id as u32) else {
+        let Some(id) = number(get(info, ns_string!("kCGWindowNumber"))).map(|id| id as u32) else {
             continue;
         };
         if id == BORDER.load(Ordering::Acquire) {
             continue;
         }
-        if number(get(info, "kCGWindowLayer")) != Some(0) {
+        if number(get(info, ns_string!("kCGWindowLayer"))) != Some(0) {
             continue;
         }
         let mut frame = NSRect::ZERO;
         if !unsafe {
-            CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+            CGRectMakeWithDictionaryRepresentation(
+                get(info, ns_string!("kCGWindowBounds")),
+                &mut frame,
+            )
         } || point.x < frame.origin.x
             || point.y < frame.origin.y
             || point.x >= frame.origin.x + frame.size.width
@@ -231,13 +235,14 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
         {
             continue;
         }
-        if crate::accessibility::decimal(get(info, "kCGWindowAlpha"))
+        if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
             .is_some_and(|alpha| alpha <= 0.)
             || !crate::focus::in_visible_space(crate::spaces::window_space(id), &visible_spaces)
         {
             continue;
         }
-        let Some(pid) = number(get(info, "kCGWindowOwnerPID")).map(|pid| pid as i32) else {
+        let Some(pid) = number(get(info, ns_string!("kCGWindowOwnerPID"))).map(|pid| pid as i32)
+        else {
             continue;
         };
         if pid == std::process::id() as i32 {
@@ -274,7 +279,7 @@ pub fn corner_radius(id: u32) -> f64 {
             return None;
         }
         let values = Owned::new(radii(iterator.0))?;
-        let n = number(*array(values.0).first()?)?;
+        let n = number(array(values.0).next()?)?;
         (0..=80).contains(&n).then_some(n as f64)
     };
     read().unwrap_or(10.)
@@ -383,14 +388,15 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
         .map(|(_, space)| space)
         .collect();
     for info in array(list.0) {
-        let Some(id) = number(get(info, "kCGWindowNumber")).map(|id| id as u32) else {
+        let Some(id) = number(get(info, ns_string!("kCGWindowNumber"))).map(|id| id as u32) else {
             continue;
         };
         if id == border {
             continue;
         }
         if id != target
-            && !number(get(info, "kCGWindowLayer")).is_some_and(|layer| (0..=3).contains(&layer))
+            && !number(get(info, ns_string!("kCGWindowLayer")))
+                .is_some_and(|layer| (0..=3).contains(&layer))
         {
             continue;
         }
@@ -399,21 +405,25 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
         {
             continue;
         }
-        if crate::accessibility::decimal(get(info, "kCGWindowAlpha"))
+        if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
             .is_some_and(|alpha| alpha <= 0.)
         {
             continue;
         }
         let mut frame = NSRect::ZERO;
         if !unsafe {
-            CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+            CGRectMakeWithDictionaryRepresentation(
+                get(info, ns_string!("kCGWindowBounds")),
+                &mut frame,
+            )
         } {
             continue;
         }
         if id == target {
             return Some(crate::border::visible_regions(frame, &occluders));
         }
-        if number(get(info, "kCGWindowLayer")).is_some_and(|layer| (0..=3).contains(&layer))
+        if number(get(info, ns_string!("kCGWindowLayer")))
+            .is_some_and(|layer| (0..=3).contains(&layer))
             && frame.size.width > 0.
             && frame.size.height > 0.
         {
@@ -438,18 +448,20 @@ pub fn try_tile_windows() -> Option<Vec<(i32, u32, NSRect)>> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
     Some(
         array(list.0)
-            .into_iter()
             .filter_map(|info| {
-                let pid = number(get(info, "kCGWindowOwnerPID"))? as i32;
+                let pid = number(get(info, ns_string!("kCGWindowOwnerPID")))? as i32;
                 if pid == std::process::id() as i32
-                    || number(get(info, "kCGWindowLayer")) != Some(0)
+                    || number(get(info, ns_string!("kCGWindowLayer"))) != Some(0)
                 {
                     return None;
                 }
-                let id = number(get(info, "kCGWindowNumber"))? as u32;
+                let id = number(get(info, ns_string!("kCGWindowNumber")))? as u32;
                 let mut frame = NSRect::ZERO;
                 (unsafe {
-                    CGRectMakeWithDictionaryRepresentation(get(info, "kCGWindowBounds"), &mut frame)
+                    CGRectMakeWithDictionaryRepresentation(
+                        get(info, ns_string!("kCGWindowBounds")),
+                        &mut frame,
+                    )
                 } && valid(frame))
                 .then_some((pid, id, frame))
             })
@@ -463,11 +475,10 @@ pub fn all_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(16, 0) })?;
     Some(
         array(list.0)
-            .into_iter()
             .filter_map(|info| {
                 Some((
-                    number(get(info, "kCGWindowOwnerPID"))? as i32,
-                    number(get(info, "kCGWindowNumber"))? as u32,
+                    number(get(info, ns_string!("kCGWindowOwnerPID")))? as i32,
+                    number(get(info, ns_string!("kCGWindowNumber")))? as u32,
                 ))
             })
             .collect(),

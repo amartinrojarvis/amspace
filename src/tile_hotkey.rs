@@ -1,4 +1,5 @@
 //! Carbon reserves the shortcut, so it is not also delivered to the focused app.
+use objc2_foundation::ns_string;
 use std::{ffi::c_void, ptr};
 #[repr(C)]
 struct HotKeyId {
@@ -130,9 +131,8 @@ fn system_shortcuts() -> Option<std::collections::HashSet<(u32, u32)>> {
     let list = Owned::new(raw)?;
     Some(
         array(list.0)
-            .into_iter()
             .filter_map(|entry| {
-                let enabled = get(entry, "kHISymbolicHotKeyEnabled");
+                let enabled = get(entry, ns_string!("kHISymbolicHotKeyEnabled"));
                 if enabled.is_null() {
                     return None;
                 }
@@ -142,8 +142,8 @@ fn system_shortcuts() -> Option<std::collections::HashSet<(u32, u32)>> {
                     return None;
                 }
                 Some((
-                    number(get(entry, "kHISymbolicHotKeyCode"))? as u32,
-                    number(get(entry, "kHISymbolicHotKeyModifiers"))? as u32,
+                    number(get(entry, ns_string!("kHISymbolicHotKeyCode")))? as u32,
+                    number(get(entry, ns_string!("kHISymbolicHotKeyModifiers")))? as u32,
                 ))
             })
             .collect(),

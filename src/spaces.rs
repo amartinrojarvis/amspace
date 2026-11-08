@@ -3,7 +3,7 @@ use crate::accessibility::{Cf, Owned, array, equals_text, get, number};
 use crate::model::indicator;
 use crate::native::Obj;
 use objc2::{class, msg_send};
-use objc2_foundation::NSString;
+use objc2_foundation::{NSString, ns_string};
 use std::{
     ffi::{CStr, c_void},
     sync::OnceLock,
@@ -31,17 +31,19 @@ pub fn destination(id: u64) -> Option<Destination> {
     let api = api()?;
     let displays = Owned::new(unsafe { (api.displays)((api.connection)()) })?;
     for display in array(displays.0) {
-        let spaces = array(get(display, "Spaces"));
+        let spaces = array(get(display, ns_string!("Spaces")));
         let ids: Vec<_> = spaces
-            .iter()
-            .map(|s| number(get(*s, "ManagedSpaceID")).map(|id| id as u64))
+            .map(|s| number(get(s, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
             .collect::<Option<_>>()?;
         if let Some(position) = position_in_display(&ids, id) {
             return Some(Destination {
-                display: display_number(get(display, "Display Identifier"))?,
+                display: display_number(get(display, ns_string!("Display Identifier")))?,
                 position,
                 count: ids.len(),
-                current: number(get(get(display, "Current Space"), "ManagedSpaceID"))? as u64,
+                current: number(get(
+                    get(display, ns_string!("Current Space")),
+                    ns_string!("ManagedSpaceID"),
+                ))? as u64,
             });
         }
     }
@@ -51,9 +53,8 @@ pub fn neighbor(id: u64, right: bool) -> Option<u64> {
     let api = api()?;
     let displays = Owned::new(unsafe { (api.displays)((api.connection)()) })?;
     for display in array(displays.0) {
-        let ids: Vec<_> = array(get(display, "Spaces"))
-            .into_iter()
-            .map(|s| number(get(s, "ManagedSpaceID")).map(|n| n as u64))
+        let ids: Vec<_> = array(get(display, ns_string!("Spaces")))
+            .map(|s| number(get(s, ns_string!("ManagedSpaceID"))).map(|n| n as u64))
             .collect::<Option<_>>()?;
         if let Some(position) = position_in_display(&ids, id) {
             return ids
@@ -168,25 +169,28 @@ fn read() -> Option<Snapshot> {
         (Owned::new((api.displays)(cid))?, (api.active)(cid))
     };
     for display in array(displays.0) {
-        let current = number(get(get(display, "Current Space"), "ManagedSpaceID"))? as u64;
+        let current = number(get(
+            get(display, ns_string!("Current Space")),
+            ns_string!("ManagedSpaceID"),
+        ))? as u64;
         if current != active {
             continue;
         }
-        let spaces = array(get(display, "Spaces"));
+        let spaces = array(get(display, ns_string!("Spaces")));
         let desktops: Vec<_> = spaces
-            .iter()
-            .copied()
-            .filter(|s| number(get(*s, "type")) == Some(0))
+            .filter(|s| number(get(*s, ns_string!("type"))) == Some(0))
             .collect();
         if let Some(i) = desktops
             .iter()
-            .position(|s| number(get(*s, "ManagedSpaceID")) == Some(active as i64))
+            .position(|s| number(get(*s, ns_string!("ManagedSpaceID"))) == Some(active as i64))
         {
             return Some(Snapshot {
                 title: indicator(i + 1, desktops.len()),
                 desktops: desktops
                     .iter()
-                    .filter_map(|s| number(get(*s, "ManagedSpaceID")).map(|id| id as u64))
+                    .filter_map(|s| {
+                        number(get(*s, ns_string!("ManagedSpaceID"))).map(|id| id as u64)
+                    })
                     .collect(),
                 active: Some(i),
                 detail: format!(
@@ -200,7 +204,7 @@ fn read() -> Option<Snapshot> {
             title: "▣".into(),
             desktops: desktops
                 .iter()
-                .filter_map(|s| number(get(*s, "ManagedSpaceID")).map(|id| id as u64))
+                .filter_map(|s| number(get(*s, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
                 .collect(),
             active: None,
             detail: format!("Pantalla completa · {} escritorios", desktops.len()),
@@ -234,11 +238,11 @@ pub fn window_space(id: u32) -> Option<u64> {
             7,
             objc2::rc::Retained::as_ptr(&ids).cast(),
         ))?;
-        let values = array(values.0);
+        let mut values = array(values.0);
         if values.len() != 1 {
             return None;
         }
-        crate::accessibility::number(values[0]).map(|n| n as u64)
+        crate::accessibility::number(values.next()?).map(|n| n as u64)
     }
 }
 /// Each display's currently visible, non-fullscreen Space.
@@ -249,14 +253,14 @@ pub fn visible_desktops() -> Vec<(u32, u64)> {
     };
     let mut visible = Vec::new();
     for display in array(displays.0) {
-        let current = get(display, "Current Space");
-        if number(get(current, "type")) != Some(0) {
+        let current = get(display, ns_string!("Current Space"));
+        if number(get(current, ns_string!("type"))) != Some(0) {
             continue;
         }
-        let Some(space) = number(get(current, "ManagedSpaceID")) else {
+        let Some(space) = number(get(current, ns_string!("ManagedSpaceID"))) else {
             continue;
         };
-        let identifier = get(display, "Display Identifier");
+        let identifier = get(display, ns_string!("Display Identifier"));
         if equals_text(identifier, "Main") {
             // With separate Spaces disabled, SkyLight describes one shared Space.
             // Keep an independent tiling area for every connected physical screen.

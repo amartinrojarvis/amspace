@@ -909,21 +909,25 @@ impl Manager {
             0.08
         }
     }
-    pub fn tick(&mut self, defaults: Obj) {
+    /// False tells the UI to stop its timer after permission is revoked.
+    pub fn tick(&mut self, defaults: Obj) -> bool {
+        if !ax::trusted() {
+            self.cancel_drag();
+            return false;
+        }
         self.tick_mode(defaults, true);
+        true
     }
     pub fn refresh_for_picker(&mut self, defaults: Obj) {
         self.cancel_drag();
         self.invalidate();
-        self.tick_mode(defaults, false);
+        if ax::trusted() {
+            self.tick_mode(defaults, false);
+        }
     }
     fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
         let resuming_space = self.space_quiet_until.is_some();
         if self.waiting_for_space(Instant::now()) {
-            return;
-        }
-        if !ax::trusted() {
-            self.cancel_drag();
             return;
         }
         if self
@@ -1007,12 +1011,16 @@ impl Manager {
             self.cancel_drag();
             return;
         };
-        let pointer_workspace = pointer_display().and_then(|display| {
-            active
-                .iter()
-                .find(|(key, _)| key.0 == display)
-                .map(|(key, _)| *key)
-        });
+        // Display hit-testing matters only while capturing/releasing a gesture.
+        let pointer_workspace = (down || self.drag.is_some())
+            .then(pointer_display)
+            .flatten()
+            .and_then(|display| {
+                active
+                    .iter()
+                    .find(|(key, _)| key.0 == display)
+                    .map(|(key, _)| *key)
+            });
         self.handoffs.retain(|_, handoff| {
             handoff.expires > Instant::now()
                 && active.iter().any(|(key, _)| *key == handoff.destination)

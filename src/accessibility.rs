@@ -1,5 +1,5 @@
 //! Small, checked CoreFoundation/Accessibility boundary. Create/Copy results own +1.
-use objc2_foundation::{NSPoint, NSSize, NSString};
+use objc2_foundation::{NSPoint, NSSize, NSString, ns_string};
 use std::{ffi::c_void, ptr};
 pub type Cf = *const c_void;
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -70,11 +70,11 @@ impl Drop for Owned {
 fn cf(s: &NSString) -> Cf {
     (s as *const NSString).cast()
 }
-pub fn get(dict: Cf, key: &str) -> Cf {
+pub fn get(dict: Cf, key: &NSString) -> Cf {
     if dict.is_null() || unsafe { CFGetTypeID(dict) != CFDictionaryGetTypeID() } {
         return ptr::null();
     }
-    unsafe { CFDictionaryGetValue(dict, cf(&NSString::from_str(key))) }
+    unsafe { CFDictionaryGetValue(dict, cf(key)) }
 }
 pub fn number(value: Cf) -> Option<i64> {
     if value.is_null() || unsafe { CFGetTypeID(value) != CFNumberGetTypeID() } {
@@ -92,14 +92,33 @@ pub fn decimal(value: Cf) -> Option<f64> {
     let copied = unsafe { CFNumberGetValue(value, 13, (&mut value_out as *mut f64).cast()) };
     (copied && value_out.is_finite()).then_some(value_out)
 }
-pub fn array(value: Cf) -> Vec<Cf> {
-    if value.is_null() || unsafe { CFGetTypeID(value) != CFArrayGetTypeID() } {
-        return vec![];
+/// Retain the source while traversing it, without allocating a temporary Vec.
+#[derive(Clone)]
+pub struct Array {
+    owner: Option<Owned>,
+    indices: std::ops::Range<isize>,
+}
+impl Iterator for Array {
+    type Item = Cf;
+    fn next(&mut self) -> Option<Cf> {
+        let index = self.indices.next()?;
+        Some(unsafe { CFArrayGetValueAtIndex(self.owner.as_ref()?.0, index) })
     }
-    unsafe {
-        (0..CFArrayGetCount(value))
-            .map(|i| CFArrayGetValueAtIndex(value, i))
-            .collect()
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.indices.len();
+        (len, Some(len))
+    }
+}
+impl ExactSizeIterator for Array {}
+pub fn array(value: Cf) -> Array {
+    let valid = !value.is_null() && unsafe { CFGetTypeID(value) == CFArrayGetTypeID() };
+    Array {
+        owner: valid.then(|| Owned(unsafe { CFRetain(value) })),
+        indices: 0..if valid {
+            unsafe { CFArrayGetCount(value) }
+        } else {
+            0
+        },
     }
 }
 pub fn attr(element: Cf, key: &str) -> Option<Owned> {
@@ -141,19 +160,48 @@ pub fn application(pid: i32) -> Option<Owned> {
 }
 pub fn window_id(window: Cf) -> Option<u32> {
     type GetId = unsafe extern "C" fn(Cf, *mut u32) -> i32;
-    let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"_AXUIElementGetWindow".as_ptr()) };
-    if symbol.is_null() {
-        return None;
-    }
-    let get_id = unsafe { std::mem::transmute::<*mut c_void, GetId>(symbol) };
+    static GET_ID: std::sync::OnceLock<Option<GetId>> = std::sync::OnceLock::new();
+    let get_id = GET_ID
+        .get_or_init(|| {
+            let symbol =
+                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"_AXUIElementGetWindow".as_ptr()) };
+            (!symbol.is_null())
+                .then(|| unsafe { std::mem::transmute::<*mut c_void, GetId>(symbol) })
+        })
+        .as_ref()?;
     let mut id = 0;
     (unsafe { get_id(window, &mut id) } == 0 && id != 0).then_some(id)
 }
 pub fn focused_id(pid: i32) -> Option<u32> {
     window_id(attr(application(pid)?.0, "AXFocusedWindow")?.0)
 }
+fn protected_focus_role(role: Cf) -> bool {
+    ["AXDialog", "AXSystemDialog", "AXSheet", "AXSecureTextField"]
+        .iter()
+        .any(|name| equals_text(role, name))
+}
+/// Modal dialogs and sheets keep keyboard ownership even when the pointer rests
+/// on another app. Secure input is checked separately and needs no AX access.
+pub fn focus_is_protected(pid: i32) -> bool {
+    let Some(app) = application(pid) else {
+        return false;
+    };
+    let protected = |element| {
+        ["AXRole", "AXSubrole"]
+            .iter()
+            .any(|key| attr(element, key).is_some_and(|role| protected_focus_role(role.0)))
+    };
+    if attr(app.0, "AXFocusedUIElement").is_some_and(|element| protected(element.0)) {
+        return true;
+    }
+    attr(app.0, "AXFocusedWindow").is_some_and(|window| {
+        flag(window.0, "AXModal")
+            || protected(window.0)
+            || attr(window.0, "AXSheets").is_some_and(|sheets| array(sheets.0).next().is_some())
+    })
+}
 pub fn raise(window: Cf) -> bool {
-    unsafe { AXUIElementPerformAction(window, cf(&NSString::from_str("AXRaise"))) == 0 }
+    unsafe { AXUIElementPerformAction(window, cf(ns_string!("AXRaise"))) == 0 }
 }
 pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
@@ -166,13 +214,13 @@ pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
 }
 pub fn application_window_ids(pid: i32) -> Option<Vec<u32>> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
-    Some(array(windows.0).into_iter().filter_map(window_id).collect())
+    Some(array(windows.0).filter_map(window_id).collect())
 }
 /// The AXTabGroup element identifies the native tabbed window across selected
 /// NSWindow IDs. Retain that identity; tab buttons and titles are not stable.
 pub fn native_tab_group(window: Cf) -> Option<Owned> {
     let children = attr(window, "AXChildren")?;
-    array(children.0).into_iter().find_map(|child| {
+    array(children.0).find_map(|child| {
         attr(child, "AXRole")
             .is_some_and(|role| equals_text(role.0, "AXTabGroup"))
             .then(|| Owned::new(unsafe { CFRetain(child) }))
@@ -222,10 +270,10 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
     let hit = Owned::new(hit)?;
     let hit_window = attr(hit.0, "AXWindow").or_else(|| {
         let role = attr(hit.0, "AXRole")?;
-        unsafe { CFEqual(role.0, cf(&NSString::from_str("AXWindow"))) }.then_some(hit)
+        unsafe { CFEqual(role.0, cf(ns_string!("AXWindow"))) }.then_some(hit)
     })?;
     let role = attr(hit_window.0, "AXSubrole")?;
-    if !unsafe { CFEqual(role.0, cf(&NSString::from_str("AXStandardWindow"))) } {
+    if !unsafe { CFEqual(role.0, cf(ns_string!("AXStandardWindow"))) } {
         return None;
     }
     let mut hit_pid = 0;
@@ -242,7 +290,7 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
     }
     let window = window_for_id(owner, id)?;
     let role = attr(window.0, "AXSubrole")?;
-    if !unsafe { CFEqual(role.0, cf(&NSString::from_str("AXStandardWindow"))) } {
+    if !unsafe { CFEqual(role.0, cf(ns_string!("AXStandardWindow"))) } {
         return None;
     }
     let mut pid = 0;
@@ -257,14 +305,10 @@ pub fn focus(window: Cf, pid: i32) -> bool {
     };
     unsafe {
         // Raising a background window alone does not make its app active.
-        AXUIElementSetAttributeValue(
-            app.0,
-            cf(&NSString::from_str("AXFrontmost")),
-            kCFBooleanTrue,
-        );
-        AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXMain")), kCFBooleanTrue);
-        AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXFocused")), kCFBooleanTrue);
-        AXUIElementPerformAction(window, cf(&NSString::from_str("AXRaise"))) == 0
+        AXUIElementSetAttributeValue(app.0, cf(ns_string!("AXFrontmost")), kCFBooleanTrue);
+        AXUIElementSetAttributeValue(window, cf(ns_string!("AXMain")), kCFBooleanTrue);
+        AXUIElementSetAttributeValue(window, cf(ns_string!("AXFocused")), kCFBooleanTrue);
+        AXUIElementPerformAction(window, cf(ns_string!("AXRaise"))) == 0
     }
 }
 pub struct Observer {
@@ -392,7 +436,7 @@ impl GeometrySession {
             && unsafe {
                 AXUIElementSetAttributeValue(
                     app.0,
-                    cf(&NSString::from_str("AXEnhancedUserInterface")),
+                    cf(ns_string!("AXEnhancedUserInterface")),
                     kCFBooleanFalse,
                 )
             } == 0
@@ -409,7 +453,7 @@ impl Drop for GeometrySession {
             unsafe {
                 AXUIElementSetAttributeValue(
                     app.0,
-                    cf(&NSString::from_str("AXEnhancedUserInterface")),
+                    cf(ns_string!("AXEnhancedUserInterface")),
                     kCFBooleanTrue,
                 );
             }
@@ -453,11 +497,8 @@ pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
     unsafe {
         // Size first permits movement from a larger display to a smaller one.
         apply_frame(
-            || AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXSize")), s.0) == 0,
-            || {
-                AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXPosition")), p.0)
-                    == 0
-            },
+            || AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), s.0) == 0,
+            || AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), p.0) == 0,
         )
     }
 }
@@ -482,9 +523,8 @@ pub fn set_frame_step(
         else {
             return false;
         };
-        ok &= unsafe {
-            AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXSize")), value.0) == 0
-        };
+        ok &=
+            unsafe { AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), value.0) == 0 };
     }
     if position {
         let Some(value) =
@@ -493,8 +533,7 @@ pub fn set_frame_step(
             return false;
         };
         ok &= unsafe {
-            AXUIElementSetAttributeValue(window, cf(&NSString::from_str("AXPosition")), value.0)
-                == 0
+            AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), value.0) == 0
         };
     }
     ok
@@ -520,6 +559,69 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn array_traversal_retains_source_and_checks_types() {
+        use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let value = NSString::from_str("retained item");
+            let source: Retained<AnyObject> = msg_send![class!(NSArray), arrayWithObject:&*value];
+            let mut entries = array(Retained::as_ptr(&source).cast());
+            drop(source);
+            drop(value);
+            assert_eq!(entries.len(), 1);
+            assert!(equals_text(entries.next().unwrap(), "retained item"));
+            assert_eq!(entries.len(), 0);
+            assert_eq!(entries.next(), None);
+            assert_eq!(array(ptr::null()).len(), 0);
+            assert_eq!(array(cf(ns_string!("not an array"))).next(), None);
+        });
+    }
+    #[test]
+    fn dialogs_sheets_and_password_fields_protect_keyboard_focus() {
+        for role in ["AXDialog", "AXSystemDialog", "AXSheet", "AXSecureTextField"] {
+            assert!(protected_focus_role(cf(&NSString::from_str(role))));
+        }
+        for role in ["AXWindow", "AXStandardWindow", "AXTextField", "AXUnknown"] {
+            assert!(!protected_focus_role(cf(&NSString::from_str(role))));
+        }
+        assert!(!protected_focus_role(ptr::null()));
+    }
+    #[test]
+    #[ignore = "metadata microbenchmark; run with --release --ignored --nocapture"]
+    fn benchmark_window_metadata() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
+            let entry: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
+            let value: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithInt:42i32];
+            let keys = [
+                ns_string!("kCGWindowNumber"),
+                ns_string!("kCGWindowLayer"),
+                ns_string!("kCGWindowOwnerPID"),
+                ns_string!("kCGWindowAlpha"),
+            ];
+            for key in keys {
+                let _: () = msg_send![&entry, setObject:&*value, forKey:key];
+            }
+            let entries: Retained<AnyObject> = msg_send![class!(NSMutableArray), new];
+            for _ in 0..64 {
+                let _: () = msg_send![&entries, addObject:&*entry];
+            }
+            let start = std::time::Instant::now();
+            let mut sum = 0;
+            for _ in 0..10_000 {
+                for entry in array(std::hint::black_box(Retained::as_ptr(&entries).cast())) {
+                    for key in keys {
+                        sum += number(get(entry, key)).unwrap();
+                    }
+                }
+            }
+            assert_eq!(std::hint::black_box(sum), 64 * 10_000 * 4 * 42);
+            println!(
+                "metadata_ns_per_window={:.1}",
+                start.elapsed().as_nanos() as f64 / 640_000.
+            );
+        });
+    }
     #[test]
     fn unknown_or_missing_accessibility_role_does_not_hide_a_real_window() {
         for role in ["AXWindow", "AXUnknown", "AXDialog"] {

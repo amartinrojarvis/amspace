@@ -92,6 +92,8 @@ Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la
 - Spaces se consulta al cambiar de escritorio, aplicación o pantalla y al abrir ajustes.
 - El borde identifica la ventana por su ID de WindowServer. El movimiento se aplica directamente desde la notificación del compositor, sin redibujar ni esperar a Accesibilidad. El tamaño se actualiza en el siguiente turno del hilo principal, sin demora artificial; no hay un bucle de animación permanente.
 - El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX y de WindowServer después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
+- El foco bajo el cursor se pausa durante la entrada segura de macOS y respeta los campos de contraseña, diálogos modales y hojas de la aplicación activa, también al completar una activación diferida.
+- Los segmentos de la barra conservan los botones y acciones accesibles nativos, con dibujo directo de sus títulos para evitar que las instantáneas de AppKit provoquen repintados continuos. La lectura de metadatos reutiliza claves constantes y recorre las listas nativas sin copiarlas a vectores temporales.
 - Se suspende el foco y se oculta el borde al dormir la pantalla, suspender el equipo o desactivar la sesión.
 - Compilación optimizada con LTO, eliminación de símbolos y un único codegen unit.
 
@@ -115,6 +117,8 @@ macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spa
 ./scripts/bundle.sh --universal             # compila, empaqueta y verifica la firma
 dist/AMSpace.app/Contents/MacOS/amspace --diagnose
 python3 scripts/benchmark.py <PID> --seconds 20
+swift scripts/benchmark-status.swift --baseline # reproducción aislada, siete segundos
+swift scripts/benchmark-status.swift            # dibujo optimizado, siete segundos
 ```
 
 [Arquitectura](docs/ARCHITECTURE.md) · [Validación y pruebas manuales](docs/VALIDATION.md) · [Licencia MIT](LICENSE)

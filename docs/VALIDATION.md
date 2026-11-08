@@ -1,3 +1,22 @@
+## Preparación 0.6.10
+
+- Versión 0.6.10, build 19: 97 pruebas correctas; formato, Clippy y plist correctos. Compilación universal Apple Silicon/Intel y firma estricta verificadas.
+- ZIP y catálogo Sparkle generados mediante `scripts/prepare-release.py`, firmados con la clave del Llavero y verificados. Incluye la revisión de rendimiento y protección del foco documentada a continuación, con su alcance y pruebas de uso pendientes.
+- Sin instalar localmente ni presentar como completada la prueba de actualización desde la app anterior.
+
+## Revisión local de rendimiento y protección del foco · 2026-11-08
+
+- Compilación de desarrollo sobre 0.6.9, sin publicar ni sustituir la app instalada. Paquete universal en `dist/AMSpace.app`; firma ad hoc estricta verificada. Se conservan los intervalos del foco, animaciones y reconciliación de Spaces.
+- Una muestra de tres segundos de la instancia instalada sitúa gran parte del trabajo del hilo principal en `NSStatusItem._updateReplicants`, capturas de capas y dibujo de `NSButtonCell`. La reproducción aislada con cuatro segmentos confirma un bucle de redibujado. Se conserva `NSButton`, sus acciones AX y el hit-testing existente; `drawRect:` dibuja directamente el título atribuido centrado, sin pasar por la celda.
+- `scripts/benchmark-status.swift` compara ambos caminos en una aplicación separada, sin activar ni mover ventanas. Tras un segundo de calentamiento, la comparación final consume **42,02 % → 0,040 % de un núcleo** durante unos seis segundos por variante. La prueba exploratoria anterior dio 48,51 % → 0,021 %. Son medidas locales del reproductor AppKit, **no del consumo total de AMSpace ni una garantía en otras versiones de macOS**.
+- Claves `NSString` constantes en diccionarios de WindowServer/Spaces y escrituras AX; recorrido de CFArray sin un `Vec` temporal, reteniendo su fuente; resolución de `_AXUIElementGetWindow` una sola vez. Microbenchmark de 640 000 ventanas sintéticas con cuatro atributos: **845,9 ns/ventana antes, 189,1–229,8 ns después** (73–78 % menos tiempo). No mide IPC AX ni latencia de interacción completa. Repetible con `cargo test --locked --release benchmark_window_metadata -- --ignored --nocapture`.
+- El temporizador de tiling consulta Accesibilidad una vez por ciclo en lugar de dos y deja de enumerar pantallas para localizar el cursor mientras no hay gesto. La revocación del permiso sigue deteniendo el temporizador.
+- Icono ICNS: **992 579 → 634 839 bytes**, sin pérdidas. Comparación de todas sus entradas: mismos píxeles descomprimidos, metadatos PNG y resoluciones; CRC correctos. `iconutil` extrae el resultado correctamente y una segunda optimización es idempotente. La regeneración ejecuta `scripts/optimize-icon.py`.
+- Bundle universal, suma de archivos regulares sin duplicar enlaces: **5 097 014 → 4 739 354 bytes**, una reducción del **7,0 %**. El ejecutable universal pasa de 1 373 632 a 1 373 712 bytes; el ahorro de tamaño procede del recurso, no de retirar arquitecturas ni el actualizador.
+- Incidente de foco comunicado durante la revisión: los mensajes de autenticación pierden el teclado. El foco bajo el cursor consulta la entrada segura global de Carbon y respeta `AXSecureTextField`, `AXModal`, diálogos y hojas de la aplicación activa. Se comprueba también al completar o reintentar una activación diferida y antes de enviar activación/desactivación nativa. No se consulta el contenido del campo.
+- `scripts/check.sh`: **97 pruebas correctas**, formato, Clippy y plist correctos; dos pruebas ignoradas por defecto (diagnóstico interactivo y microbenchmark), este último ejecutado por separado. Nuevas regresiones de tipos/vida del CFArray y roles protegidos. Compilación Apple Silicon e Intel y firma del bundle verificadas.
+- Pendiente: prueba de uso de un diálogo real de autenticación, inspección visual de números/iconos y acciones AX en la app completa, y medición antes/después de CPU/RSS y latencia de la app con idéntica carga. No se presenta el reproductor aislado ni las pruebas de roles como validación de esos escenarios completos.
+
 ## Validación 0.6.9: pestañas nativas
 
 - Publicada [v0.6.9](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.9) sobre 7d5aba55df4915f08da2cf5cf35b1fe8f933d29f. [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42391615482). ZIP descargado sin autenticación idéntico al paquete firmado.

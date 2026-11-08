@@ -9,7 +9,7 @@ use objc2::{
     runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
     sel,
 };
-use objc2_foundation::{NSPoint, NSRect, NSString};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use std::{
     cell::RefCell,
     ptr,
@@ -786,6 +786,7 @@ impl App {
         if self.layout_picker.is_some()
             || self.switching.is_some()
             || Instant::now() < self.hover_resume
+            || focus::secure_input()
         {
             return;
         }
@@ -830,6 +831,9 @@ impl App {
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: Obj = msg_send![ws, frontmostApplication];
             let front_pid: i32 = msg_send![front, processIdentifier];
+            if ax::focus_is_protected(front_pid) || focus::secure_input() {
+                return;
+            }
             let Some(id) = ax::window_id(w.0) else {
                 return;
             };
@@ -883,6 +887,8 @@ impl App {
                 || point != pending.point
                 || buttons != 0
                 || flags & (1usize << 19) != 0
+                || focus::secure_input()
+                || ax::focus_is_protected(front_pid)
             {
                 // Cancellation cannot activate or reorder the previous window.
                 return;
@@ -2498,11 +2504,31 @@ fn desktop_button_class() -> &'static AnyClass {
             sel!(hitTest:),
             desktop_hit_test as extern "C-unwind" fn(Obj, Sel, NSPoint) -> Obj,
         );
+        // NSButtonCell's modern appearance invalidates itself while rendering
+        // a status-item snapshot, scheduling another snapshot indefinitely.
+        // Keep the native button's AX actions, but draw the attributed title
+        // directly: these segments have no bezel, hover or pressed state.
+        builder.add_method(
+            sel!(drawRect:),
+            desktop_draw as extern "C-unwind" fn(Obj, Sel, NSRect),
+        );
         builder.register()
     }
 }
 extern "C-unwind" fn desktop_hit_test(_: Obj, _: Sel, _: NSPoint) -> Obj {
     ptr::null_mut()
+}
+extern "C-unwind" fn desktop_draw(button: Obj, _: Sel, _: NSRect) {
+    unsafe {
+        let title: Obj = msg_send![button, attributedTitle];
+        let size: NSSize = msg_send![title, size];
+        let bounds: NSRect = msg_send![button, bounds];
+        let origin = NSPoint::new(
+            bounds.origin.x + (bounds.size.width - size.width) / 2.,
+            bounds.origin.y + (bounds.size.height - size.height) / 2.,
+        );
+        let _: () = msg_send![title, drawAtPoint:origin];
+    }
 }
 extern "C-unwind" fn status_click(target: Obj, _: Sel, sender: Obj) {
     unsafe {
@@ -2726,10 +2752,6 @@ pub fn toggle_tile_float() {
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
-            if !ax::trusted() {
-                a.configure_tiling();
-                return;
-            }
             if a.layout_picker.is_some() {
                 return;
             }
@@ -2738,7 +2760,10 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
                 a.update_tile_timer();
                 return;
             }
-            a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj);
+            if !a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj) {
+                a.configure_tiling();
+                return;
+            }
             a.update_tile_timer();
             if let Some(error) = a.tile_manager.last_error.take() {
                 a.feedback(&error);

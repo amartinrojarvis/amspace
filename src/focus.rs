@@ -3,6 +3,15 @@
 //! No event tap, injected code, synthetic click, or SIP change is needed.
 use std::{ffi::c_void, sync::OnceLock};
 
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn IsSecureEventInputEnabled() -> u8;
+}
+/// Main thread only, as required by Carbon. Never compete with password entry.
+pub fn secure_input() -> bool {
+    unsafe { IsSecureEventInputEnabled() != 0 }
+}
+
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 struct Process {
@@ -111,9 +120,15 @@ fn activation(process: &Process, window: u32, active: bool) -> bool {
 /// Deactivate the previous sibling before a delayed activation. AppKit needs a
 /// separate run-loop turn (40 ms for some apps) to process the two transitions.
 pub fn deactivate(pid: i32, previous: u32) -> bool {
+    if secure_input() {
+        return false;
+    }
     process(pid).is_some_and(|p| activation(&p, previous, false))
 }
 pub fn activate(pid: i32, window: u32, sibling: bool) -> bool {
+    if secure_input() {
+        return false;
+    }
     let (Some(api), Some(process)) = (api(), process(pid)) else {
         return false;
     };
