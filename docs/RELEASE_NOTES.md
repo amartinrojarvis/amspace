@@ -1,11 +1,11 @@
-AMSpace 0.6.13 — intercambios entre filas y previsualización opcional.
+AMSpace 0.6.14 — previsualización estable y arrastre más ligero.
 
-- Corrige el bloqueo al intercambiar ventanas con una fila central más pequeña en División en 3. Los huecos conservan sus tamaños cuando las ventanas caben; si un mínimo exige más espacio, se ajustan las divisiones compartidas en lugar de rechazar un intercambio viable.
-- Aplica el mismo criterio a las ocho plantillas, manteniendo su estructura, la rejilla y el centrado de las principales. Los destinos que realmente no caben siguen rechazándose sin modificar la distribución.
-- Corrige errores de redondeo al ajustar mínimos en Espiral y vuelve a ajustar los laterales tras centrar una plantilla con ventanas de mínimos distintos.
-- Añade «Previsualizar al redimensionar» en Ajustes → Mosaico, desactivado por defecto. Sin activarlo no se muestra la plantilla azul sobre las ventanas al cambiar su tamaño. El indicador de destino al mover ventanas se conserva.
-- Con la previsualización desactivada, evita recalcular la distribución durante cada muestra del redimensionamiento nativo.
+- Corrige el parpadeo del recuadro azul al mover ventanas con la previsualización de redimensionamiento desactivada. Un único recorrido controla su visibilidad; el redimensionamiento ya no oculta el indicador del arrastre.
+- Evita animaciones implícitas y operaciones repetidas de mostrar/ocultar los paneles. Una breve tolerancia al pasar por separaciones evita destellos; al soltar se valida siempre el destino actual.
+- Reutiliza los huecos y las propuestas mientras el destino no cambia, en lugar de recalcular varias veces la misma distribución. La caché es limitada y se descarta cuando cambia el contexto o termina el gesto.
+- Evita consultar por Accesibilidad la ventana enfocada al iniciar el arrastre. Tras identificar el gesto, deja de consultar su geometría nativa en cada muestra del movimiento.
+- Conserva la previsualización de redimensionamiento opcional y apagada por defecto, las proporciones ajustadas y las verificaciones al soltar.
 
-127 pruebas automáticas correctas. Incluyen las seis direcciones de intercambio de tres filas, las seis ordenaciones y sus transiciones, y 6.672 parejas de intercambio en las ocho plantillas, ambas orientaciones y varias rejillas con mínimos distintos por ventana.
+131 pruebas automáticas correctas. Se comprueba la invalidación de la caché por cambios de plantilla, orden, tamaños, rejilla, mínimos, pantalla y escritorio. Incluye las matrices de intercambios y geometría de las versiones anteriores.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

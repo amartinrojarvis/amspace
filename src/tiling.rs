@@ -226,7 +226,7 @@ fn split(r: NSRect, vertical: bool, ratio: f64, gap: f64) -> (NSRect, NSRect) {
         )
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum Node {
     Empty,
     Leaf(u32),
@@ -573,7 +573,7 @@ impl Node {
         }
     }
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Desktop {
     pub layout: Layout,
     pub order: Vec<u32>,

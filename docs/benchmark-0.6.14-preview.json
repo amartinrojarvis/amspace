@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-08",
+  "scope": "CPU-only model of repeated drop preview calculation; not end-to-end app latency",
+  "baseline": "0.6.13 calculation path reproduced in the same optimized test binary",
+  "cases": "8 layouts, landscape/portrait, grid disabled/17x9, 7 windows, no learned minima, repeated destination",
+  "samples": 64000,
+  "baseline_ns_per_sample": 6867.0,
+  "cached_ns_per_sample": 74.2,
+  "model_speedup": 92.56,
+  "excludes": [
+    "AppKit rendering",
+    "WindowServer IPC",
+    "Accessibility IPC",
+    "physical input latency"
+  ]
+}

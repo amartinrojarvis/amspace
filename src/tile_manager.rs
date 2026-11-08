@@ -223,6 +223,88 @@ struct Drag {
     resize_gesture: bool,
     baseline: Desktop,
     area: NSRect,
+    previews: DropPreviewCache,
+}
+#[derive(Clone, Copy)]
+struct DropContext<'a> {
+    workspace: Workspace,
+    id: u32,
+    area: NSRect,
+    desktop: &'a Desktop,
+    minimums: &'a HashMap<u32, objc2_foundation::NSSize>,
+}
+#[derive(Clone)]
+struct PreviewContext {
+    workspace: Workspace,
+    id: u32,
+    area: NSRect,
+    desktop: Desktop,
+    minimums: HashMap<u32, objc2_foundation::NSSize>,
+    slots: Vec<(u32, NSRect)>,
+    proposals: Vec<(DropIntent, Option<NSRect>)>,
+}
+#[derive(Clone, Default)]
+struct DropPreviewCache {
+    contexts: Vec<PreviewContext>,
+}
+impl DropPreviewCache {
+    fn context(&mut self, input: DropContext<'_>) -> &mut PreviewContext {
+        let found = self.contexts.iter().position(|c| {
+            c.workspace == input.workspace
+                && c.id == input.id
+                && c.area == input.area
+                && &c.desktop == input.desktop
+                && &c.minimums == input.minimums
+        });
+        if let Some(index) = found {
+            let last = self.contexts.len() - 1;
+            self.contexts.swap(index, last);
+        } else {
+            self.contexts.retain(|c| c.workspace != input.workspace);
+            // A bounded cache covers the current and previous monitor during
+            // preview hysteresis. It never survives the native gesture.
+            if self.contexts.len() == 2 {
+                self.contexts.remove(0);
+            }
+            self.contexts.push(PreviewContext {
+                workspace: input.workspace,
+                id: input.id,
+                area: input.area,
+                desktop: input.desktop.clone(),
+                minimums: input.minimums.clone(),
+                slots: input.desktop.frames(input.area, 10.),
+                proposals: Vec::new(),
+            });
+        }
+        self.contexts.last_mut().unwrap()
+    }
+    fn slots(&mut self, input: DropContext<'_>) -> &[(u32, NSRect)] {
+        &self.context(input).slots
+    }
+    fn preview(&mut self, input: DropContext<'_>, intent: DropIntent) -> Option<NSRect> {
+        let context = self.context(input);
+        if let Some((_, frame)) = context.proposals.iter().find(|(key, _)| *key == intent) {
+            return *frame;
+        }
+        let frame = arrival_proposal(
+            input.desktop,
+            input.id,
+            Some(intent),
+            input.area,
+            Some(input.minimums),
+        )
+        .and_then(|d| {
+            d.frames(input.area, 10.)
+                .into_iter()
+                .find(|(id, _)| *id == input.id)
+                .map(|(_, r)| r)
+        });
+        if context.proposals.len() == 32 {
+            context.proposals.remove(0);
+        }
+        context.proposals.push((intent, frame));
+        frame
+    }
 }
 struct PendingDrop {
     id: u32,
@@ -277,7 +359,6 @@ impl Drag {
             self.candidate_since = now;
         }
         if released
-            || candidate.is_none()
             || self.drop.is_none()
             || now.duration_since(self.candidate_since) >= Duration::from_millis(70)
         {
@@ -355,6 +436,9 @@ fn resolve_gesture(
     workspace: Option<Workspace>,
     bounds: impl Fn(u32) -> Option<NSRect>,
 ) {
+    if selected.as_ref().is_some_and(|d| d.moved || d.resized) {
+        return;
+    }
     if let Some(drag) = selected.as_mut() {
         if let Some(frame) = bounds(drag.id) {
             drag.observe(frame, point, workspace);
@@ -718,7 +802,10 @@ impl Manager {
     fn hide_preview(&self) {
         for w in &self.preview {
             unsafe {
-                let _: () = msg_send![&**w,orderOut:ptr::null::<AnyObject>()];
+                let visible: bool = msg_send![&**w, isVisible];
+                if visible {
+                    let _: () = msg_send![&**w,orderOut:ptr::null::<AnyObject>()];
+                }
             }
         }
     }
@@ -735,6 +822,7 @@ impl Manager {
                 let _: () = msg_send![&p,setBackgroundColor:color(0.42,0.48,0.95,0.3)];
                 let _: () = msg_send![&p,setIgnoresMouseEvents:true];
                 let _: () = msg_send![&p,setHasShadow:false];
+                let _: () = msg_send![&p,setAnimationBehavior:2isize];
                 let _: () = msg_send![&p,setLevel:3isize];
                 let _: () = msg_send![&p,setCollectionBehavior:((1usize<<0)|(1<<3)|(1<<6)|(1<<8))];
                 self.preview.push(p);
@@ -763,7 +851,10 @@ impl Manager {
                         let _: () = msg_send![&**p, orderFrontRegardless];
                     }
                 } else {
-                    let _: () = msg_send![&**p,orderOut:ptr::null::<AnyObject>()];
+                    let visible: bool = msg_send![&**p, isVisible];
+                    if visible {
+                        let _: () = msg_send![&**p,orderOut:ptr::null::<AnyObject>()];
+                    }
                 }
             }
         }
@@ -1027,33 +1118,31 @@ impl Manager {
         point: NSPoint,
         pointer_workspace: Option<Workspace>,
         preview: bool,
-    ) {
+    ) -> Option<Vec<NSRect>> {
+        // Move and resize overlays have separate owners. In particular, the
+        // disabled resize preview must never hide an active move destination.
+        if !self.drag.as_ref().is_some_and(|drag| drag.resized) {
+            return None;
+        }
         if !final_sample && !preview {
             // No overlay means no per-frame layout/AX work during a native
             // resize. The gesture is still observed by the shared input path.
-            self.hide_preview();
-            return;
+            return None;
         }
-        let Some(drag) = &mut self.drag else {
-            return;
-        };
-        let Some(frame) = ws::bounds(drag.id) else {
-            return;
-        };
+        let drag = self.drag.as_mut()?;
+        let frame = ws::bounds(drag.id)?;
         if self.floating.contains(&drag.id) || spaces::window_space(drag.id) != Some(drag.space.1) {
-            return;
+            return None;
         }
-        let Some(layout) = drag.resize_proposal(frame, point, pointer_workspace) else {
-            return;
-        };
+        let layout = drag.resize_proposal(frame, point, pointer_workspace)?;
         if !final_sample {
-            let frames = layout
-                .frames(drag.area, 10.)
-                .into_iter()
-                .map(|(_, r)| r)
-                .collect::<Vec<_>>();
-            self.show_previews(&frames);
-            return;
+            return Some(
+                layout
+                    .frames(drag.area, 10.)
+                    .into_iter()
+                    .map(|(_, r)| r)
+                    .collect(),
+            );
         }
         let space = drag.space;
         for id in &layout.order {
@@ -1063,6 +1152,7 @@ impl Manager {
         // never mark an unverified AX request as an applied native frame.
         self.desktops.insert(space, layout);
         self.invalidate();
+        None
     }
     pub fn current_workspace(&self) -> Option<Workspace> {
         if self.space_quiet_until.is_some()
@@ -1375,34 +1465,17 @@ impl Manager {
         if down && !self.pressed {
             self.pending_drop = None;
             // A click inside content is not a drag until native window geometry moves.
-            let handle = unsafe {
-                let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
-                let app: Obj = msg_send![workspace, frontmostApplication];
-                let pid: i32 = msg_send![app, processIdentifier];
-                ax::focused_id(pid).and_then(|id| {
-                    let r = ws::bounds(id)?;
-                    let outer = rect(
-                        r.origin.x - 12.,
-                        r.origin.y - 12.,
-                        r.size.width + 24.,
-                        r.size.height + 24.,
-                    );
-                    let inner = rect(
-                        r.origin.x + 12.,
-                        r.origin.y + 12.,
-                        r.size.width - 24.,
-                        r.size.height - 24.,
-                    );
-                    (contains(outer, p) && !contains(inner, p)).then_some((pid, id))
-                })
-            };
             self.drag = ws::window_at(p)
-                .or(handle)
                 .or_else(|| {
                     // Native resize handles extend a few points outside AX bounds.
                     self.windows
                         .iter()
                         .filter_map(|(id, w)| {
+                            if !active.iter().any(|(key, _)| *key == w.space)
+                                || !self.can_tile_drag(*id, w.space)
+                            {
+                                return None;
+                            }
                             let r = ws::bounds(*id)?;
                             let dx = (r.origin.x - p.x)
                                 .max(0.)
@@ -1442,6 +1515,7 @@ impl Manager {
                             resize_gesture: edge <= 12.,
                             baseline: self.desktops.get(&w.space)?.clone(),
                             area: active.iter().find(|(s, _)| *s == w.space)?.1,
+                            previews: DropPreviewCache::default(),
                         })
                     })
                 });
@@ -1457,6 +1531,7 @@ impl Manager {
                     {
                         return None;
                     }
+                    let area = active.iter().find(|(key, _)| *key == w.space)?.1;
                     let frame = ws::bounds(*id)?;
                     if !contains(
                         rect(
@@ -1469,7 +1544,6 @@ impl Manager {
                     ) {
                         return None;
                     }
-                    let area = active.iter().find(|(key, _)| *key == w.space)?.1;
                     let edge = (p.x - frame.origin.x)
                         .abs()
                         .min((p.x - frame.origin.x - frame.size.width).abs())
@@ -1488,6 +1562,7 @@ impl Manager {
                         resize_gesture: edge <= 12.,
                         baseline: self.desktops.get(&w.space)?.clone(),
                         area,
+                        previews: DropPreviewCache::default(),
                     })
                 })
                 .collect();
@@ -1525,9 +1600,6 @@ impl Manager {
                     self.pressed = true; // Wait for release; never recapture halfway through a gesture.
                     return;
                 }
-                if let Some(frame) = ws::bounds(drag.id) {
-                    drag.observe(frame, p, pointer_workspace);
-                }
                 if drag.moved || drag.resized {
                     self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
                     self.transitions.clear();
@@ -1541,11 +1613,18 @@ impl Manager {
                         .iter()
                         .filter(|(key, _)| Some(*key) == pointer_workspace)
                         .find_map(|(key, area)| {
-                            let destination = self.desktops.get(key).cloned().unwrap_or_default();
-                            let frames = destination.frames(*area, 10.);
+                            let destination = self.desktops.get(key)?;
+                            let context = DropContext {
+                                workspace: *key,
+                                id: drag.id,
+                                area: *area,
+                                desktop: destination,
+                                minimums: &self.minimum_sizes,
+                            };
+                            let frames = drag.previews.slots(context);
                             let intent = drop_intent(
                                 *area,
-                                &frames,
+                                frames,
                                 drag.id,
                                 p,
                                 pref(defaults, "tile.simple") == 0,
@@ -1554,54 +1633,50 @@ impl Manager {
                                 (frames.is_empty() && contains(*area, p))
                                     .then_some(DropIntent::Screen(Zone::Left))
                             })?;
-                            arrival_proposal(
-                                &destination,
-                                drag.id,
-                                Some(intent),
-                                *area,
-                                Some(&self.minimum_sizes),
-                            )?;
+                            drag.previews.preview(context, intent)?;
                             Some((*key, intent))
                         });
                     drag.update_drop(candidate, Instant::now(), !down);
                     if let Some((key, intent)) = drag.drop {
                         if let Some((_, area)) = active.iter().find(|(k, _)| *k == key) {
-                            let d = self.desktops.get(&key).cloned().unwrap_or_default();
-                            preview = arrival_proposal(
-                                &d,
-                                drag.id,
-                                Some(intent),
-                                *area,
-                                Some(&self.minimum_sizes),
-                            )
-                            .and_then(|d| {
-                                d.frames(*area, 10.)
-                                    .into_iter()
-                                    .find(|(id, _)| *id == drag.id)
-                                    .map(|(_, r)| r)
-                            });
+                            if let Some(d) = self.desktops.get(&key) {
+                                preview = drag.previews.preview(
+                                    DropContext {
+                                        workspace: key,
+                                        id: drag.id,
+                                        area: *area,
+                                        desktop: d,
+                                        minimums: &self.minimum_sizes,
+                                    },
+                                    intent,
+                                );
+                            }
                         }
                     }
                 } else {
                     drag.drop = None;
                 }
             }
-            if let Some(r) = preview {
-                self.show_preview(r)
-            } else if !self.drag.as_ref().is_some_and(|drag| drag.resized) {
-                self.hide_preview()
-            }
             if down {
-                self.resize_drag(
+                let resize_preview = self.resize_drag(
                     false,
                     p,
                     pointer_workspace,
                     pref(defaults, "tile.resize.preview") != 0,
                 );
+                // One owner updates overlay visibility once per tick. Resize
+                // preference changes cannot hide a move destination afterwards.
+                if let Some(frames) = resize_preview {
+                    self.show_previews(&frames);
+                } else if let Some(r) = preview {
+                    self.show_preview(r);
+                } else {
+                    self.hide_preview();
+                }
                 return; // Only previews change while macOS owns the native gesture.
             }
         }
-        self.resize_drag(true, p, pointer_workspace, false);
+        let _ = self.resize_drag(true, p, pointer_workspace, false);
         self.gesture_candidates.clear();
         if let Some(drag) = self.drag.take() {
             if trace_tiling() {
@@ -3188,7 +3263,186 @@ mod tests {
             resize_gesture: true,
             baseline,
             area,
+            previews: DropPreviewCache::default(),
         }
+    }
+    #[test]
+    fn move_preview_is_not_owned_by_the_disabled_resize_path() {
+        let mut drag = test_drag();
+        drag.moved = true;
+        let point = drag.point;
+        let space = drag.space;
+        let mut manager = Manager {
+            drag: Some(drag),
+            ..Default::default()
+        };
+        // Neither option may enter native geometry or manipulate the move
+        // panel. The caller alone renders its destination once per sample.
+        for preview in [false, true] {
+            assert!(
+                manager
+                    .resize_drag(false, point, Some(space), preview)
+                    .is_none()
+            );
+            assert!(manager.drag.as_ref().unwrap().moved);
+        }
+    }
+    #[test]
+    fn a_classified_gesture_no_longer_queries_native_bounds_on_each_tick() {
+        let mut drag = test_drag();
+        drag.moved = true;
+        let space = drag.space;
+        let point = drag.point;
+        let mut selected = Some(drag);
+        for _ in 0..600 {
+            resolve_gesture(&mut selected, &mut [], point, Some(space), |_| {
+                panic!("redundant native query")
+            });
+        }
+        assert!(selected.unwrap().moved);
+    }
+    #[test]
+    fn a_brief_gap_does_not_flash_preview_but_release_always_clears_it() {
+        let mut drag = test_drag();
+        let now = Instant::now();
+        let target = Some((drag.space, DropIntent::Window(2, Zone::Center)));
+        drag.update_drop(target, now, false);
+        drag.update_drop(None, now + Duration::from_millis(10), false);
+        assert_eq!(drag.drop, target);
+        drag.update_drop(target, now + Duration::from_millis(20), false);
+        assert_eq!(drag.drop, target);
+        drag.update_drop(None, now + Duration::from_millis(30), false);
+        drag.update_drop(None, now + Duration::from_millis(100), false);
+        assert_eq!(drag.drop, None);
+        drag.update_drop(target, now + Duration::from_millis(110), false);
+        drag.update_drop(None, now + Duration::from_millis(111), true);
+        assert_eq!(drag.drop, None);
+    }
+    #[test]
+    fn preview_cache_matches_fresh_proposals_and_invalidates_all_geometry_inputs() {
+        let area = rect(-1080., -500., 1080., 1880.);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, Some((17, 9)));
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let mut minimums = HashMap::new();
+        let mut cache = DropPreviewCache::default();
+        let intent = DropIntent::Window(2, Zone::Center);
+        let check = |cache: &mut DropPreviewCache,
+                     desktop: &Desktop,
+                     minimums: &HashMap<_, _>,
+                     space,
+                     area,
+                     id| {
+            let context = DropContext {
+                workspace: space,
+                id,
+                area,
+                desktop,
+                minimums,
+            };
+            assert_eq!(cache.slots(context), desktop.frames(area, 10.));
+            let expected = arrival_proposal(desktop, id, Some(intent), area, Some(minimums))
+                .and_then(|d| {
+                    d.frames(area, 10.)
+                        .into_iter()
+                        .find(|(w, _)| *w == id)
+                        .map(|(_, r)| r)
+                });
+            for _ in 0..120 {
+                assert_eq!(cache.preview(context, intent), expected);
+            }
+            assert_eq!(cache.context(context).proposals.len(), 1);
+        };
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        let from = desktop.frames(area, 10.)[1].1;
+        desktop.resize(
+            2,
+            from,
+            rect(
+                from.origin.x,
+                from.origin.y,
+                from.size.width,
+                from.size.height + 90.,
+            ),
+            area,
+            10.,
+        );
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        desktop.grid = None;
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        desktop.reset_template(Layout::VerticalMaster, area);
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        minimums.insert(1, objc2_foundation::NSSize::new(5000., 5000.));
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        minimums.clear();
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 2);
+        let other = rect(20., 41., 1880., 1080.);
+        for space in [(1, 8), (2, 8), (3, 9), (1, 7)] {
+            check(&mut cache, &desktop, &minimums, space, other, 1);
+            assert!(cache.contexts.len() <= 2);
+        }
+        desktop.reconcile(&[1, 2, 3, 4], area, 10.);
+        check(&mut cache, &desktop, &minimums, (1, 7), area, 1);
+    }
+    #[test]
+    #[ignore = "CPU-only drag-path benchmark; run with --release --ignored --nocapture"]
+    fn benchmark_drop_previews() {
+        let iterations = 2000;
+        let mut before = Duration::ZERO;
+        let mut after = Duration::ZERO;
+        for layout in Layout::ALL {
+            for grid in [None, Some((17, 9))] {
+                for area in [
+                    rect(20., 41., 2560., 1440.),
+                    rect(-1440., -500., 1440., 2560.),
+                ] {
+                    let mut desktop = Desktop::configured(layout, grid);
+                    desktop.reconcile(&[1, 2, 3, 4, 5, 6, 7], area, 10.);
+                    let minimums = HashMap::new();
+                    let intent = DropIntent::Window(2, Zone::Center);
+                    let start = Instant::now();
+                    for _ in 0..iterations {
+                        let destination = std::hint::black_box(&desktop).clone();
+                        std::hint::black_box(destination.frames(area, 10.));
+                        std::hint::black_box(arrival_proposal(
+                            &destination,
+                            1,
+                            Some(intent),
+                            area,
+                            Some(&minimums),
+                        ));
+                        let destination = std::hint::black_box(&desktop).clone();
+                        std::hint::black_box(
+                            arrival_proposal(&destination, 1, Some(intent), area, Some(&minimums))
+                                .map(|d| d.frames(area, 10.)),
+                        );
+                    }
+                    before += start.elapsed();
+                    let mut cache = DropPreviewCache::default();
+                    let context = DropContext {
+                        workspace: (1, 7),
+                        id: 1,
+                        area,
+                        desktop: &desktop,
+                        minimums: &minimums,
+                    };
+                    let start = Instant::now();
+                    for _ in 0..iterations {
+                        std::hint::black_box(cache.slots(context));
+                        std::hint::black_box(cache.preview(context, intent));
+                        std::hint::black_box(cache.preview(context, intent));
+                    }
+                    after += start.elapsed();
+                }
+            }
+        }
+        let samples = iterations * Layout::ALL.len() * 4;
+        println!(
+            "preview_benchmark samples={samples} before_ns_per_sample={:.1} after_ns_per_sample={:.1} speedup={:.2}",
+            before.as_nanos() as f64 / samples as f64,
+            after.as_nanos() as f64 / samples as f64,
+            before.as_secs_f64() / after.as_secs_f64()
+        );
     }
     #[test]
     fn native_geometry_resolves_neighbor_handle_and_latches_actual_owner() {
