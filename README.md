@@ -23,7 +23,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.6.12](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.12/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.6.13](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.13/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 

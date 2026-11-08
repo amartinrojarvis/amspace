@@ -1,3 +1,9 @@
+## Publicación 0.6.13, build 29
+
+- Release estable autorizada por el usuario: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.13 sobre `a9598ebecfd368b1e1e7a667393e7bd8c63d4a05`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42491144405.
+- ZIP universal, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.13/AMSpace-universal.zip`, descargada por HTTPS público sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `65e7362218122dd07b25803a188833abb569e06bf915764913c631ad917c7008`; tamaño: 2409614 bytes.
+- ZIP y catálogo verificados con Sparkle antes de publicar. Se anuncia 0.6.13, build 29, mediante el catálogo firmado de la raíz. Las versiones anteriores conservan sus archivos y tags. No se atribuye una prueba física del Mac remoto ni una instalación por Sparkle a esta publicación.
+
 ## Preparación 0.6.13, build 29: filas y previsualización opcional
 
 - El usuario informa de ausencia de previsualización al intercambiar con la fila central en el monitor vertical. Regresión reproducida en el modelo: tres bandas de 740/380/740 puntos con mínimos 690/240/690; 1 → 2 no produce propuesta en 0.6.12 aunque las tres ventanas caben ajustando las divisiones. El rechazo preventivo por hueco impedía esos destinos. El nuevo recorrido conserva los huecos compatibles y permite resolver los mínimos sobre el árbol de la plantilla al intercambiar.
