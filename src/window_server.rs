@@ -40,6 +40,7 @@ struct Api {
     iterator: unsafe extern "C" fn(Cf) -> Cf,
     advance: unsafe extern "C" fn(Cf) -> bool,
     radii: Option<unsafe extern "C" fn(Cf) -> Cf>,
+    ordered: Option<unsafe extern "C" fn(i32, u32, *mut u8) -> i32>,
 }
 static API: OnceLock<Option<Api>> = OnceLock::new();
 static WATCHED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -105,6 +106,11 @@ fn api() -> Option<&'static Api> {
             ),
             radii: sym(c"SLSWindowIteratorGetCornerRadii")
                 .map(|p| std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Cf) -> Cf>(p)),
+            ordered: sym(c"SLSWindowIsOrderedIn").map(|p| {
+                std::mem::transmute::<*mut c_void, unsafe extern "C" fn(i32, u32, *mut u8) -> i32>(
+                    p,
+                )
+            }),
         })
     })
     .as_ref()
@@ -284,6 +290,14 @@ pub fn bounds(id: u32) -> Option<NSRect> {
     let mut frame = NSRect::ZERO;
     (unsafe { (api.bounds)((api.connection)(), id, &mut frame) } == 0 && valid(frame))
         .then_some(frame)
+}
+/// Ordered-in is distinct from onscreen: a window on another Space remains
+/// ordered-in, while an application's orderOut really withdraws its window.
+pub fn ordered_in(id: u32) -> Option<bool> {
+    let api = api()?;
+    let read = api.ordered?;
+    let mut ordered = 0u8;
+    (unsafe { read((api.connection)(), id, &mut ordered) } == 0).then_some(ordered != 0)
 }
 pub fn corner_radius(id: u32) -> f64 {
     let read = || unsafe {
@@ -514,6 +528,52 @@ pub fn all_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
             .collect(),
     )
 }
+pub struct TransitionWindow {
+    pub pid: i32,
+    pub id: u32,
+    pub layer: i64,
+    pub onscreen: bool,
+    pub frame: Option<NSRect>,
+}
+/// One coherent list includes windows still arriving from an inactive Space.
+/// Onscreen-only queries cannot establish complete destination membership.
+pub fn transition_windows() -> Option<Vec<TransitionWindow>> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(16, 0) })?;
+    Some(
+        array(list.0)
+            .filter_map(|info| {
+                let pid = number(get(info, ns_string!("kCGWindowOwnerPID")))? as i32;
+                let id = number(get(info, ns_string!("kCGWindowNumber")))? as u32;
+                let layer = number(get(info, ns_string!("kCGWindowLayer")))?;
+                // WindowServer omits this optional key for offscreen windows.
+                let onscreen = snapshot_onscreen(get(info, ns_string!("kCGWindowIsOnscreen")))?;
+                let mut frame = NSRect::ZERO;
+                let frame = (unsafe {
+                    CGRectMakeWithDictionaryRepresentation(
+                        get(info, ns_string!("kCGWindowBounds")),
+                        &mut frame,
+                    )
+                } && valid(frame))
+                .then_some(frame);
+                Some(TransitionWindow {
+                    pid,
+                    id,
+                    layer,
+                    onscreen,
+                    frame,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn snapshot_onscreen(value: Cf) -> Option<bool> {
+    if value.is_null() {
+        Some(false)
+    } else {
+        crate::accessibility::boolean(value)
+    }
+}
 
 fn presentation_window(
     owner: Cf,
@@ -618,6 +678,54 @@ pub fn visible_normal_window_ids() -> Option<std::collections::HashSet<(i32, u32
 #[cfg(test)]
 mod tests {
     use super::classify_event;
+    #[test]
+    fn offscreen_metadata_omits_boolean_and_malformed_values_are_rejected() {
+        use super::*;
+        objc2::rc::autoreleasepool(|_| unsafe {
+            assert_eq!(snapshot_onscreen(std::ptr::null()), Some(false));
+            for expected in [false, true] {
+                let value: Retained<AnyObject> =
+                    msg_send![class!(NSNumber), numberWithBool:expected];
+                assert_eq!(
+                    snapshot_onscreen(Retained::as_ptr(&value).cast()),
+                    Some(expected)
+                );
+            }
+            let value: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithInt:1_i32];
+            assert_eq!(snapshot_onscreen(Retained::as_ptr(&value).cast()), None);
+            assert_eq!(
+                snapshot_onscreen(ns_string!("true") as *const _ as Cf),
+                None
+            );
+        });
+    }
+    #[test]
+    #[ignore = "read-only transition metadata diagnostic; requires an interactive desktop"]
+    fn inspect_transition_snapshot() {
+        let rows = super::transition_windows().expect("WindowServer snapshot");
+        assert!(!rows.is_empty());
+        let normal: Vec<_> = rows
+            .iter()
+            .filter(|w| w.layer == 0 && w.frame.is_some())
+            .collect();
+        println!(
+            "transition_metadata total={} normal={} onscreen={} offscreen={}",
+            rows.len(),
+            normal.len(),
+            normal.iter().filter(|w| w.onscreen).count(),
+            normal.iter().filter(|w| !w.onscreen).count()
+        );
+        for w in normal {
+            println!(
+                "window pid={} id={} onscreen={} ordered={:?} space={:?}",
+                w.pid,
+                w.id,
+                w.onscreen,
+                super::ordered_in(w.id),
+                crate::spaces::window_space(w.id)
+            );
+        }
+    }
     #[test]
     fn native_windowmanager_desktop_overlay_is_distinct_from_dock_and_small_panels() {
         use super::*;

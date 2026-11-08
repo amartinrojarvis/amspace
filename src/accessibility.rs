@@ -262,9 +262,13 @@ pub fn native_tab_group(window: Cf) -> Option<Owned> {
     })
 }
 pub fn flag(element: Cf, name: &str) -> bool {
-    attr(element, name).is_some_and(|v| unsafe {
-        CFGetTypeID(v.0) == CFBooleanGetTypeID() && CFBooleanGetValue(v.0)
-    })
+    attr(element, name)
+        .and_then(|v| boolean(v.0))
+        .unwrap_or(false)
+}
+pub fn boolean(value: Cf) -> Option<bool> {
+    (!value.is_null() && unsafe { CFGetTypeID(value) == CFBooleanGetTypeID() })
+        .then(|| unsafe { CFBooleanGetValue(value) })
 }
 pub fn geometry(window: Cf) -> Option<(NSPoint, NSSize)> {
     if flag(window, "AXMinimized") || flag(window, "AXFullScreen") {

@@ -506,6 +506,49 @@ struct Transition {
     started: Option<Instant>,
     last: NSRect,
 }
+#[derive(Clone, PartialEq)]
+struct ReentrySample {
+    areas: Vec<(Workspace, NSRect)>,
+    windows: Vec<(i32, u32, u64, NSRect, Option<NSRect>)>,
+    absent: Vec<(i32, u32)>,
+}
+impl ReentrySample {
+    fn agrees(&self, other: &Self) -> bool {
+        self.areas == other.areas
+            && self.absent == other.absent
+            && self.windows.len() == other.windows.len()
+            && self.windows.iter().zip(&other.windows).all(|(a, b)| {
+                a.0 == b.0
+                    && a.1 == b.1
+                    && a.2 == b.2
+                    && near(a.3, b.3)
+                    && match (a.4, b.4) {
+                        (Some(a), Some(b)) => near(a, b),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            })
+    }
+}
+#[derive(Default)]
+struct SpaceReentry {
+    anchor: Option<(ReentrySample, Instant)>,
+}
+impl SpaceReentry {
+    fn observe(&mut self, sample: Option<ReentrySample>, now: Instant) -> bool {
+        let Some(sample) = sample else {
+            self.anchor = None;
+            return false;
+        };
+        if let Some((previous, since)) = &self.anchor {
+            if previous.agrees(&sample) {
+                return now.duration_since(*since) >= Duration::from_millis(160);
+            }
+        }
+        self.anchor = Some((sample, now));
+        false
+    }
+}
 impl Transition {
     fn sample(&mut self, now: Instant) -> (NSRect, bool) {
         // Preparing AX sessions for several apps can take time. Start the batch
@@ -572,6 +615,7 @@ pub struct Manager {
     dirty: bool,
     space_settle: Option<Instant>,
     space_quiet_until: Option<Instant>,
+    space_reentry: Option<SpaceReentry>,
     pub last_error: Option<String>,
 }
 impl Manager {
@@ -683,6 +727,7 @@ impl Manager {
         // Do not let a deferred write run before the next membership scan.
         let pressed = self.pressed;
         self.cancel_drag();
+        self.space_reentry = Some(SpaceReentry::default());
         self.pressed = pressed; // Never recapture a gesture already in progress.
         self.handoffs.clear();
         self.applied.clear();
@@ -698,6 +743,7 @@ impl Manager {
         self.space_changed_with_visible_at(now, &[]);
     }
     fn space_changed_with_visible_at(&mut self, now: Instant, visible: &[Workspace]) {
+        self.space_reentry = Some(SpaceReentry::default());
         self.cancel_inactive_placements(visible);
         if !self.pressed && self.pending_drop.is_none() {
             self.drag = None;
@@ -748,6 +794,180 @@ impl Manager {
     fn settling_space(&self) -> bool {
         self.space_settle
             .is_some_and(|until| Instant::now() < until)
+    }
+    fn reentry_sample(
+        &self,
+        defaults: Obj,
+        active: &[(Workspace, NSRect)],
+    ) -> Option<ReentrySample> {
+        let snapshot = ws::transition_windows()?;
+        let candidates: Vec<_> = snapshot
+            .iter()
+            .filter(|w| w.layer == 0 && w.onscreen && w.pid != std::process::id() as i32)
+            .filter_map(|w| Some((w.pid, w.id, w.frame?)))
+            .collect();
+        let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
+        let expected: Vec<_> = self
+            .desktops
+            .iter()
+            .filter(|(key, _)| active.iter().any(|(s, _)| s == *key))
+            .flat_map(|(_, d)| d.order.iter())
+            .filter_map(|id| self.windows.get(id).map(|w| (*id, w)))
+            .filter(|(id, _)| !self.floating.contains(id) && !self.inactive_tabs.contains(id))
+            .collect();
+        let all: HashSet<_> = snapshot.iter().map(|w| (w.pid, w.id)).collect();
+        let mut absent = Vec::new();
+        let expected_ids: HashSet<_> = expected.iter().map(|(id, w)| (w.pid, *id)).collect();
+        for (id, w) in expected {
+            if visible.contains(&(w.pid, id)) {
+                continue;
+            }
+            if snapshot
+                .iter()
+                .any(|entry| entry.pid == w.pid && entry.id == id && entry.layer != 0)
+            {
+                continue;
+            }
+            let ordered = ws::ordered_in(id);
+            if ordered == Some(false) {
+                continue;
+            }
+            let native = spaces::window_space(id);
+            if native.is_some_and(|native| native != w.space.1) {
+                continue;
+            }
+            // Switching an AppKit tab while inactive can replace the selected
+            // NSWindow ID. Its shared group, not a missing old ID, owns the slot.
+            if let Some(group) = self
+                .tab_groups
+                .get(&id)
+                .cloned()
+                .or_else(|| ax::native_tab_group(w.element.0))
+            {
+                let replaced = candidates.iter().any(|(pid, other, _)| {
+                    if *pid != w.pid
+                        || *other == id
+                        || spaces::window_space(*other) != Some(w.space.1)
+                    {
+                        return false;
+                    }
+                    let other_group = self.tab_groups.get(other).cloned().or_else(|| {
+                        let element = self
+                            .windows
+                            .get(other)
+                            .map(|w| w.element.clone())
+                            .or_else(|| ax::window_for_id(*pid, *other))?;
+                        ax::native_tab_group(element.0)
+                    });
+                    other_group.is_some_and(|other| unsafe { ax::CFEqual(group.0, other.0) })
+                });
+                if replaced {
+                    continue;
+                }
+            }
+            // Existing windows cannot vanish from the model merely because the
+            // compositor has not published them on screen yet. A genuine hide
+            // or minimization is distinct from that incomplete arrival.
+            let hidden = unsafe {
+                let app: Obj = msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:w.pid];
+                !app.is_null() && msg_send![app, isHidden]
+            };
+            if hidden || ax::flag(w.element.0, "AXMinimized") {
+                continue;
+            }
+            if ordered == Some(true) || ws::bounds(id).is_some() || all.contains(&(w.pid, id)) {
+                return None;
+            }
+            absent.push((w.pid, id));
+        }
+        let mut windows = Vec::new();
+        let mut floating_apps = HashMap::new();
+        // The first visit since launch has no cached desktop order. Ordered-in
+        // offscreen windows on the destination still count as arrivals; do not
+        // build an initial layout from just the first one macOS exposes.
+        for entry in snapshot.iter().filter(|w| {
+            w.layer == 0 && !w.onscreen && w.frame.is_some() && w.pid != std::process::id() as i32
+        }) {
+            if expected_ids.contains(&(entry.pid, entry.id))
+                || self.floating.contains(&entry.id)
+                || self.inactive_tabs.contains(&entry.id)
+                || *floating_apps
+                    .entry(entry.pid)
+                    .or_insert_with(|| crate::tile_rules::floats(defaults, entry.pid))
+                || ws::ordered_in(entry.id) != Some(true)
+            {
+                continue;
+            }
+            let Some(native) = spaces::window_space(entry.id) else {
+                continue;
+            };
+            if !active.iter().any(|(key, _)| key.1 == native) {
+                continue;
+            }
+            let hidden = unsafe {
+                let app: Obj = msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:entry.pid];
+                !app.is_null() && msg_send![app, isHidden]
+            };
+            if hidden {
+                continue;
+            }
+            let element = ax::window_for_id(entry.pid, entry.id)?;
+            if ax::tileable(element.0) {
+                return None;
+            }
+        }
+        for (pid, id, cg) in candidates {
+            if self.floating.contains(&id)
+                || *floating_apps
+                    .entry(pid)
+                    .or_insert_with(|| crate::tile_rules::floats(defaults, pid))
+            {
+                continue;
+            }
+            let native = match spaces::window_space(id) {
+                Some(native) => native,
+                None if expected_ids.contains(&(pid, id)) => return None,
+                None => continue,
+            };
+            if !active.iter().any(|(key, _)| key.1 == native) && !expected_ids.contains(&(pid, id))
+            {
+                continue;
+            }
+            let ax = if let Some(w) = self.windows.get(&id).filter(|w| w.pid == pid) {
+                // AX wrappers can expire while inactive. Use the same fresh-ID
+                // recovery as reconciliation instead of waiting on a dead one.
+                let (p, s) = ax::geometry(w.element.0).or_else(|| {
+                    let fresh = ax::window_for_id(pid, id)?;
+                    ax::tileable(fresh.0).then(|| ax::geometry(fresh.0))?
+                })?;
+                Some(NSRect::new(p, s))
+            } else {
+                None
+            };
+            windows.push((pid, id, native, cg, ax));
+        }
+        windows.sort_by_key(|w| (w.0, w.1));
+        absent.sort_unstable();
+        Some(ReentrySample {
+            areas: active.to_vec(),
+            windows,
+            absent,
+        })
+    }
+    fn observe_reentry(&mut self, sample: Option<ReentrySample>, now: Instant) -> bool {
+        let Some(reentry) = self.space_reentry.as_mut() else {
+            return true;
+        };
+        if !reentry.observe(sample, now) {
+            return false;
+        }
+        self.space_reentry = None;
+        // Old animation origins/retry deadlines predate the native transition.
+        // Rebuild any needed placements from the now-stable AX observation.
+        self.cancel_placements();
+        self.space_settle = Some(now + Duration::from_millis(600));
+        self.invalidate();
+        true
     }
     fn cancel_placements(&mut self) {
         // Cached destinations are not evidence that cancelled animations arrived.
@@ -1156,6 +1376,7 @@ impl Manager {
     }
     pub fn current_workspace(&self) -> Option<Workspace> {
         if self.space_quiet_until.is_some()
+            || self.space_reentry.is_some()
             || crate::desktop_mode::active()
             || self.presentation != crate::desktop_mode::Mode::Normal
         {
@@ -1190,7 +1411,10 @@ impl Manager {
         context: &PickerContext,
         layout: Layout,
     ) -> bool {
-        if self.space_quiet_until.is_some() || self.presentation_blocks_input() {
+        if self.space_quiet_until.is_some()
+            || self.space_reentry.is_some()
+            || self.presentation_blocks_input()
+        {
             return false;
         }
         // A picker is tied to one display/Space and one window set for its entire lifetime.
@@ -1332,9 +1556,10 @@ impl Manager {
         true
     }
     pub fn tick_interval(&self) -> f64 {
-        if self
-            .space_quiet_until
-            .is_some_and(|until| Instant::now() < until)
+        if self.space_reentry.is_some() && self.drag.is_none()
+            || self
+                .space_quiet_until
+                .is_some_and(|until| Instant::now() < until)
         {
             0.08
         } else if !self.transitions.is_empty()
@@ -1827,6 +2052,12 @@ impl Manager {
         if self.pending_drop.is_some() {
             return;
         }
+        if self.space_reentry.is_some() {
+            let sample = self.reentry_sample(defaults, &active);
+            if !self.observe_reentry(sample, Instant::now()) {
+                return;
+            }
+        }
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
         if place_windows {
             self.verify_placements(&active);
@@ -2082,6 +2313,8 @@ impl Manager {
                 all_ids
                     .as_ref()
                     .is_some_and(|ids| !ids.contains(&(w.pid, **id)))
+                    && ws::bounds(**id).is_none()
+                    && ws::ordered_in(**id) != Some(true)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -2414,6 +2647,260 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn reentry_observation(
+        key: Workspace,
+        area: NSRect,
+        frames: &[(u32, NSRect)],
+    ) -> ReentrySample {
+        ReentrySample {
+            areas: vec![(key, area)],
+            windows: frames
+                .iter()
+                .map(|(id, r)| (42, *id, key.1, *r, Some(*r)))
+                .collect(),
+            absent: Vec::new(),
+        }
+    }
+    #[test]
+    #[ignore = "read-only reentry diagnostic; requires a stable interactive desktop"]
+    fn inspect_destination_reentry_sample() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let defaults: Obj = msg_send![class!(NSUserDefaults), standardUserDefaults];
+            let active: Vec<_> = spaces::visible_desktops()
+                .into_iter()
+                .filter_map(|key| area(key.0).map(|r| (key, r)))
+                .collect();
+            assert!(!active.is_empty());
+            let mut manager = Manager::default();
+            let sample = manager
+                .reentry_sample(defaults, &active)
+                .expect("complete first-visit snapshot");
+            println!(
+                "first_visit windows={} absent={}",
+                sample.windows.len(),
+                sample.absent.len()
+            );
+            for (pid, id, native, cg, _) in sample.windows {
+                let Some(element) = ax::window_for_id(pid, id) else {
+                    continue;
+                };
+                if !ax::tileable(element.0) {
+                    continue;
+                }
+                let Some(key) = workspace_at_frame(native, cg, &active) else {
+                    continue;
+                };
+                let area = active.iter().find(|(k, _)| *k == key).unwrap().1;
+                manager.windows.insert(
+                    id,
+                    Managed {
+                        pid,
+                        space: key,
+                        original: cg,
+                        original_area: area,
+                        element,
+                    },
+                );
+                manager
+                    .desktops
+                    .entry(key)
+                    .or_insert_with(|| Desktop::configured(Layout::Spiral, None))
+                    .order
+                    .push(id);
+            }
+            let sample = manager
+                .reentry_sample(defaults, &active)
+                .expect("complete cached snapshot");
+            assert!(
+                sample
+                    .windows
+                    .iter()
+                    .filter(|w| manager.windows.contains_key(&w.1))
+                    .all(|w| w.4.is_some())
+            );
+            manager.space_reentry = Some(SpaceReentry::default());
+            assert!(!manager.observe_reentry(Some(sample), Instant::now()));
+            std::thread::sleep(Duration::from_millis(180));
+            let sample = manager
+                .reentry_sample(defaults, &active)
+                .expect("stable cached snapshot");
+            assert!(manager.observe_reentry(Some(sample), Instant::now()));
+            println!(
+                "cached reentry released without writing geometry; managed={}",
+                manager.windows.len()
+            );
+        });
+    }
+    #[test]
+    fn destination_reentry_never_reconciles_a_partial_arrival_after_the_old_deadline() {
+        for layout in Layout::ALL {
+            for area in [
+                rect(10., 41., 2560., 1440.),
+                rect(-1440., -500., 1440., 2560.),
+            ] {
+                for grid in [None, Some((17, 9))] {
+                    let key = (2, 8);
+                    let mut desktop = Desktop::configured(layout, grid);
+                    desktop.reconcile(&[1, 2, 3, 4, 5], area, 10.);
+                    let from = desktop.frames(area, 10.)[0].1;
+                    desktop.resize(
+                        1,
+                        from,
+                        rect(
+                            from.origin.x,
+                            from.origin.y,
+                            from.size.width - 30.,
+                            from.size.height - 20.,
+                        ),
+                        area,
+                        10.,
+                    );
+                    let frames = desktop.frames(area, 10.);
+                    let saved = desktop.save_distribution(area);
+                    // Model the old late snapshot: dropping a surviving slot
+                    // really does resize the other windows before it returns.
+                    let mut old = desktop.clone();
+                    old.reconcile(&[1, 2, 3, 4], area, 10.);
+                    assert_ne!(old.frames(area, 10.), frames);
+                    let mut manager = Manager::default();
+                    manager.desktops.insert(key, desktop);
+                    let now = Instant::now();
+                    manager.space_changed_with_visible_at(now, &[key]);
+                    assert!(!manager.waiting_for_space(now + Duration::from_secs(2)));
+                    // None is an incomplete native observation, not an empty
+                    // desktop. It must stay suspended beyond a fixed timeout.
+                    for delay in [2000, 2100, 3000] {
+                        assert!(!manager.observe_reentry(None, now + Duration::from_millis(delay)));
+                        assert_eq!(manager.desktops[&key].frames(area, 10.), frames);
+                        assert_eq!(manager.desktops[&key].save_distribution(area), saved);
+                    }
+                    let sample = reentry_observation(key, area, &frames);
+                    assert!(
+                        !manager.observe_reentry(
+                            Some(sample.clone()),
+                            now + Duration::from_millis(3100)
+                        )
+                    );
+                    assert!(
+                        !manager.observe_reentry(
+                            Some(sample.clone()),
+                            now + Duration::from_millis(3180)
+                        )
+                    );
+                    assert!(
+                        manager.observe_reentry(Some(sample), now + Duration::from_millis(3260))
+                    );
+                    assert_eq!(manager.desktops[&key].frames(area, 10.), frames);
+                    for (id, r) in &frames {
+                        assert!(!manager.needs_placement(*id, *r, Some(*r)));
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn changing_frames_membership_and_failed_reads_restart_reentry_stability() {
+        let now = Instant::now();
+        let area = rect(10., 41., 1660., 947.);
+        let key = (1, 7);
+        let sample = reentry_observation(
+            key,
+            area,
+            &[
+                (1, rect(10., 41., 800., 947.)),
+                (2, rect(820., 41., 850., 947.)),
+            ],
+        );
+        let mut barrier = SpaceReentry::default();
+        assert!(!barrier.observe(Some(sample.clone()), now));
+        let mut resizing = sample.clone();
+        resizing.windows[0].4.as_mut().unwrap().size.width += 80.;
+        assert!(!barrier.observe(Some(resizing), now + Duration::from_millis(80)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(160)));
+        assert!(!barrier.observe(None, now + Duration::from_millis(240)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(400)));
+        let mut closing = sample.clone();
+        closing.windows.pop();
+        closing.absent.push((42, 2));
+        assert!(!barrier.observe(Some(closing.clone()), now + Duration::from_millis(480)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(560)));
+        assert!(barrier.observe(Some(sample), now + Duration::from_millis(720)));
+    }
+    #[test]
+    fn reentry_requires_stability_after_cumulative_motion_and_display_changes() {
+        let now = Instant::now();
+        let mut sample = reentry_observation(
+            (2, 8),
+            rect(-1440., -500., 1440., 2560.),
+            &[(1, rect(-1440., -500., 1440., 2560.))],
+        );
+        let mut barrier = SpaceReentry::default();
+        assert!(!barrier.observe(Some(sample.clone()), now));
+        // Consecutive steps are below tolerance, but their total is not.
+        sample.windows[0].3.origin.x += 2.;
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(80)));
+        sample.windows[0].3.origin.x += 2.;
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(160)));
+        sample.areas[0].1.size.height -= 100.;
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(320)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(400)));
+        assert!(barrier.observe(Some(sample), now + Duration::from_millis(480)));
+        // A first visit to an empty desktop is a valid stable state too.
+        let empty = ReentrySample {
+            areas: Vec::new(),
+            windows: Vec::new(),
+            absent: Vec::new(),
+        };
+        assert!(!barrier.observe(Some(empty.clone()), now + Duration::from_millis(560)));
+        assert!(barrier.observe(Some(empty), now + Duration::from_millis(720)));
+    }
+    #[test]
+    fn reentry_refreshes_pending_writes_without_changing_other_workspace_layouts() {
+        let mut manager = Manager::default();
+        let now = Instant::now();
+        let areas = [
+            ((1, 7), rect(10., 41., 2560., 1440.)),
+            ((2, 8), rect(-1440., -500., 1440., 2560.)),
+        ];
+        for (key, area) in areas {
+            let mut d = Desktop::configured(
+                if key.0 == 1 {
+                    Layout::Spiral
+                } else {
+                    Layout::VerticalMaster
+                },
+                Some((17, 9)),
+            );
+            d.reconcile(&[key.0 * 10 + 1, key.0 * 10 + 2, key.0 * 10 + 3], area, 10.);
+            manager.desktops.insert(key, d);
+        }
+        manager.space_changed_with_visible_at(now, &[(1, 7), (2, 8)]);
+        let mut sample = ReentrySample {
+            areas: areas.to_vec(),
+            windows: Vec::new(),
+            absent: Vec::new(),
+        };
+        let original = manager.desktops.clone();
+        for (key, area) in areas {
+            for (id, r) in manager.desktops[&key].frames(area, 10.) {
+                sample.windows.push((42, id, key.1, r, Some(r)));
+            }
+        }
+        manager
+            .verifications
+            .insert(11, Verification::new(sample.windows[0].3));
+        manager.applied.insert(11, sample.windows[0].3);
+        assert!(!manager.observe_reentry(Some(sample.clone()), now + Duration::from_millis(600)));
+        assert_eq!(manager.verifications.len(), 1);
+        assert_eq!(manager.tick_interval(), 0.08);
+        assert!(manager.observe_reentry(Some(sample), now + Duration::from_millis(760)));
+        assert!(manager.verifications.is_empty());
+        assert!(!manager.applied.contains_key(&11));
+        assert!(manager.desktops == original);
+        // A rapid second switch cannot reuse the previous agreement window.
+        manager.space_changed_with_visible_at(now + Duration::from_millis(780), &[(1, 9), (2, 8)]);
+        assert!(!manager.observe_reentry(None, now + Duration::from_secs(4)));
+    }
     #[test]
     fn failed_restore_keeps_the_model_preferences_and_pending_work_unchanged() {
         objc2::rc::autoreleasepool(|_| unsafe {
