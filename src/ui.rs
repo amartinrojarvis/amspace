@@ -142,6 +142,7 @@ struct App {
     observed_pid: i32,
     tracked: Option<ws::Window>,
     border_suppressed: bool,
+    border_space_pause: crate::border::SpacePause,
     border_paint: Option<BorderPaint>,
     border_clip: Option<(u32, NSRect, Vec<NSRect>)>,
     border_retry_pending: bool,
@@ -399,6 +400,7 @@ impl App {
                 observed_pid: 0,
                 tracked: None,
                 border_suppressed: false,
+                border_space_pause: Default::default(),
                 settle_queued: false,
                 hover_timer: None,
                 last_mouse: NSPoint::new(-1., -1.),
@@ -607,10 +609,7 @@ impl App {
             Ok(switch) => {
                 self.switching = Some(switch);
                 self.tile_manager.space_changed();
-                self.pending_focus = None;
-                self.focus_target = None;
-                self.border_suppressed = true;
-                self.hide_border();
+                self.pause_border_for_space();
                 self.schedule_switch_step();
             }
             Err(error) => {
@@ -630,6 +629,7 @@ impl App {
             Ok(space_switch::Progress::Waiting) => self.schedule_switch_step(),
             result => {
                 self.switching = None;
+                self.pause_border_for_space();
                 self.tile_manager.space_changed();
                 self.hover_resume = Instant::now() + Duration::from_millis(400);
                 self.refresh_spaces();
@@ -644,12 +644,35 @@ impl App {
             }
         }
     }
+    fn pause_border_for_space(&mut self) {
+        self.border_space_pause.begin(Instant::now());
+        self.pending_focus = None;
+        self.focus_target = None;
+        self.tracked = None;
+        self.observed_window = None;
+        self.observer = None;
+        self.observed_pid = 0;
+        self.border_suppressed = true;
+        ws::stop();
+        self.hide_border();
+        unsafe {
+            // One replaceable delivery, independent of tiling being enabled.
+            let target = Retained::as_ptr(&self.target) as Obj;
+            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:sel!(resumeSpaceBorder:), object:ptr::null::<AnyObject>()];
+            let _: () = msg_send![target, performSelector:sel!(resumeSpaceBorder:), withObject:ptr::null::<AnyObject>(), afterDelay:crate::border::SpacePause::DELAY.as_secs_f64()];
+        }
+    }
     fn hide_border(&self) {
         unsafe {
             let _: () = msg_send![&self.border, orderOut:ptr::null::<AnyObject>()];
         }
     }
     fn update_window(&mut self) {
+        self.update_queued = false;
+        if self.border_space_pause.pending(Instant::now()) {
+            self.hide_border();
+            return;
+        }
         if crate::desktop_mode::active() {
             self.hide_border();
             return;
@@ -658,7 +681,6 @@ impl App {
             self.hide_border();
             return;
         }
-        self.update_queued = false;
         self.border_suppressed = false;
         if self.sleeping || !self.border_enabled || !ax::trusted() {
             self.observer = None;
@@ -764,7 +786,7 @@ impl App {
             self.hide_border();
             return;
         }
-        if self.border_suppressed {
+        if self.border_suppressed || self.border_space_pause.pending(Instant::now()) {
             self.hide_border();
             return;
         }
@@ -3056,8 +3078,16 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| with_app(|a| a.hover()));
 }
+extern "C-unwind" fn resume_space_border(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| {
+        if !a.border_space_pause.pending(Instant::now()) {
+            a.update_window();
+        }
+    });
+}
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
     with_app(|a| {
+        a.pause_border_for_space();
         a.focus_target = None;
         a.pending_focus = None;
         a.layout_picker = None;
@@ -3219,6 +3249,7 @@ pub fn run() {
             (sel!(settle:), settle),
             (sel!(workspace:), workspace),
             (sel!(spaceChanged:), space_changed),
+            (sel!(resumeSpaceBorder:), resume_space_border),
             (sel!(becameActive:), became_active),
             (sel!(sleep:), sleep),
             (sel!(wake:), wake),

@@ -2,6 +2,19 @@
 use crate::native::rect;
 use objc2_foundation::NSRect;
 
+/// A passive border must not follow the old key window across a Space slide.
+#[derive(Default)]
+pub struct SpacePause(Option<std::time::Instant>);
+impl SpacePause {
+    pub const DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+    pub fn begin(&mut self, now: std::time::Instant) {
+        self.0 = Some(now + Self::DELAY);
+    }
+    pub fn pending(&self, now: std::time::Instant) -> bool {
+        self.0.is_some_and(|until| now < until)
+    }
+}
+
 fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
     let x = a.origin.x.max(b.origin.x);
     let y = a.origin.y.max(b.origin.y);
@@ -65,6 +78,20 @@ mod tests {
     use super::*;
     use crate::tiling::contains;
     use objc2_foundation::NSPoint;
+    #[test]
+    fn space_pause_hides_stale_border_and_old_callbacks_cannot_resume_a_new_slide() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let mut pause = SpacePause::default();
+        assert!(!pause.pending(now));
+        pause.begin(now);
+        assert!(pause.pending(now));
+        assert!(pause.pending(now + Duration::from_millis(599)));
+        pause.begin(now + Duration::from_millis(400));
+        assert!(pause.pending(now + SpacePause::DELAY));
+        assert!(pause.pending(now + Duration::from_millis(999)));
+        assert!(!pause.pending(now + Duration::from_millis(1000)));
+    }
     #[test]
     fn overlapping_occluders_cannot_reveal_a_covered_border() {
         let target = rect(-500., -300., 800., 600.);
