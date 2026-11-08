@@ -1,3 +1,10 @@
+## Publicación 0.6.17, build 35
+
+- Publicada la versión solicitada: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.17 sobre `30439d837cd81690814148bcaa0e34200b115db0`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42519121650.
+- ZIP universal, catálogo Ed25519 y SHA256SUMS publicados. Copia inmutable en `updates/0.6.17/AMSpace-universal.zip`, descargada por HTTPS sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `1ee7d993cba41d82abc36e7e66398b8f025fd7a05aa88d30957d7f265c898142`; tamaño: 2473650 bytes.
+- Instalación local de Aplicaciones actualizada a 0.6.17, build 35. Firma estricta verificada y ejecutable idéntico al del paquete final. Copia anterior conservada en `.cache/AMSpace-before-0.6.17.zip`. App abierta desde el ejecutable instalado.
+- El catálogo firmado anuncia build 35 después de verificar la descarga pública. Se conservan tags, archivos y rutas de las versiones anteriores. La comprobación no incluye instalación por Sparkle desde la versión anterior ni renovación automática de Accesibilidad.
+
 ## Preparación 0.6.17, build 35
 
 - Ajustes ampliados hasta 960×726 puntos, limitados por el área visible. Mosaico ya no contiene NSScrollView: sus ocho plantillas y controles se muestran completos, con escala uniforme cuando la pantalla ofrece menos espacio.
