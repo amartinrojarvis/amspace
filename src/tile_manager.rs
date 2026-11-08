@@ -1304,7 +1304,7 @@ impl Manager {
         let mut members: HashMap<Workspace, Vec<u32>> = HashMap::new();
         let mut actual_frames = HashMap::new();
         let mut uncertain = HashSet::new();
-        for (pid, id, frame) in candidates {
+        for (pid, id, _compositor_frame) in candidates {
             if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
                 self.forget_window(id);
                 transferred.remove(&id);
@@ -1323,34 +1323,51 @@ impl Manager {
                 self.handoffs.remove(&id);
                 transferred.remove(&id);
             }
-            let previous = self
+            if !active.iter().any(|(key, _)| key.1 == space) {
+                continue; // Never query AX for a confirmed non-visible Space.
+            }
+            // The compositor can translate one window outside its display while
+            // a Space slides. Read AX before deciding ownership, not after a
+            // geometry-based rejection has already removed its layout slot.
+            let known = self.windows.contains_key(&id);
+            let retain_uncertain = self.windows.get(&id).is_some_and(|w| w.space.1 == space);
+            let Some(mut element) = self
                 .windows
                 .get(&id)
-                .filter(|w| w.pid == pid)
-                .map(|w| w.space);
-            let retained = self
-                .handoffs
-                .get(&id)
-                .map(|h| h.destination)
-                .or_else(|| {
-                    let expected = self.applied.get(&id).copied();
-                    let limited = self.constrained.get(&id).map(|(_, observed)| *observed);
-                    (expected.is_some_and(|r| near(r, frame))
-                        || limited.is_some_and(|r| near(r, frame)))
-                    .then_some(previous)
-                    .flatten()
-                })
-                .or_else(|| stable_overlap_workspace(space, frame, &active, previous));
-            let Some(space) = retained_workspace(space, frame, &active, retained) else {
+                .map(|w| w.element.clone())
+                .or_else(|| ax::window_for_id(pid, id))
+            else {
+                if retain_uncertain {
+                    uncertain.insert(id);
+                }
+                continue;
+            };
+            if !known && !ax::tileable(element.0) {
+                continue;
+            }
+            let mut geometry = ax::geometry(element.0);
+            if geometry.is_none()
+                && let Some(fresh) = ax::window_for_id(pid, id)
+                && ax::tileable(fresh.0)
+            {
+                element = fresh;
+                geometry = ax::geometry(element.0);
+            }
+            let Some((position, size)) = geometry else {
+                if retain_uncertain {
+                    uncertain.insert(id);
+                }
+                continue;
+            };
+            let frame = NSRect::new(position, size);
+            let Some(space) = self.observed_workspace(id, space, frame, &active) else {
+                // No overlap is uncertainty, not evidence of a closed window.
+                if retain_uncertain {
+                    uncertain.insert(id);
+                }
                 continue;
             };
             if let std::collections::hash_map::Entry::Vacant(entry) = self.windows.entry(id) {
-                let Some(element) = ax::window_for_id(pid, id) else {
-                    continue;
-                };
-                if !ax::tileable(element.0) {
-                    continue;
-                }
                 if crate::tile_rules::floats(defaults, pid) {
                     self.floating.insert(id);
                 }
@@ -1359,11 +1376,12 @@ impl Manager {
                     space,
                     original: frame,
                     original_area: active.iter().find(|(key, _)| *key == space).unwrap().1,
-                    element,
+                    element: element.clone(),
                 });
                 self.dirty = true;
             }
             let w = self.windows.get_mut(&id).unwrap();
+            w.element = element;
             if w.space != space {
                 if let Some((_, destination)) = active.iter().find(|(key, _)| *key == space) {
                     w.original = restoration_frame(w.original, w.original_area, *destination);
@@ -1379,24 +1397,7 @@ impl Manager {
                 self.applied.remove(&id);
             }
             w.space = space;
-            let mut geometry = ax::geometry(w.element.0);
-            if geometry.is_none() {
-                if let Some(fresh) = ax::window_for_id(pid, id)
-                    && ax::tileable(fresh.0)
-                {
-                    w.element = fresh;
-                    geometry = ax::geometry(w.element.0);
-                } else {
-                    uncertain.insert(id);
-                    continue;
-                }
-            }
-            if let Some((position, size)) = geometry {
-                actual_frames.insert(id, NSRect::new(position, size));
-            } else {
-                uncertain.insert(id);
-                continue;
-            }
+            actual_frames.insert(id, frame);
             self.inactive_tabs.remove(&id); // A detached tab can become an ordinary window.
             let owns_slot = self
                 .desktops
@@ -1630,6 +1631,30 @@ impl Manager {
         }
         self.dirty = false;
     }
+    /// `frame` is the AX geometry used for placement, never a compositor slide.
+    fn observed_workspace(
+        &self,
+        id: u32,
+        native: u64,
+        frame: NSRect,
+        areas: &[(Workspace, NSRect)],
+    ) -> Option<Workspace> {
+        let previous = self.windows.get(&id).map(|w| w.space);
+        let retained = self
+            .handoffs
+            .get(&id)
+            .map(|h| h.destination)
+            .or_else(|| {
+                let expected = self.applied.get(&id).copied();
+                let limited = self.constrained.get(&id).map(|(_, observed)| *observed);
+                (expected.is_some_and(|r| near(r, frame))
+                    || limited.is_some_and(|r| near(r, frame)))
+                .then_some(previous)
+                .flatten()
+            })
+            .or_else(|| stable_overlap_workspace(native, frame, areas, previous));
+        retained_workspace(native, frame, areas, retained)
+    }
     fn forget_window(&mut self, id: u32) {
         self.tab_groups.remove(&id);
         self.inactive_tabs.remove(&id);
@@ -1804,6 +1829,113 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ax_workspace_membership_preserves_real_shared_space_monitor_transfers() {
+        let mut manager = Manager::default();
+        let areas = [
+            ((1, 7), rect(0., 30., 1600., 900.)),
+            ((2, 7), rect(-900., -400., 880., 1580.)),
+        ];
+        let actual = rect(-900., -400., 880., 785.);
+        manager.windows.insert(
+            1,
+            Managed {
+                pid: std::process::id() as i32,
+                space: (2, 7),
+                original: actual,
+                original_area: areas[1].1,
+                element: ax::application(std::process::id() as i32).unwrap(),
+            },
+        );
+        manager.applied.insert(1, actual);
+        let compositor_slide = rect(100., 30., 880., 785.);
+        assert_eq!(
+            manager.observed_workspace(1, 7, compositor_slide, &areas),
+            Some((1, 7))
+        );
+        assert_eq!(
+            manager.observed_workspace(1, 7, actual, &areas),
+            Some((2, 7))
+        );
+        // If AX actually moves to the other monitor, the cache must not pin it.
+        assert_eq!(
+            manager.observed_workspace(1, 7, areas[0].1, &areas),
+            Some((1, 7))
+        );
+        // Disconnecting the old monitor cannot retain its former ownership.
+        assert_eq!(
+            manager.observed_workspace(1, 7, areas[0].1, &areas[..1]),
+            Some((1, 7))
+        );
+    }
+    #[test]
+    fn space_slide_cannot_expand_one_of_two_windows_in_three_portrait_rows() {
+        let mut manager = Manager::default();
+        let primary = ((1, 7), rect(0., 30., 1600., 900.));
+        let secondary = ((2, 8), rect(-900., -400., 880., 1580.));
+        let mut desktop = Desktop::configured(Layout::ThreeBands, None);
+        desktop.reconcile(&[10, 20], secondary.1, 10.);
+        let original = desktop.frames(secondary.1, 10.);
+        assert_eq!(original.len(), 2);
+        manager.active_areas = vec![primary, secondary];
+        manager.desktops.insert(secondary.0, desktop.clone());
+        for (id, frame) in &original {
+            manager.windows.insert(
+                *id,
+                Managed {
+                    pid: std::process::id() as i32,
+                    space: secondary.0,
+                    original: *frame,
+                    original_area: secondary.1,
+                    element: ax::application(std::process::id() as i32).unwrap(),
+                },
+            );
+            manager.applied.insert(*id, *frame);
+        }
+        let active = [((1, 9), primary.1), secondary];
+        manager.space_changed_with_visible_at(
+            Instant::now(),
+            &active.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            manager.desktops[&secondary.0].frames(secondary.1, 10.),
+            original
+        );
+        // Only the horizontal monitor changed Space (7 -> 9). The vertical
+        // monitor stays on Space 8, with identical AX geometry and no gesture.
+        // A transient compositor offset is metadata, not a physical user move.
+        let mut sliding = original[1].1;
+        sliding.origin.x -= 1700.;
+        assert_eq!(manager.observed_workspace(20, 8, sliding, &active), None);
+        let mut broken = desktop.clone();
+        broken.reconcile(&[10], secondary.1, 10.);
+        assert_ne!(broken.frames(secondary.1, 10.), original);
+        // Production classifies membership from the same AX frame it places.
+        for _ in 0..5 {
+            let members: Vec<_> = original
+                .iter()
+                .filter_map(|(id, ax_frame)| {
+                    (manager.observed_workspace(*id, 8, *ax_frame, &active) == Some(secondary.0))
+                        .then_some(*id)
+                })
+                .collect();
+            desktop.reconcile_at(&members, secondary.1, 10., Some(20));
+            desktop.fit(secondary.1, 10.);
+            assert_eq!(desktop.frames(secondary.1, 10.), original);
+            for (id, frame) in &original {
+                assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+            }
+        }
+        // A real native Space change must still override cached ownership.
+        assert_eq!(
+            manager.observed_workspace(10, 9, primary.1, &active),
+            Some((1, 9))
+        );
+        assert_eq!(
+            manager.observed_workspace(10, 99, original[0].1, &active),
+            None
+        );
+    }
     #[test]
     fn independent_space_switch_preserves_secondary_layout_and_pending_placement() {
         let mut manager = Manager::default();

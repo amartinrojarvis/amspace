@@ -1,8 +1,18 @@
+## Preparación 0.6.11: pertenencia de ventanas durante cambios de Space
+
+- Incidente comunicado en otro Mac: al cambiar el escritorio del monitor horizontal, una ventana de Hermes Desktop en el vertical cambia de tamaño y vuelve al anterior. El vertical permanece en el mismo escritorio, con dos ventanas y plantilla de tres filas; no se está arrastrando ni trasladando ninguna ventana.
+- Se localiza una ruta que permite esa redistribución: la pertenencia se calculaba con el frame de WindowServer antes de leer AX. Si una muestra transitoria no solapa el área del monitor, la ventana se omite de los miembros aunque siga viva y en el mismo Space; su compañera ocupa temporalmente el hueco. En Spaces compartidos, un desplazamiento del compositor también puede atribuirla a otro monitor.
+- Ahora se lee AX antes de decidir la pertenencia y se reutiliza ese frame para clasificación, geometría original, reconocimiento de pestañas y colocación. Si la geometría de una ventana gestionada resulta incierta en su mismo Space, se aplica la gracia acotada existente y no se escribe su frame. Los cambios nativos confirmados siguen prevaleciendo; los Spaces no visibles se descartan antes de consultar AX.
+- Regresión específica: monitor principal pasa de Space 7 a 9; el vertical permanece en Space 8 con área idéntica y dos ventanas en tres filas. El control con metadatos desplazados reproduce la expansión de la compañera; usando AX se conservan ambas celdas sin generar colocaciones. Regresión adicional de Spaces compartidos, traslado real y desconexión del monitor anterior.
+- 99 pruebas correctas, formato, Clippy y plist correctos. La reproducción es del modelo y de la ruta de clasificación; no se dispone de una captura del estado del otro Mac. Pendiente de confirmar el síntoma real con Hermes Desktop y dos pantallas. No se atribuye el incidente a un mínimo de Hermes sin evidencia ni se añade una excepción por aplicación.
+- Versión 0.6.11, build 20. Incluye las mejoras de 0.6.10; sin instalar localmente.
+
 ## Preparación 0.6.10
 
 - Versión 0.6.10, build 19: 97 pruebas correctas; formato, Clippy y plist correctos. Compilación universal Apple Silicon/Intel y firma estricta verificadas.
 - ZIP y catálogo Sparkle generados mediante `scripts/prepare-release.py`, firmados con la clave del Llavero y verificados. Incluye la revisión de rendimiento y protección del foco documentada a continuación, con su alcance y pruebas de uso pendientes.
 - Sin instalar localmente ni presentar como completada la prueba de actualización desde la app anterior.
+- Publicada [v0.6.10](https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.10) sobre `66e2a5540550db3670b7a6f2107cc43ce3ef65c2`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42454234936). ZIP público descargado sin autenticación idéntico al firmado. No se anunció en el feed durante la investigación del incidente multipantalla.
 
 ## Revisión local de rendimiento y protección del foco · 2026-11-08
 
