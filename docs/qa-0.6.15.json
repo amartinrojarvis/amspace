@@ -28,7 +28,7 @@
   "scope_limits": [
     "multi-monitor and multi-Space combinations are modeled, not tested on the remote physical Mac",
     "native diagnostics only read Accessibility/WindowServer state",
-    "installed/public version remains 0.6.14"
+    "QA measurements used the installed 0.6.14; no complete Sparkle installation is claimed"
   ],
   "ci": {
     "status": "success",
@@ -39,5 +39,12 @@
     "windows": 2,
     "accessibility": true,
     "eligibility_and_geometry_identical": true
+  },
+  "publication": {
+    "version": "0.6.15",
+    "build": 32,
+    "url": "https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.15",
+    "archive_sha256": "debcd97d0f5fac40c880cbb2e08d7efd6afaa04b72b5091f50ea8a624e3cb797",
+    "public_download_matches_signed_archive": true
   }
 }

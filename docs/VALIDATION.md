@@ -1,3 +1,10 @@
+## Publicación 0.6.15, build 32
+
+- Release estable autorizada por el usuario: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.15 sobre `9436462b352e13a742af265153b78416ee5bff93`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42498838150.
+- Incluye las optimizaciones de la candidata inicial y las tres correcciones de QA; 139 pruebas correctas en debug/release, dos diagnósticos AX nativos y cuatro benchmarks CPU ejecutados explícitamente. La validación y sus límites se describen en las secciones siguientes.
+- ZIP universal, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.15/AMSpace-universal.zip`, descargada mediante HTTPS público sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `debcd97d0f5fac40c880cbb2e08d7efd6afaa04b72b5091f50ea8a624e3cb797`; tamaño: 2418486 bytes.
+- ZIP y catálogo verificados mediante Sparkle. Se anuncia 0.6.15, build 32, mediante el catálogo firmado de la raíz. Se conservan los archivos y tags de las versiones anteriores. No se atribuye una instalación física por Sparkle ni una prueba del hardware remoto a esta publicación.
+
 ## Comprobación de calidad 0.6.15, build 32
 
 - CI completa correcta sobre `9436462b352e13a742af265153b78416ee5bff93`: https://github.com/amartinrojarvis/amspace/actions/runs/42498838150. Comparación final de solo lectura: Accesibilidad concedida y dos ventanas con idéntica elegibilidad/geometría AX entre instalada y candidata. Firma del paquete y del catálogo público verificadas; ejecutable instalado idéntico al ZIP publicado de 0.6.14.
