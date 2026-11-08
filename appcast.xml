@@ -1,20 +1,16 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.17</title><pubDate>Sun, 08 Nov 2026 20:13:51 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.17 — ajustes sin desplazamiento y navegación renovada.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.18</title><pubDate>Sun, 08 Nov 2026 20:19:35 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.18 — preview más limpia y aprovechada.
 
-- Mosaico muestra todas las plantillas y opciones sin scroll vertical.
-- Ventana de ajustes más amplia, con adaptación al espacio disponible de la pantalla.
-- Barra lateral con listas nativas, iconos y selección de sección, sin botones.
-- Acerca de y Salir integrados como filas de la barra lateral.
-- Muestras de color centradas, con selección discreta y contorno redondeado.
-- Lista de iconos basada en los escritorios reales de todas las pantallas, actualizada mientras se consulta.
-- Preview compacta al detener el cursor sobre un indicador de escritorio: distribución de sus ventanas con los iconos de sus aplicaciones, sin capturar su contenido.
-- Popup compacto sin textos auxiliares, con divisiones azules translúcidas basadas en la geometría real de las ventanas y los monitores.
-- Aparición suave, esquinas redondeadas y opción de desactivarlo en Barra de menús. El clic izquierdo sigue cambiando de escritorio; el derecho abre ajustes.
+- El desplegable muestra únicamente la simulación, sin títulos ni marco exterior.
+- El gráfico azul ocupa casi todo el popup, con solo seis puntos de margen.
+- Tamaño adaptado a la proporción real del conjunto de pantallas, sin bandas vacías.
+- Se conservan las divisiones de ventanas y monitores, los iconos centrados, la entrada suave y la opción de desactivar la preview.
+- El clic izquierdo sigue cambiando de escritorio y el derecho abre ajustes.
 
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.17/AMSpace-universal.zip" length="2473650" type="application/octet-stream" sparkle:version="35" sparkle:shortVersionString="0.6.17" sparkle:edSignature="rn3sIFROz52xU/IiBDCI8AKm+FBYMU31k3hMeHicfc/mWaG7e7DTX8r+gixfKyoSF/cNzEc55leW+CjagHULDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 0U3dehSNeCSpxhkD0cyHcimfY/6YgKvONb1Daki06jnZTVv/a62InhAooPMbwFqGHfW1oYZIYDIV6XwsR8dcBA==
-length: 2233
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.18/AMSpace-universal.zip" length="2473283" type="application/octet-stream" sparkle:version="36" sparkle:shortVersionString="0.6.18" sparkle:edSignature="jp8wqAfYeo6EoPpdFEvLH135Xsj3iy9Dd8yFz+wf2sYgHvaIEZnTpoH1hCUqpxHD0m3+ePkFfquNI8mDaXvxDQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 3ZrFgG/JL6QLSu0hK6PRtTnjXm8j/jsXwHXglfMqdDYZJJwBPTrASUy9Ea5GG2mFujkqAhNxyJjsGvWVdpsNAw==
+length: 1719
 -->

@@ -1,3 +1,10 @@
+## Publicación 0.6.18, build 36
+
+- Versión solicitada publicada en https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.18 sobre `c0e11cd8003499646549e5188bb4117669dec2bc`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42519619664.
+- ZIP, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.18/AMSpace-universal.zip`, descargada públicamente y comparada byte a byte con el ZIP firmado. SHA-256: `39208da6d8608c77899acf0692ca77690ab016cfbe8449a14dd154d710140af5`; tamaño: 2473283 bytes.
+- Instalación de Aplicaciones actualizada, firma estricta y ejecutable final verificados. Se cerró la instancia anterior y se abrió la 0.6.18. Copia previa conservada en `.cache/AMSpace-before-0.6.18.zip`.
+- Se anuncia build 36 después de verificar la descarga pública. Se conservan las versiones anteriores; no se atribuye a esta publicación una instalación física por Sparkle ni renovación de permisos.
+
 ## Preparación 0.6.18, build 36
 
 - Preview reducida a la simulación: se eliminan título y contorno exterior del monitor. Cada monitor conserva una superficie azul muy tenue y separación entre pantallas; las ventanas mantienen sus divisiones azules e iconos centrados.
