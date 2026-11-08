@@ -16,6 +16,7 @@ use std::{
 unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative: u32) -> Cf;
     fn CGRectMakeWithDictionaryRepresentation(dict: Cf, result: *mut NSRect) -> bool;
+    fn CGWindowLevelForKey(key: i32) -> i32;
 }
 unsafe extern "C" {
     static _dispatch_main_q: c_void;
@@ -138,6 +139,10 @@ pub fn front_window(pid: i32) -> Option<Window> {
 pub fn focus_windows(pid: i32, focused: Option<u32>) -> Option<Vec<Window>> {
     ENABLED.store(true, Ordering::Release);
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    observe_presentation(list.0);
+    if crate::desktop_mode::active() {
+        return Some(Vec::new());
+    }
     let visible_spaces: Vec<_> = crate::spaces::visible_desktops()
         .into_iter()
         .map(|(_, space)| space)
@@ -211,6 +216,10 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
     let Some(list) = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }) else {
         return Vec::new();
     };
+    observe_presentation(list.0);
+    if crate::desktop_mode::active() || contains_menu(list.0) {
+        return Vec::new(); // Menus own keyboard tracking even outside their frame.
+    }
     let mut hits = Vec::new();
     for info in array(list.0) {
         let Some(id) = number(get(info, ns_string!("kCGWindowNumber"))).map(|id| id as u32) else {
@@ -256,6 +265,19 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
         }
     }
     hits
+}
+fn contains_menu(list: Cf) -> bool {
+    // kCGPopUpMenuWindowLevelKey. Menubars, tooltips and our preview are distinct.
+    let menu_level = i64::from(unsafe { CGWindowLevelForKey(11) });
+    array(list).any(|info| {
+        number(get(info, ns_string!("kCGWindowLayer"))) == Some(menu_level)
+            && !crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
+                .is_some_and(|alpha| alpha <= 0.)
+    })
+}
+#[cfg(test)]
+pub fn inspect_menu_open() -> Option<bool> {
+    Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }).map(|list| contains_menu(list.0))
 }
 pub fn bounds(id: u32) -> Option<NSRect> {
     let api = api()?;
@@ -382,6 +404,10 @@ fn move_border(target: u32) -> bool {
 
 pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    observe_presentation(list.0);
+    if crate::desktop_mode::active() {
+        return Some(Vec::new());
+    }
     let mut occluders = Vec::new();
     let visible_spaces: Vec<_> = crate::spaces::visible_desktops()
         .into_iter()
@@ -446,6 +472,10 @@ pub fn tile_windows() -> Vec<(i32, u32, NSRect)> {
 /// Preserve query failure separately from a successfully observed empty desktop.
 pub fn try_tile_windows() -> Option<Vec<(i32, u32, NSRect)>> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    observe_presentation(list.0);
+    if crate::desktop_mode::active() {
+        return None;
+    }
     Some(
         array(list.0)
             .filter_map(|info| {
@@ -485,9 +515,170 @@ pub fn all_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
     )
 }
 
+fn presentation_window(
+    owner: Cf,
+    layer: i64,
+    alpha: Option<f64>,
+    frame: NSRect,
+    screens: &[NSRect],
+) -> crate::desktop_mode::Mode {
+    use crate::desktop_mode::Mode;
+    if !crate::accessibility::equals_text(owner, "WindowManager") || alpha.is_some_and(|a| a <= 0.)
+    {
+        return Mode::Normal;
+    }
+    let fullscreen = screens.iter().any(|screen| {
+        let width = (frame.origin.x + frame.size.width).min(screen.origin.x + screen.size.width)
+            - frame.origin.x.max(screen.origin.x);
+        let height = (frame.origin.y + frame.size.height).min(screen.origin.y + screen.size.height)
+            - frame.origin.y.max(screen.origin.y);
+        width.max(0.) * height.max(0.) >= screen.size.width * screen.size.height * 0.9
+    });
+    if !fullscreen {
+        return Mode::Normal;
+    }
+    match layer {
+        18 => Mode::Desktop,
+        19 | 1500 => Mode::Overview,
+        _ => Mode::Normal,
+    }
+}
+fn presentation_from_list(list: Cf) -> crate::desktop_mode::Mode {
+    use crate::desktop_mode::Mode;
+    let mut screens = None;
+    let mut mode = Mode::Normal;
+    for info in array(list) {
+        let Some(layer) = number(get(info, ns_string!("kCGWindowLayer"))) else {
+            continue;
+        };
+        if ![18, 19, 1500].contains(&layer) {
+            continue;
+        }
+        let owner = get(info, ns_string!("kCGWindowOwnerName"));
+        if !crate::accessibility::equals_text(owner, "WindowManager") {
+            continue;
+        }
+        let mut frame = NSRect::ZERO;
+        if !unsafe {
+            CGRectMakeWithDictionaryRepresentation(
+                get(info, ns_string!("kCGWindowBounds")),
+                &mut frame,
+            )
+        } {
+            continue;
+        }
+        let screens = screens.get_or_insert_with(|| {
+            let configuration = crate::native::screen_configuration();
+            let height = configuration.first().map_or(0., |s| s.frame.size.height);
+            configuration
+                .iter()
+                .map(|s| crate::tiling::ax_screen_rect(s.frame, height))
+                .collect::<Vec<_>>()
+        });
+        let candidate = presentation_window(
+            owner,
+            layer,
+            crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha"))),
+            frame,
+            screens,
+        );
+        if candidate == Mode::Desktop {
+            return candidate;
+        }
+        if candidate == Mode::Overview {
+            mode = candidate;
+        }
+    }
+    mode
+}
+fn observe_presentation(list: Cf) {
+    crate::desktop_mode::observe_compositor(presentation_from_list(list));
+}
+pub fn presentation_mode() -> Option<crate::desktop_mode::Mode> {
+    Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })
+        .map(|list| presentation_from_list(list.0))
+}
+pub fn visible_normal_window_ids() -> Option<std::collections::HashSet<(i32, u32)>> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    Some(
+        array(list.0)
+            .filter_map(|info| {
+                if number(get(info, ns_string!("kCGWindowLayer"))) != Some(0) {
+                    return None;
+                }
+                Some((
+                    number(get(info, ns_string!("kCGWindowOwnerPID")))? as i32,
+                    number(get(info, ns_string!("kCGWindowNumber")))? as u32,
+                ))
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_event;
+    #[test]
+    fn native_windowmanager_desktop_overlay_is_distinct_from_dock_and_small_panels() {
+        use super::*;
+        use crate::{desktop_mode::Mode, native::rect};
+        let screens = [rect(0., 0., 1680., 1050.), rect(-900., -400., 880., 1580.)];
+        let wm = ns_string!("WindowManager") as *const _ as Cf;
+        let dock = ns_string!("Dock") as *const _ as Cf;
+        assert_eq!(
+            presentation_window(wm, 18, Some(1.), screens[0], &screens),
+            Mode::Desktop
+        );
+        assert_eq!(
+            presentation_window(wm, 18, Some(1.), screens[1], &screens),
+            Mode::Desktop
+        );
+        assert_eq!(
+            presentation_window(wm, 1500, Some(1.), screens[0], &screens),
+            Mode::Overview
+        );
+        assert_eq!(
+            presentation_window(wm, 19, Some(1.), screens[0], &screens),
+            Mode::Overview
+        );
+        assert_eq!(
+            presentation_window(dock, 20, Some(1.), screens[0], &screens),
+            Mode::Normal
+        );
+        assert_eq!(
+            presentation_window(dock, 18, Some(1.), screens[0], &screens),
+            Mode::Normal
+        );
+        assert_eq!(
+            presentation_window(wm, 18, Some(0.), screens[0], &screens),
+            Mode::Normal
+        );
+        assert_eq!(
+            presentation_window(wm, 18, Some(1.), rect(0., 0., 80., 1050.), &screens),
+            Mode::Normal
+        );
+    }
+    #[test]
+    fn only_visible_popup_menus_block_focus_not_menubars_or_preview_overlays() {
+        use super::*;
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let info: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
+            let list: Retained<AnyObject> = msg_send![class!(NSArray), arrayWithObject:&*info];
+            for (key, expected) in [(8, false), (9, false), (11, true), (15, false)] {
+                let level = CGWindowLevelForKey(key);
+                let level: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithInt:level];
+                let _: () =
+                    msg_send![&info, setObject:&*level, forKey:ns_string!("kCGWindowLayer")];
+                assert_eq!(contains_menu(Retained::as_ptr(&list).cast()), expected);
+            }
+            let level: Retained<AnyObject> =
+                msg_send![class!(NSNumber), numberWithInt:CGWindowLevelForKey(11)];
+            let alpha: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithDouble:0_f64];
+            let _: () = msg_send![&info, setObject:&*level, forKey:ns_string!("kCGWindowLayer")];
+            let _: () = msg_send![&info, setObject:&*alpha, forKey:ns_string!("kCGWindowAlpha")];
+            assert!(!contains_menu(Retained::as_ptr(&list).cast()));
+        });
+    }
     #[test]
     fn ordering_feedback_on_target_or_sibling_is_not_a_focus_change() {
         for event in [804, 808, 815, 816, 723] {

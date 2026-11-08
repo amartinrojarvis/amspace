@@ -97,6 +97,8 @@ struct App {
     suggested_shortcuts: Vec<(usize, usize)>,
     tile_space: Option<u64>,
     tile_controls: Vec<Obj>,
+    tile_choices: Vec<Obj>,
+    tile_preview_portrait: Option<bool>,
     tile_grid_window: Option<Retained<AnyObject>>,
     tile_grid_fields: Vec<Obj>,
     tile_grid_status: Obj,
@@ -117,6 +119,9 @@ struct App {
     updater: Option<Updater>,
     updates_switch: Obj,
     tabs: Obj,
+    navigation: Vec<Obj>,
+    page_title: Obj,
+    bar_colors: Vec<Obj>,
     space_page: Obj,
     space_scroll: Obj,
     space_ids: Vec<u64>,
@@ -130,6 +135,8 @@ struct App {
     width: f64,
     rgb: [f64; 3],
     observer: Option<ax::Observer>,
+    desktop_observer: Option<ax::DesktopObserver>,
+    presentation_timer: Option<Retained<AnyObject>>,
     observed_window: Option<ax::Owned>,
     observed_pid: i32,
     tracked: Option<ws::Window>,
@@ -234,11 +241,42 @@ unsafe fn card(parent: Obj, frame: NSRect) {
         let _: () = msg_send![&b, setTransparent:false];
         let _: () = msg_send![&b, setTitlePosition:0usize];
         let _: () = msg_send![&b, setBorderWidth:0f64];
-        let _: () = msg_send![&b, setCornerRadius:14f64];
+        let _: () = msg_send![&b, setCornerRadius:10f64];
         let c: Obj = msg_send![class!(NSColor), controlBackgroundColor];
         let _: () = msg_send![&b, setFillColor:c];
         let _: () = msg_send![parent, addSubview:&*b];
     }
+}
+unsafe fn paint_swatch(button: Obj, name: &str, rgb: [f64; 3]) {
+    unsafe {
+        let attrs: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
+        let _: () = msg_send![&attrs, setObject:color(rgb[0],rgb[1],rgb[2],1.), forKey:&*NSString::from_str("NSColor")];
+        let font: Obj = msg_send![class!(NSFont), systemFontOfSize:20f64];
+        let _: () = msg_send![&attrs, setObject:font, forKey:&*NSString::from_str("NSFont")];
+        let title: Allocated<AnyObject> = msg_send![class!(NSAttributedString), alloc];
+        let title: Retained<AnyObject> =
+            msg_send![title, initWithString:&*NSString::from_str("●"), attributes:&*attrs];
+        let _: () = msg_send![button, setAttributedTitle:&*title];
+        let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(name)];
+        let _: () = msg_send![button, setToolTip:&*NSString::from_str(name)];
+    }
+}
+fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
+    let columns = if width >= 560. { 4 } else { 3 };
+    let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
+    let height = 530. + rows.saturating_sub(2) as f64 * 108.;
+    let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
+    let cards = (0..crate::tiling::Layout::ALL.len())
+        .map(|i| {
+            rect(
+                8. + (i % columns) as f64 * (card_width + 16.),
+                height - 217. - (i / columns) as f64 * 108.,
+                card_width,
+                90.,
+            )
+        })
+        .collect();
+    (height, cards)
 }
 unsafe fn primary_height() -> Option<f64> {
     unsafe {
@@ -318,6 +356,8 @@ impl App {
                 suggested_shortcuts: Vec::new(),
                 tile_space: None,
                 tile_controls: vec![],
+                tile_choices: vec![],
+                tile_preview_portrait: None,
                 tile_grid_window: None,
                 tile_grid_fields: vec![],
                 tile_grid_status: ptr::null_mut(),
@@ -341,6 +381,9 @@ impl App {
                 updater: Updater::new(),
                 updates_switch: ptr::null_mut(),
                 tabs: ptr::null_mut(),
+                navigation: vec![],
+                page_title: ptr::null_mut(),
+                bar_colors: vec![],
                 space_page: ptr::null_mut(),
                 space_scroll: ptr::null_mut(),
                 space_ids: vec![],
@@ -348,6 +391,8 @@ impl App {
                 width,
                 rgb,
                 observer: None,
+                desktop_observer: None,
+                presentation_timer: None,
                 observed_window: None,
                 observed_pid: 0,
                 tracked: None,
@@ -370,6 +415,11 @@ impl App {
                 hover_switch: ptr::null_mut(),
                 slider: ptr::null_mut(),
             };
+            a.ensure_desktop_observer();
+            crate::desktop_mode::refresh();
+            a.tile_manager
+                .set_presentation(crate::desktop_mode::current());
+            a.apply_bar_background();
             a.refresh_spaces();
             a.update_window();
             a.configure_hover();
@@ -394,6 +444,41 @@ impl App {
             ] {
                 let _: () = msg_send![&self.defaults, setDouble:v, forKey:&*NSString::from_str(k)];
             }
+        }
+    }
+    fn ensure_desktop_observer(&mut self) {
+        if !ax::trusted() {
+            return;
+        }
+        let pid = ax::DesktopObserver::dock_pid();
+        if self
+            .desktop_observer
+            .as_ref()
+            .is_some_and(|observer| Some(observer.pid) == pid)
+        {
+            return;
+        }
+        self.desktop_observer = None;
+        self.desktop_observer = pid.and_then(ax::DesktopObserver::new);
+    }
+    fn update_presentation_timer(&mut self) {
+        unsafe {
+            if !crate::desktop_mode::active() || self.sleeping {
+                if let Some(timer) = self.presentation_timer.take() {
+                    let _: () = msg_send![&timer, invalidate];
+                }
+                return;
+            }
+            if self.presentation_timer.is_some() {
+                return;
+            }
+            // Only while presentation mode is active. Ordinary tiling/focus
+            // reuses its existing compositor snapshots to detect entry.
+            let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.2f64, target:&*self.target, selector:sel!(presentationTick:), userInfo:ptr::null::<AnyObject>(), repeats:true];
+            let _: () = msg_send![&timer, setTolerance:0.03f64];
+            let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+            add_common_timer(run, &timer);
+            self.presentation_timer = Some(timer);
         }
     }
     fn refresh_spaces(&mut self) {
@@ -563,6 +648,10 @@ impl App {
         }
     }
     fn update_window(&mut self) {
+        if crate::desktop_mode::active() {
+            self.hide_border();
+            return;
+        }
         if self.switching.is_some() {
             self.hide_border();
             return;
@@ -669,6 +758,10 @@ impl App {
     }
     // Hot path: compositor geometry only, no app IPC, no fixed delay or animation.
     fn update_border_geometry(&mut self) {
+        if crate::desktop_mode::active() {
+            self.hide_border();
+            return;
+        }
         if self.border_suppressed {
             self.hide_border();
             return;
@@ -768,12 +861,17 @@ impl App {
         }
     }
     fn configure_hover(&mut self) {
+        self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.hover_timer.take() {
                 let _: () = msg_send![&t, invalidate];
             }
             self.hover_probe.reset();
-            if self.hover_enabled && ax::trusted() && !self.sleeping {
+            if self.hover_enabled
+                && ax::trusted()
+                && !self.sleeping
+                && !crate::desktop_mode::active()
+            {
                 let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:0.08f64, target:&*self.target, selector:sel!(hover:), userInfo:ptr::null::<AnyObject>(), repeats:true];
                 let _: () = msg_send![&timer, setTolerance:0.03f64];
                 let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
@@ -787,6 +885,7 @@ impl App {
             || self.switching.is_some()
             || Instant::now() < self.hover_resume
             || focus::secure_input()
+            || crate::desktop_mode::active()
         {
             return;
         }
@@ -888,6 +987,7 @@ impl App {
                 || buttons != 0
                 || flags & (1usize << 19) != 0
                 || focus::secure_input()
+                || crate::desktop_mode::active()
                 || ax::focus_is_protected(front_pid)
             {
                 // Cancellation cannot activate or reorder the previous window.
@@ -971,56 +1071,113 @@ impl App {
     }
     unsafe fn build_settings(&mut self) {
         unsafe {
-            let w = window(rect(0., 0., 480., 660.), 1 | 2 | 4 | 32768);
-            let _: () = msg_send![&w, setTitle:&*NSString::from_str("AMSpace")];
+            let screen: Obj = msg_send![class!(NSScreen), mainScreen];
+            let visible: NSRect = if screen.is_null() {
+                rect(0., 0., 1440., 900.)
+            } else {
+                msg_send![screen, visibleFrame]
+            };
+            let width = (visible.size.width - 48.).clamp(700., 836.);
+            let height = (visible.size.height - 32.).clamp(560., 740.);
+            let content_width = width - 268.;
+            let tab_height = height - 210.;
+            let w = window(rect(0., 0., width, height), 1 | 2 | 4 | 32768);
+            let _: () = msg_send![&w, setTitle:&*NSString::from_str("Ajustes de AMSpace")];
             let _: () = msg_send![&w, setTitleVisibility:1isize];
             let _: () = msg_send![&w, setTitlebarAppearsTransparent:true];
             let _: () = msg_send![&w, setHidesOnDeactivate:false];
             let _: () = msg_send![&w, center];
-            let effect = alloc_view(class!(NSVisualEffectView), rect(0., 0., 480., 660.));
-            let _: () = msg_send![&effect, setMaterial:12isize];
-            let _: () = msg_send![&effect, setBlendingMode:0isize];
-            let _: () = msg_send![&effect, setState:1isize];
-            let _: () = msg_send![&w, setContentView:&*effect];
-            let root = Retained::as_ptr(&effect) as Obj;
+            let root: Obj = msg_send![&w, contentView];
             let target = Retained::as_ptr(&self.target) as Obj;
-            label(root, rect(28., 571., 250., 42.), "amspace", 30., 0.5, false);
+            let sidebar = alloc_view(class!(NSVisualEffectView), rect(0., 0., 184., height));
+            let _: () = msg_send![&sidebar, setMaterial:7isize];
+            let _: () = msg_send![&sidebar, setBlendingMode:0isize];
+            let _: () = msg_send![root, addSubview:&*sidebar];
+            let side = Retained::as_ptr(&sidebar) as Obj;
             label(
-                root,
-                rect(29., 543., 350., 22.),
-                "Tu espacio. Tu foco.",
-                13.,
-                0.,
-                true,
+                side,
+                rect(20., height - 82., 150., 32.),
+                "amspace",
+                23.,
+                0.5,
+                false,
             );
+            for (i, title) in ["Ventanas", "Barra de menús", "Mosaico", "General"]
+                .iter()
+                .enumerate()
+            {
+                let b = button(
+                    side,
+                    rect(12., height - 149. - i as f64 * 44., 160., 36.),
+                    title,
+                    target,
+                    14 + i as isize,
+                );
+                let _: () = msg_send![b, setButtonType:1usize];
+                let _: () = msg_send![b, setBezelStyle:13usize];
+                let _: () = msg_send![b, setAlignment:0isize];
+                let _: () = msg_send![b, setState:if i == 0 {1isize} else {0isize}];
+                self.navigation.push(b);
+            }
             self.preview = label(
-                root,
-                rect(324., 578., 128., 28.),
+                side,
+                rect(20., 144., 145., 28.),
                 &self.last_title,
                 18.,
                 0.3,
                 false,
             );
-            let _: () = msg_send![self.preview, setAlignment:2isize];
-            let segmented = alloc_view(class!(NSSegmentedControl), rect(24., 496., 432., 32.));
-            let _: () = msg_send![&segmented, setSegmentCount:4isize];
-            for (i, title) in ["Ventanas", "Escritorios", "Tiling", "Aplicación"]
-                .iter()
-                .enumerate()
-            {
-                let _: () = msg_send![&segmented, setLabel:&*NSString::from_str(title), forSegment:i as isize];
-                let _: () = msg_send![&segmented, setWidth:108f64, forSegment:i as isize];
-            }
-            let _: () = msg_send![&segmented, setSelectedSegment:0isize];
-            let _: () = msg_send![&segmented, setTarget:target];
-            let _: () = msg_send![&segmented, setAction:sel!(change:)];
-            let _: () = msg_send![&segmented, setTag:13isize];
-            let _: () = msg_send![root, addSubview:&*segmented];
-            let tabs = alloc_view(class!(NSTabView), rect(24., 120., 432., 360.));
+            button(
+                side,
+                rect(12., 65., 160., 28.),
+                "Acerca de AMSpace",
+                target,
+                10,
+            );
+            button(side, rect(12., 29., 160., 28.), "Salir", target, 7);
+            self.page_title = label(
+                root,
+                rect(220., height - 82., 432., 32.),
+                "Ventanas",
+                24.,
+                0.4,
+                false,
+            );
+            let tabs = alloc_view(
+                class!(NSTabView),
+                rect(220., 108., content_width, tab_height),
+            );
             let _: () = msg_send![&tabs, setTabViewType:6usize];
             for i in 0..4 {
-                let view = alloc_view(class!(NSView), rect(0., 0., 432., 360.));
-                let page = Retained::as_ptr(&view) as Obj;
+                let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
+                let page_height = if i == 2 {
+                    settings_tile_geometry(content_width).0
+                } else {
+                    360.
+                };
+                let inner = alloc_view(
+                    class!(NSView),
+                    if i == 2 {
+                        rect(0., 0., content_width, page_height)
+                    } else {
+                        rect((content_width - 432.) / 2., tab_height - 360., 432., 360.)
+                    },
+                );
+                if i == 2 {
+                    let scroll = alloc_view(
+                        class!(NSScrollView),
+                        rect(0., 0., content_width, tab_height),
+                    );
+                    let _: () = msg_send![&scroll,setHasVerticalScroller:true];
+                    let _: () = msg_send![&scroll,setAutohidesScrollers:true];
+                    let _: () = msg_send![&scroll,setDrawsBackground:false];
+                    let _: () = msg_send![&scroll,setDocumentView:&*inner];
+                    let _: () = msg_send![&view,addSubview:&*scroll];
+                    let _: () = msg_send![&inner,scrollPoint:NSPoint::new(0.,(page_height-tab_height).max(0.))];
+                } else {
+                    let _: () = msg_send![&view,addSubview:&*inner];
+                }
+                let page = Retained::as_ptr(&inner) as Obj;
                 match i {
                     0 => self.build_window_page(page, target),
                     1 => self.build_space_page(page, target),
@@ -1033,51 +1190,55 @@ impl App {
             }
             let _: () = msg_send![root, addSubview:&*tabs];
             self.tabs = Retained::as_ptr(&tabs) as Obj;
-            self.permission = label(root, rect(29., 89., 290., 18.), "", 11., 0., true);
+            self.permission = label(
+                root,
+                rect(238., 69., content_width - 165., 18.),
+                "",
+                11.,
+                0.,
+                true,
+            );
             button(
                 root,
-                rect(332., 82., 125., 28.),
+                rect(width - 180., 61., 134., 30.),
                 "Accesibilidad…",
                 target,
                 6,
             );
-            self.feedback = label(root, rect(29., 64., 425., 18.), "", 10., 0., true);
-            label(root, rect(29., 25., 110., 20.), "AMSPACE", 10., 0.3, true);
-            button(root, rect(234., 19., 116., 28.), "Acerca de…", target, 10);
-            button(root, rect(355., 19., 103., 28.), "Salir", target, 7);
+            self.feedback = label(
+                root,
+                rect(238., 16., content_width - 18., 40.),
+                "",
+                11.,
+                0.,
+                true,
+            );
+            let _: () = msg_send![self.feedback, setMaximumNumberOfLines:2isize];
             self.settings = Some(w);
         }
     }
     unsafe fn build_window_page(&mut self, root: Obj, target: Obj) {
         unsafe {
-            card(root, rect(0., 164., 432., 196.));
+            card(root, rect(0., 180., 432., 180.));
             label(
                 root,
-                rect(18., 324., 310., 22.),
+                rect(18., 319., 310., 24.),
                 "Borde de la ventana activa",
                 14.,
                 0.3,
                 false,
             );
-            label(
-                root,
-                rect(18., 299., 350., 20.),
-                "Un contorno sutil para situarte al instante.",
-                12.,
-                0.,
-                true,
-            );
             self.border_switch = toggle(
                 root,
                 374.,
-                324.,
+                319.,
                 "Borde de la ventana activa",
                 target,
                 1,
                 self.border_enabled,
             );
-            label(root, rect(18., 263., 90., 22.), "Color", 13., 0., false);
-            let well = alloc_view(class!(NSColorWell), rect(365., 257., 48., 30.));
+            label(root, rect(18., 265., 90., 22.), "Color", 13., 0., false);
+            let well = alloc_view(class!(NSColorWell), rect(365., 260., 48., 30.));
             let _: () = msg_send![&well, setColor:color(self.rgb[0],self.rgb[1],self.rgb[2],1.)];
             let _: () = msg_send![&well, setTarget:target];
             let _: () = msg_send![&well, setAction:sel!(change:)];
@@ -1097,29 +1258,23 @@ impl App {
             {
                 let b = button(
                     root,
-                    rect(105. + i as f64 * 56., 259., 50., 28.),
+                    rect(105. + i as f64 * 56., 260., 50., 28.),
                     "●",
                     target,
                     20 + i as isize,
                 );
-                let attrs: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
-                let _: () = msg_send![&attrs, setObject:color(rgb[0],rgb[1],rgb[2],1.), forKey:&*NSString::from_str("NSColor")];
-                let title: Allocated<AnyObject> = msg_send![class!(NSAttributedString), alloc];
-                let title: Retained<AnyObject> =
-                    msg_send![title, initWithString:&*NSString::from_str("●"), attributes:&*attrs];
-                let _: () = msg_send![b, setAttributedTitle:&*title];
-                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(name)];
+                paint_swatch(b, name, *rgb);
             }
-            label(root, rect(18., 215., 90., 22.), "Grosor", 13., 0., false);
+            label(root, rect(18., 212., 90., 22.), "Grosor", 13., 0., false);
             self.width_label = label(
                 root,
-                rect(360., 215., 58., 22.),
+                rect(360., 212., 58., 22.),
                 &format!("{:.1} pt", self.width),
                 12.,
                 0.,
                 true,
             );
-            let slider = alloc_view(class!(NSSlider), rect(105., 214., 230., 24.));
+            let slider = alloc_view(class!(NSSlider), rect(105., 211., 230., 24.));
             let _: () = msg_send![&slider, setMinValue:1f64];
             let _: () = msg_send![&slider, setMaxValue:6f64];
             let _: () = msg_send![&slider, setDoubleValue:self.width];
@@ -1130,77 +1285,54 @@ impl App {
             let _: () = msg_send![&slider, setAccessibilityLabel:&*NSString::from_str("Grosor del borde en puntos")];
             let _: () = msg_send![root, addSubview:&*slider];
             self.slider = Retained::as_ptr(&slider) as Obj;
+            card(root, rect(0., 20., 432., 144.));
             label(
                 root,
-                rect(18., 181., 350., 18.),
-                "Esquinas suaves · sin interceptar tus clics",
-                11.,
-                0.,
-                true,
-            );
-            card(root, rect(0., 0., 432., 152.));
-            label(
-                root,
-                rect(18., 118., 310., 22.),
-                "El foco sigue al cursor",
+                rect(18., 122., 310., 24.),
+                "Enfocar al pasar el cursor",
                 14.,
                 0.3,
                 false,
             );
-            label(
-                root,
-                rect(18., 94., 350., 19.),
-                "Activa la ventana al detenerte sobre ella.",
-                12.,
-                0.,
-                true,
-            );
-            label(
-                root,
-                rect(18., 74., 350., 17.),
-                "Mantén ⌥ para pausar. No actúa al arrastrar.",
-                11.,
-                0.,
-                true,
-            );
             self.hover_switch = toggle(
                 root,
                 374.,
-                118.,
-                "El foco sigue al cursor",
+                122.,
+                "Enfocar al pasar el cursor",
                 target,
                 2,
                 self.hover_enabled,
             );
             label(
                 root,
-                rect(18., 39., 310., 22.),
+                rect(18., 77., 310., 22.),
                 "Traer al primer plano",
                 13.,
-                0.3,
-                false,
-            );
-            label(
-                root,
-                rect(18., 15., 350., 18.),
-                "Al enfocar, sitúa la ventana sobre las demás.",
-                11.,
                 0.,
-                true,
+                false,
             );
             self.raise_switch = toggle(
                 root,
                 374.,
-                39.,
+                77.,
                 "Traer al primer plano",
                 target,
                 11,
                 self.raise_enabled,
             );
             let _: () = msg_send![self.raise_switch, setEnabled:self.hover_enabled];
+            label(
+                root,
+                rect(18., 36., 385., 18.),
+                "Mantén ⌥ para pausar el foco automático.",
+                11.,
+                0.,
+                true,
+            );
         }
     }
     fn configure_tiling(&mut self) {
+        self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.tile_timer.take() {
                 let _: () = msg_send![&t, invalidate];
@@ -1210,6 +1342,7 @@ impl App {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             if crate::tile_manager::pref(defaults, "tile.enabled") == 0
                 || self.sleeping
+                || crate::desktop_mode::active()
                 || !ax::trusted()
             {
                 self.layout_picker = None;
@@ -1237,7 +1370,7 @@ impl App {
                 crate::tile_hotkey::Action::Layouts,
             );
             if self.tile_hotkey.is_none() {
-                self.feedback("Atajo ocupado: elige otra combinación en Tiling.");
+                self.feedback("Atajo ocupado: elige otra combinación en Mosaico.");
             }
             self.refresh_picker_hint();
             self.update_tile_timer();
@@ -1267,7 +1400,7 @@ impl App {
             .current_workspace()
             .map(|key| key.1)
             .or_else(crate::tile_manager::current_space);
-        if self.tile_controls.len() != 4 {
+        if self.tile_controls.len() != 3 {
             return;
         }
         unsafe {
@@ -1275,37 +1408,65 @@ impl App {
             let title = if let Some(id) = self.tile_space {
                 let snapshot = spaces::snapshot();
                 format!(
-                    "Escritorio {} · distribución independiente",
+                    "Escritorio {}",
                     snapshot.desktops.iter().position(|s| *s == id).unwrap_or(0) + 1
                 )
             } else {
-                "Pantalla completa · selecciona un escritorio".into()
+                "Selecciona un escritorio".into()
             };
             text(self.tile_controls[0], &title);
             let enabled = self.tile_space.is_some();
             let _: () = msg_send![self.tile_controls[1],setEnabled:enabled];
-            let _: () = msg_send![self.tile_controls[2],setEnabled:enabled];
-            if let Some(context) = self.tile_manager.picker_context() {
-                for layout in [
-                    crate::tiling::Layout::ThreeBands,
-                    crate::tiling::Layout::FourBands,
-                ] {
-                    let item: Obj = msg_send![self.tile_controls[2],itemAtIndex:layout.index()];
-                    let _: () = msg_send![item,setTitle:&*NSString::from_str(layout.screen_name(context.area))];
+            let context = self.tile_manager.picker_context();
+            let area = context.as_ref().map(|c| c.area).unwrap_or_else(|| {
+                let screen: Obj = msg_send![class!(NSScreen), mainScreen];
+                msg_send![screen, visibleFrame]
+            });
+            let portrait = area.size.height > area.size.width;
+            let redraw = self.tile_preview_portrait != Some(portrait);
+            let current = self.tile_manager.current_layout(defaults);
+            for (button, layout) in self.tile_choices.iter().zip(crate::tiling::Layout::ALL) {
+                let valid = enabled
+                    && context
+                        .as_ref()
+                        .is_none_or(|c| c.proposal(layout).is_some());
+                let _: () = msg_send![*button,setEnabled:valid];
+                let _: () = msg_send![*button,setState:if current == layout {1isize} else {0isize}];
+                let layer: Obj = msg_send![*button, layer];
+                let accent: Obj = msg_send![class!(NSColor), controlAccentColor];
+                let background: Obj = if current == layout {
+                    msg_send![accent, colorWithAlphaComponent:0.18f64]
+                } else {
+                    msg_send![class!(NSColor), controlBackgroundColor]
+                };
+                let stroke: Obj = if current == layout {
+                    accent
+                } else {
+                    msg_send![class!(NSColor), separatorColor]
+                };
+                let cg: *const std::ffi::c_void = msg_send![background, CGColor];
+                let border: *const std::ffi::c_void = msg_send![stroke, CGColor];
+                let _: () = msg_send![layer, setBackgroundColor:cg];
+                let _: () = msg_send![layer, setBorderColor:border];
+                let _: () =
+                    msg_send![*button,setTitle:&*NSString::from_str(layout.short_name(area))];
+                if redraw {
+                    let image = crate::layout_thumbnail::image(layout, portrait);
+                    let _: () = msg_send![*button,setImage:&*image];
                 }
             }
+            self.tile_preview_portrait = Some(portrait);
             if let Some(id) = self.tile_space {
                 let _: () = msg_send![self.tile_controls[1],setState:1-crate::tile_manager::pref(defaults,&format!("tile.off.{id}")).clamp(0,1)];
-                let _: () = msg_send![self.tile_controls[2],selectItemAtIndex:self.tile_manager.current_layout(defaults).index()];
             }
             text(
-                self.tile_controls[3],
+                self.tile_controls[2],
                 if self.tile_hotkey.is_none()
                     && crate::tile_manager::pref(defaults, "tile.enabled") != 0
                 {
                     "Atajo no disponible."
                 } else {
-                    "Atajo: flotante ↔ tile."
+                    ""
                 },
             );
         }
@@ -1313,115 +1474,101 @@ impl App {
     unsafe fn build_tile_page(&mut self, root: Obj, target: Obj) {
         unsafe {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
-            card(root, rect(0., 282., 432., 78.));
+            let bounds: NSRect = msg_send![root, bounds];
+            let width = bounds.size.width;
+            let (height, cards) = settings_tile_geometry(width);
+            card(root, rect(0., height - 64., width, 64.));
             label(
                 root,
-                rect(18., 326., 340., 22.),
-                "Gestor de ventanas en mosaico",
+                rect(18., height - 43., width - 90., 24.),
+                "Activar mosaico",
                 14.,
                 0.3,
                 false,
             );
             toggle(
                 root,
-                374.,
-                326.,
-                "Activar tiling",
+                width - 58.,
+                height - 43.,
+                "Activar mosaico",
                 target,
                 40,
                 crate::tile_manager::pref(defaults, "tile.enabled") != 0,
             );
-            label(
+            let title = label(
                 root,
-                rect(18., 299., 395., 20.),
-                "Al desactivarlo, recuperas los tamaños y posiciones previos.",
-                11.,
-                0.,
-                true,
-            );
-            let title = label(root, rect(18., 249., 395., 22.), "", 12., 0.3, false);
-            label(
-                root,
-                rect(18., 215., 310., 22.),
-                "Usar mosaico en este escritorio",
-                13.,
-                0.,
+                rect(18., height - 104., width - 90., 24.),
+                "",
+                14.,
+                0.3,
                 false,
             );
             let enabled = toggle(
                 root,
-                374.,
-                215.,
+                width - 58.,
+                height - 104.,
                 "Mosaico en este escritorio",
                 target,
                 41,
                 true,
             );
+            for (i, layout) in crate::tiling::Layout::ALL.into_iter().enumerate() {
+                let b = button(root, cards[i], layout.name(), target, 80 + i as isize);
+                let _: () = msg_send![b, setButtonType:1usize];
+                let _: () = msg_send![b, setBezelStyle:6usize];
+                let _: () = msg_send![b, setBordered:false];
+                let _: () = msg_send![b, setWantsLayer:true];
+                let layer: Obj = msg_send![b, layer];
+                let _: () = msg_send![layer, setCornerRadius:10f64];
+                let _: () = msg_send![layer, setBorderWidth:1f64];
+                let _: () = msg_send![b, setImagePosition:5usize];
+                let font: Obj = msg_send![class!(NSFont), systemFontOfSize:11f64,weight:0.2f64];
+                let _: () = msg_send![b, setFont:font];
+                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("Plantilla: {}",layout.name()))];
+                self.tile_choices.push(b);
+            }
             label(
                 root,
-                rect(18., 179., 130., 22.),
-                "Plantilla",
-                13.,
-                0.,
-                false,
-            );
-            let layout = popup(
-                root,
-                rect(160., 173., 254., 30.),
-                &[
-                    "Dwindle · divisiones",
-                    "Espiral",
-                    "Cuadrícula simétrica",
-                    "Principal y secundarias",
-                    "3 divisiones · según pantalla",
-                    "4 divisiones · según pantalla",
-                ],
-                target,
-                42,
-            );
-            label(
-                root,
-                rect(18., 141., 340., 22.),
-                "Colocación inteligente con ratón",
+                rect(18., 154., width - 90., 22.),
+                "Colocación inteligente",
                 13.,
                 0.,
                 false,
             );
             toggle(
                 root,
-                374.,
-                141.,
+                width - 58.,
+                154.,
                 "Colocación inteligente",
                 target,
                 43,
                 crate::tile_manager::pref(defaults, "tile.simple") == 0,
             );
-            label(
-                root,
-                rect(18., 115., 400., 18.),
-                "Arrastra el título. Bordes: divide; centro: intercambia.",
-                11.,
-                0.,
-                true,
-            );
             button(
                 root,
-                rect(15., 88., 196., 28.),
+                rect(15., 110., (width - 36.) / 2., 28.),
                 "Rejilla y distribución…",
                 target,
                 49,
             );
+            button(
+                root,
+                rect(width / 2. + 3., 110., (width - 36.) / 2., 28.),
+                "Atajo del selector…",
+                target,
+                54,
+            );
             label(
                 root,
-                rect(18., 59., 150., 22.),
-                "Flotante ↔ tile",
+                rect(18., 65., 150., 22.),
+                "Ventana flotante",
                 13.,
                 0.3,
                 false,
             );
             let mods = popup(
                 root,
-                rect(178., 53., 120., 30.),
+                rect(width - 254., 59., 120., 30.),
                 &crate::tile_hotkey::MODIFIERS
                     .iter()
                     .map(|(s, _)| *s)
@@ -1431,7 +1578,7 @@ impl App {
             );
             let keys = popup(
                 root,
-                rect(304., 53., 110., 30.),
+                rect(width - 128., 59., 110., 30.),
                 &crate::tile_hotkey::KEYS
                     .iter()
                     .map(|(s, _)| *s)
@@ -1439,24 +1586,17 @@ impl App {
                 target,
                 45,
             );
-            let _: () = msg_send![mods,selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.mods")) as isize];
-            let _: () = msg_send![keys,selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults,"tile.key")) as isize];
+            let _: () = msg_send![mods, selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.mods")) as isize];
+            let _: () = msg_send![keys, selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults,"tile.key")) as isize];
+            let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
             button(
                 root,
-                rect(217., 88., 198., 28.),
-                "Plantillas y atajo…",
-                target,
-                54,
-            );
-            let hint = label(root, rect(18., 17., 225., 24.), "", 11., 0., true);
-            button(
-                root,
-                rect(251., 12., 165., 30.),
+                rect(width - 181., 12., 165., 30.),
                 "Apps flotantes…",
                 target,
                 46,
             );
-            self.tile_controls = vec![title, enabled, layout, hint];
+            self.tile_controls = vec![title, enabled, hint];
             self.refresh_tile_controls();
         }
     }
@@ -1614,6 +1754,7 @@ Otras apps pueden tener atajos propios no detectables.",
         }
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         if self.sleeping
+            || crate::desktop_mode::active()
             || self.switching.is_some()
             || !ax::trusted()
             || crate::tile_manager::pref(defaults, "tile.enabled") == 0
@@ -1869,56 +2010,48 @@ Otras apps pueden tener atajos propios no detectables.",
     }
     unsafe fn build_application_page(&mut self, root: Obj, target: Obj) {
         unsafe {
-            card(root, rect(0., 282., 432., 78.));
+            card(root, rect(0., 284., 432., 76.));
             label(
                 root,
-                rect(18., 328., 310., 22.),
+                rect(18., 311., 310., 24.),
                 "Abrir al iniciar sesión",
                 14.,
                 0.3,
                 false,
             );
-            label(
-                root,
-                rect(18., 301., 350., 20.),
-                "Disponible en cuanto empieza tu día.",
-                12.,
-                0.,
-                true,
-            );
             self.login = toggle(
                 root,
                 374.,
-                326.,
+                311.,
                 "Abrir al iniciar sesión",
                 target,
                 5,
                 false,
             );
-            card(root, rect(0., 137., 432., 133.));
+            card(root, rect(0., 132., 432., 136.));
             label(
                 root,
-                rect(18., 231., 240., 22.),
-                concat!("Versión ", env!("CARGO_PKG_VERSION")),
+                rect(18., 227., 240., 24.),
+                "Actualizaciones",
                 14.,
                 0.3,
                 false,
             );
-            let check = button(root, rect(300., 225., 113., 30.), "Buscar…", target, 8);
+            let check = button(root, rect(299., 222., 115., 30.), "Buscar ahora", target, 8);
             let available = self.updater.is_some();
             let _: () = msg_send![check, setEnabled:available];
             label(
                 root,
-                rect(18., 195., 345., 20.),
-                "Buscar actualizaciones automáticamente",
-                12.,
+                rect(18., 176., 340., 22.),
+                "Buscar automáticamente",
+                13.,
                 0.,
                 false,
             );
             self.updates_switch = toggle(
                 root,
                 374.,
-                190.,
+                176.,
                 "Buscar actualizaciones automáticamente",
                 target,
                 9,
@@ -1927,73 +2060,95 @@ Otras apps pueden tener atajos propios no detectables.",
             let _: () = msg_send![self.updates_switch, setEnabled:available];
             label(
                 root,
-                rect(18., 164., 360., 18.),
-                "Avisos diarios · tú decides cuándo instalar.",
-                11.,
-                0.,
-                true,
-            );
-            label(
-                root,
-                rect(18., 88., 390., 24.),
-                "Creado por Alberto Martín",
+                rect(18., 77., 245., 24.),
+                concat!("AMSpace ", env!("CARGO_PKG_VERSION")),
                 14.,
                 0.3,
                 false,
             );
-            label(
-                root,
-                rect(18., 62., 390., 20.),
-                "Rust y macOS. Sin cuentas ni telemetría.",
-                12.,
-                0.,
-                true,
-            );
             button(
                 root,
-                rect(15., 19., 185., 28.),
+                rect(240., 72., 176., 30.),
                 "Historial de versiones",
                 target,
                 32,
             );
+            label(
+                root,
+                rect(18., 44., 380., 20.),
+                "Alberto Martín",
+                12.,
+                0.,
+                true,
+            );
+        }
+    }
+    fn apply_bar_background(&self) {
+        unsafe {
+            let index = crate::bar_background::normalize(crate::tile_manager::pref(
+                Retained::as_ptr(&self.defaults) as Obj,
+                "barBackground",
+            ));
+            let parent: Obj = msg_send![&self.status, button];
+            crate::bar_background::apply(parent, index);
+            for (i, button) in self.bar_colors.iter().enumerate() {
+                let _: () = msg_send![*button, setState:if i == index {1isize} else {0isize}];
+                let _: () = msg_send![*button, setAccessibilityValue:&*NSString::from_str(if i == index {"Seleccionado"} else {""})];
+            }
         }
     }
     unsafe fn build_space_page(&mut self, root: Obj, target: Obj) {
         unsafe {
             self.space_page = root;
+            card(root, rect(0., 216., 432., 144.));
             label(
                 root,
-                rect(18., 327., 220., 22.),
-                "Mostrar escritorios como",
-                13.,
+                rect(18., 322., 300., 22.),
+                "Fondo del widget",
+                14.,
+                0.3,
+                false,
+            );
+            for (i, (name, rgb)) in crate::bar_background::OPTIONS.iter().enumerate() {
+                let x = 16. + i as f64 * 57.;
+                let b = button(
+                    root,
+                    rect(x, 265., 54., 40.),
+                    if rgb.is_none() { "∅" } else { "●" },
+                    target,
+                    70 + i as isize,
+                );
+                let _: () = msg_send![b, setButtonType:1usize];
+                let _: () = msg_send![b, setBezelStyle:13usize];
+                let accessibility = format!("Fondo del widget: {name}");
+                if let Some(rgb) = rgb {
+                    paint_swatch(b, &accessibility, rgb.map(|n| n as f64 / 255.));
+                } else {
+                    let _: () =
+                        msg_send![b, setAccessibilityLabel:&*NSString::from_str(&accessibility)];
+                }
+                let caption = label(root, rect(x - 1., 239., 56., 18.), name, 10., 0., true);
+                let _: () = msg_send![caption, setAlignment:1isize];
+                self.bar_colors.push(b);
+            }
+            self.apply_bar_background();
+            label(
+                root,
+                rect(18., 171., 210., 22.),
+                "Escritorios",
+                14.,
                 0.3,
                 false,
             );
             let menu = popup(
                 root,
-                rect(248., 321., 168., 30.),
+                rect(248., 165., 168., 30.),
                 &["Puntos", "Números", "Iconos"],
                 target,
                 12,
             );
             let _: () = msg_send![menu, selectItemAtIndex:space_style::mode(Retained::as_ptr(&self.defaults) as Obj)];
-            label(
-                root,
-                rect(18., 291., 400., 20.),
-                "El activo destaca; los demás quedan atenuados.",
-                12.,
-                0.,
-                true,
-            );
-            label(
-                root,
-                rect(18., 265., 400., 18.),
-                "Elige un icono para cada escritorio de esta pantalla.",
-                11.,
-                0.,
-                true,
-            );
-            let scroll = alloc_view(class!(NSScrollView), rect(0., 10., 432., 242.));
+            let scroll = alloc_view(class!(NSScrollView), rect(0., 0., 432., 150.));
             let _: () = msg_send![&scroll, setHasVerticalScroller:true];
             let _: () = msg_send![&scroll, setAutohidesScrollers:true];
             let _: () = msg_send![&scroll, setDrawsBackground:false];
@@ -2010,14 +2165,15 @@ Otras apps pueden tener atajos propios no detectables.",
             let snapshot = spaces::snapshot();
             self.space_ids = snapshot.desktops.clone();
             self.space_controls.clear();
-            let height = (snapshot.desktops.len() as f64 * 58.).max(242.);
+            let viewport: NSRect = msg_send![self.space_scroll, bounds];
+            let height = (snapshot.desktops.len() as f64 * 52.).max(viewport.size.height);
             let document = alloc_view(class!(NSView), rect(0., 0., 415., height));
             let root = Retained::as_ptr(&document) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             let names: Vec<_> = space_style::ICONS.iter().map(|(name, _)| *name).collect();
             for (index, id) in snapshot.desktops.iter().enumerate() {
-                let y = height - (index + 1) as f64 * 58.;
+                let y = height - (index + 1) as f64 * 52.;
                 label(
                     root,
                     rect(18., y + 18., 180., 22.),
@@ -2055,7 +2211,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 );
             }
             let _: () = msg_send![self.space_scroll, setDocumentView:&*document];
-            let _: () = msg_send![root, scrollPoint:NSPoint::new(0., (height - 242.).max(0.))];
+            let _: () = msg_send![root, scrollPoint:NSPoint::new(0., (height - viewport.size.height).max(0.))];
         }
     }
     fn check_updates(&self) {
@@ -2234,14 +2390,41 @@ Otras apps pueden tener atajos propios no detectables.",
                     }
                     self.refresh_spaces();
                 }
-                13 => {
-                    let selected: isize = msg_send![sender, selectedSegment];
+                14..=17 => {
+                    let selected = tag - 14;
                     let _: () = msg_send![self.tabs, selectTabViewItemAtIndex:selected];
+                    for (i, button) in self.navigation.iter().enumerate() {
+                        let _: () = msg_send![*button, setState:if i == selected as usize {1isize} else {0isize}];
+                    }
+                    text(
+                        self.page_title,
+                        ["Ventanas", "Barra de menús", "Mosaico", "General"][selected as usize],
+                    );
                     if selected == 1 {
                         self.rebuild_space_rows();
                     }
                 }
-                40..=45 => {
+                70..=76 => {
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "barBackground",
+                        tag - 70,
+                    );
+                    self.apply_bar_background();
+                }
+                80..=87 => {
+                    let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                    let layout = crate::tiling::Layout::from_selection(tag - 80);
+                    if !self.tile_manager.reset_template(defaults, layout) {
+                        self.feedback(if crate::desktop_mode::active() {
+                            "Mostrar escritorio: el mosaico está en pausa."
+                        } else {
+                            "La plantilla no admite estas ventanas o el escritorio ha cambiado."
+                        });
+                    }
+                    self.refresh_tile_controls();
+                }
+                40 | 41 | 43..=45 => {
                     let defaults = Retained::as_ptr(&self.defaults) as Obj;
                     let selected: isize = if tag == 40 || tag == 41 || tag == 43 {
                         msg_send![sender, state]
@@ -2267,12 +2450,6 @@ Otras apps pueden tener atajos propios no detectables.",
                                     self.tile_manager.restore_space(id);
                                 }
                             }
-                        }
-                        42 => {
-                            self.tile_manager.reset_template(
-                                defaults,
-                                crate::tiling::Layout::from_index(selected),
-                            );
                         }
                         43 => crate::tile_manager::save(defaults, "tile.simple", 1 - selected),
                         44 | 45 => {
@@ -2749,6 +2926,67 @@ pub fn toggle_tile_float() {
         a.update_window();
     });
 }
+pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
+    with_app(|a| {
+        a.pending_focus = None;
+        a.focus_target = None;
+        a.layout_picker = None;
+        a.hover_probe.reset();
+        a.tile_manager.set_presentation(mode);
+        a.update_presentation_timer();
+        if mode != crate::desktop_mode::Mode::Normal {
+            unsafe {
+                if let Some(timer) = a.tile_timer.take() {
+                    let _: () = msg_send![&timer, invalidate];
+                }
+                if let Some(timer) = a.hover_timer.take() {
+                    let _: () = msg_send![&timer, invalidate];
+                }
+            }
+            ws::stop();
+            a.hide_border();
+        } else {
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            a.configure_hover();
+            a.configure_tiling();
+            a.settle_focus();
+            unsafe {
+                let _: () = msg_send![&a.target, performSelector:sel!(resumeDesktop:), withObject:ptr::null::<AnyObject>(), afterDelay:0.65f64];
+            }
+        }
+    });
+}
+extern "C-unwind" fn desktop_lifecycle(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.ensure_desktop_observer());
+}
+extern "C-unwind" fn presentation_tick(_: Obj, _: Sel, _: Obj) {
+    autoreleasepool(|_| crate::desktop_mode::refresh());
+}
+extern "C-unwind" fn resume_desktop(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| {
+        if crate::desktop_mode::active() {
+            return;
+        }
+        if !a
+            .tile_manager
+            .finish_deferred_restores(Retained::as_ptr(&a.defaults) as Obj)
+        {
+            unsafe {
+                let _: () = msg_send![&a.target, performSelector:sel!(resumeDesktop:), withObject:ptr::null::<AnyObject>(), afterDelay:0.2f64];
+            }
+        }
+    });
+}
+extern "C-unwind" fn desktop_distributed(_: Obj, _: Sel, notification: Obj) {
+    unsafe {
+        let name: *mut NSString = msg_send![notification, name];
+        if let Some(name) = name.as_ref() {
+            if let Some(mode) = crate::desktop_mode::distributed_mode(&name.to_string()) {
+                crate::desktop_mode::update(mode);
+            }
+        }
+    }
+}
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
@@ -2816,6 +3054,7 @@ extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: O
 }
 extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
+        a.ensure_desktop_observer();
         a.tile_manager.invalidate();
         a.refresh_tile_controls();
         a.refresh_spaces();
@@ -2836,6 +3075,7 @@ extern "C-unwind" fn became_active(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn sleep(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
         a.sleeping = true;
+        a.update_presentation_timer();
         a.configure_hover();
         a.configure_tiling();
         a.update_window();
@@ -2844,6 +3084,8 @@ extern "C-unwind" fn sleep(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn wake(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
         a.sleeping = false;
+        crate::desktop_mode::refresh();
+        a.update_presentation_timer();
         a.configure_hover();
         a.configure_tiling();
         a.refresh_spaces();
@@ -2924,6 +3166,10 @@ pub fn run() {
             (sel!(tileTick:), tile_tick),
             (sel!(layoutChoice:), layout_choice),
             (sel!(screensChanged:), screens_changed),
+            (sel!(desktopLifecycle:), desktop_lifecycle),
+            (sel!(desktopDistributed:), desktop_distributed),
+            (sel!(presentationTick:), presentation_tick),
+            (sel!(resumeDesktop:), resume_desktop),
             (sel!(focusPending:), focus_pending),
             (sel!(update:), update),
             (sel!(settle:), settle),
@@ -2972,6 +3218,17 @@ pub fn run() {
             observe(center, Retained::as_ptr(&target) as Obj, name, sel!(sleep:));
         }
         for name in [
+            "NSWorkspaceDidLaunchApplicationNotification",
+            "NSWorkspaceDidTerminateApplicationNotification",
+        ] {
+            observe(
+                center,
+                Retained::as_ptr(&target) as Obj,
+                name,
+                sel!(desktopLifecycle:),
+            );
+        }
+        for name in [
             "NSWorkspaceDidWakeNotification",
             "NSWorkspaceScreensDidWakeNotification",
             "NSWorkspaceSessionDidBecomeActiveNotification",
@@ -2991,6 +3248,10 @@ pub fn run() {
             "NSApplicationDidBecomeActiveNotification",
             sel!(becameActive:),
         );
+        let distributed: Obj = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
+        for (name, _) in crate::desktop_mode::DISTRIBUTED_NOTIFICATIONS {
+            let _: () = msg_send![distributed, addObserver:&*target, selector:sel!(desktopDistributed:), name:&*NSString::from_str(name), object:ptr::null::<AnyObject>(), suspensionBehavior:4usize];
+        }
         APP.with(|cell| *cell.borrow_mut() = Some(App::new(target)));
         app
     });

@@ -5,33 +5,38 @@ use objc2_foundation::{NSPoint, NSRect};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {
     #[default]
-    Dwindle,
-    Spiral,
-    Grid,
-    Master,
-    ThreeBands,
-    FourBands,
+    Spiral = 1,
+    Grid = 2,
+    Master = 3,
+    ThreeBands = 4,
+    FourBands = 5,
+    Centered = 6,
+    CenteredWide = 7,
+    VerticalMaster = 8,
 }
 impl Layout {
-    pub const ALL: [Self; 6] = [
-        Self::Dwindle,
+    pub const ALL: [Self; 8] = [
         Self::Spiral,
         Self::Grid,
         Self::Master,
         Self::ThreeBands,
         Self::FourBands,
+        Self::Centered,
+        Self::CenteredWide,
+        Self::VerticalMaster,
     ];
     pub fn name(self) -> &'static str {
         match self {
-            Self::Dwindle => "Dwindle",
             Self::Spiral => "Espiral",
             Self::Grid => "Cuadrícula",
             Self::Master => "Principal",
             Self::ThreeBands => "División en 3",
             Self::FourBands => "División en 4",
+            Self::Centered => "Principal centrada",
+            Self::CenteredWide => "Centrada XL · 3 por lado",
+            Self::VerticalMaster => "Principal vertical",
         }
     }
-
     pub fn screen_name(self, area: NSRect) -> &'static str {
         match (self, area.size.width >= area.size.height) {
             (Self::ThreeBands, true) => "3 columnas",
@@ -41,18 +46,56 @@ impl Layout {
             _ => self.name(),
         }
     }
+    /// Stable preference identifiers; the retired Dwindle (0) migrates to Spiral.
     pub fn from_index(i: isize) -> Self {
         match i {
-            1 => Self::Spiral,
             2 => Self::Grid,
             3 => Self::Master,
             4 => Self::ThreeBands,
             5 => Self::FourBands,
-            _ => Self::Dwindle,
+            6 => Self::Centered,
+            7 => Self::CenteredWide,
+            8 => Self::VerticalMaster,
+            _ => Self::Spiral,
+        }
+    }
+    pub fn example_count(self) -> u32 {
+        match self {
+            Self::ThreeBands => 3,
+            Self::Centered | Self::VerticalMaster => 5,
+            Self::CenteredWide => 7,
+            _ => 4,
+        }
+    }
+    pub fn short_name(self, area: NSRect) -> &'static str {
+        match self {
+            Self::Centered => "Centrada",
+            Self::CenteredWide => "Centrada XL",
+            _ => self.screen_name(area),
         }
     }
     pub fn index(self) -> isize {
         self as isize
+    }
+    fn centered_axis(self) -> Option<bool> {
+        match self {
+            Self::Centered | Self::CenteredWide => Some(true),
+            Self::VerticalMaster => Some(false),
+            _ => None,
+        }
+    }
+    pub fn primary_center_axis(self) -> Option<bool> {
+        self.centered_axis()
+    }
+    pub fn selection_index(self) -> isize {
+        Self::ALL.iter().position(|layout| *layout == self).unwrap() as isize
+    }
+    pub fn from_selection(index: isize) -> Self {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| Self::ALL.get(i))
+            .copied()
+            .unwrap_or_default()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +128,14 @@ pub fn drop_intent(
     if !contains(padded, p) {
         return None;
     }
+    // A managed window moves between the template's virtual slots. The native
+    // window is under the pointer while dragging, so hit-test the model instead.
+    if frames.iter().any(|(id, _)| *id == dragged) {
+        return frames
+            .iter()
+            .min_by(|(_, a), (_, b)| distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p)))
+            .map(|(id, _)| DropIntent::Window(*id, Zone::Center));
+    }
     if smart {
         let band = (area.size.width.min(area.size.height) * 0.08).clamp(28., 80.);
         let distances = [
@@ -112,6 +163,15 @@ pub fn drop_intent(
             Zone::Center
         },
     ))
+}
+fn distance_to_rect(r: NSRect, p: NSPoint) -> f64 {
+    let dx = (r.origin.x - p.x)
+        .max(0.)
+        .max(p.x - r.origin.x - r.size.width);
+    let dy = (r.origin.y - p.y)
+        .max(0.)
+        .max(p.y - r.origin.y - r.size.height);
+    dx * dx + dy * dy
 }
 /// Convert AppKit's bottom-left coordinates to AX's global top-left points.
 /// The primary screen height is the origin reference, not the target height.
@@ -168,6 +228,7 @@ fn split(r: NSRect, vertical: bool, ratio: f64, gap: f64) -> (NSRect, NSRect) {
 }
 #[derive(Clone, Debug)]
 enum Node {
+    Empty,
     Leaf(u32),
     Split {
         vertical: bool,
@@ -177,8 +238,33 @@ enum Node {
     },
 }
 impl Node {
+    fn centered_ratios(&self, axis: bool, primary: u32) -> Option<(f64, f64)> {
+        let Self::Split {
+            vertical,
+            ratio,
+            second,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let Self::Split {
+            vertical: inner_axis,
+            ratio: inner_ratio,
+            first,
+            ..
+        } = second.as_ref()
+        else {
+            return None;
+        };
+        (*vertical == axis
+            && *inner_axis == axis
+            && matches!(first.as_ref(),Self::Leaf(id) if *id == primary))
+        .then_some((*ratio, *inner_ratio))
+    }
     fn has(&self, id: u32) -> bool {
         match self {
+            Self::Empty => false,
             Self::Leaf(w) => *w == id,
             Self::Split { first, second, .. } => first.has(id) || second.has(id),
         }
@@ -226,6 +312,9 @@ impl Node {
         }
     }
     fn fit_divisions(&mut self, area: NSRect, gap: f64) {
+        self.fit_divisions_with(area, gap, &|_, vertical| if vertical { 120. } else { 90. });
+    }
+    fn fit_divisions_with(&mut self, area: NSRect, gap: f64, minimum: &impl Fn(u32, bool) -> f64) {
         if let Self::Split {
             vertical,
             ratio,
@@ -239,18 +328,19 @@ impl Node {
                 area.size.height
             };
             let available = span - gap;
-            let low = first.minimum(*vertical, gap);
-            let high = available - second.minimum(*vertical, gap);
+            let low = first.minimum_with(*vertical, gap, minimum);
+            let high = available - second.minimum_with(*vertical, gap, minimum);
             if low <= high && available > 0. {
                 *ratio = (*ratio * available).clamp(low, high) / available;
             }
             let (a, b) = split(area, *vertical, *ratio, gap);
-            first.fit_divisions(a, gap);
-            second.fit_divisions(b, gap);
+            first.fit_divisions_with(a, gap, minimum);
+            second.fit_divisions_with(b, gap, minimum);
         }
     }
     fn remove(self, id: u32) -> Option<Self> {
         match self {
+            Self::Empty => Some(Self::Empty),
             Self::Leaf(w) => (w != id).then_some(Self::Leaf(w)),
             Self::Split {
                 vertical,
@@ -268,23 +358,10 @@ impl Node {
             },
         }
     }
-    fn swap(&mut self, a: u32, b: u32) {
-        match self {
-            Self::Leaf(w) => {
-                if *w == a {
-                    *w = b
-                } else if *w == b {
-                    *w = a
-                }
-            }
-            Self::Split { first, second, .. } => {
-                first.swap(a, b);
-                second.swap(a, b);
-            }
-        }
-    }
+
     fn remap(&mut self, old: &[u32], new: &[u32]) {
         match self {
+            Self::Empty => {}
             Self::Leaf(id) => {
                 if let Some(i) = old.iter().position(|w| w == id) {
                     *id = new[i]
@@ -297,6 +374,19 @@ impl Node {
         }
     }
     fn snap(&mut self, area: NSRect, screen: NSRect, columns: u32, rows: u32, gap: f64) {
+        self.snap_with(area, screen, columns, rows, gap, &|_, vertical| {
+            if vertical { 120. } else { 90. }
+        });
+    }
+    fn snap_with(
+        &mut self,
+        area: NSRect,
+        screen: NSRect,
+        columns: u32,
+        rows: u32,
+        gap: f64,
+        minimum: &impl Fn(u32, bool) -> f64,
+    ) {
         if let Self::Split {
             vertical,
             ratio,
@@ -319,8 +409,8 @@ impl Node {
                     screen.size.height / rows as f64,
                 )
             };
-            let min = first.minimum(*vertical, gap);
-            let max = span - gap - second.minimum(*vertical, gap);
+            let min = first.minimum_with(*vertical, gap, minimum);
+            let max = span - gap - second.minimum_with(*vertical, gap, minimum);
             if min <= max && step > 0. {
                 let center = origin + (span - gap) * *ratio + gap / 2.;
                 let low = ((origin + min + gap / 2. - base) / step).ceil();
@@ -331,12 +421,13 @@ impl Node {
                 }
             }
             let (a, b) = split(area, *vertical, *ratio, gap);
-            first.snap(a, screen, columns, rows, gap);
-            second.snap(b, screen, columns, rows, gap);
+            first.snap_with(a, screen, columns, rows, gap, minimum);
+            second.snap_with(b, screen, columns, rows, gap, minimum);
         }
     }
     fn encode(&self, order: &[u32], out: &mut Vec<String>) {
         match self {
+            Self::Empty => out.push("e".into()),
             Self::Leaf(id) => out.push(format!("w{}", order.iter().position(|w| w == id).unwrap())),
             Self::Split {
                 vertical,
@@ -359,6 +450,9 @@ impl Node {
             return None;
         }
         let token = tokens.next()?;
+        if token == "e" {
+            return Some(Self::Empty);
+        }
         let (kind, value) = token.split_at_checked(1)?;
         if kind == "w" {
             return Some(Self::Leaf(*order.get(value.parse::<usize>().ok()?)?));
@@ -386,21 +480,22 @@ impl Node {
         }
     }
     fn minimum(&self, vertical: bool, gap: f64) -> f64 {
+        self.minimum_with(vertical, gap, &|_, axis| if axis { 120. } else { 90. })
+    }
+    fn minimum_with(&self, vertical: bool, gap: f64, minimum: &impl Fn(u32, bool) -> f64) -> f64 {
         match self {
-            Self::Leaf(_) => {
-                if vertical {
-                    120.
-                } else {
-                    90.
-                }
-            }
+            Self::Empty => 0.,
+            Self::Leaf(id) => minimum(*id, vertical),
             Self::Split {
                 vertical: axis,
                 first,
                 second,
                 ..
             } => {
-                let (a, b) = (first.minimum(vertical, gap), second.minimum(vertical, gap));
+                let (a, b) = (
+                    first.minimum_with(vertical, gap, minimum),
+                    second.minimum_with(vertical, gap, minimum),
+                );
                 if *axis == vertical {
                     a + b + gap
                 } else {
@@ -460,6 +555,7 @@ impl Node {
     }
     fn frames(&self, r: NSRect, gap: f64, out: &mut Vec<(u32, NSRect)>) {
         match self {
+            Self::Empty => {}
             Self::Leaf(w) => out.push((*w, r)),
             Self::Split {
                 vertical,
@@ -479,8 +575,8 @@ pub struct Desktop {
     pub layout: Layout,
     pub order: Vec<u32>,
     pub grid: Option<(u32, u32)>,
-    tree: Option<Node>,
     resized: Option<(Layout, Vec<u32>, Node)>,
+    minimums: std::collections::HashMap<u32, objc2_foundation::NSSize>,
 }
 impl Desktop {
     pub fn configured(layout: Layout, grid: Option<(u32, u32)>) -> Self {
@@ -495,14 +591,13 @@ impl Desktop {
         if !self.order.contains(&old) || self.order.contains(&new) {
             return false;
         }
-        let before = self.order.clone();
+        if let Some(minimum) = self.minimums.remove(&old) {
+            self.minimums.insert(new, minimum);
+        }
         for id in &mut self.order {
             if *id == old {
                 *id = new;
             }
-        }
-        if let Some(tree) = &mut self.tree {
-            tree.remap(&before, &self.order);
         }
         if let Some((_, order, tree)) = &mut self.resized {
             let before = order.clone();
@@ -516,14 +611,19 @@ impl Desktop {
         true
     }
     pub fn remove(&mut self, id: u32) {
+        self.minimums.remove(&id);
         if !self.order.contains(&id) {
             return;
         }
         let old = self.order.clone();
         self.order.retain(|w| *w != id);
-        self.tree = self.tree.take().and_then(|n| n.remove(id));
+        if self.layout.centered_axis().is_some() {
+            // Keep the old outer ratios as a reference. A changed membership no
+            // longer matches `resized`, so base_tree rebuilds both sidebars.
+            return;
+        }
         // Collapse only the vanished leaf's parent. Unrelated divisions retain
-        // their user-defined proportions, including non-Dwindle templates.
+        // their user-defined proportions, across all templates.
         self.resized = self.resized.take().and_then(|(layout, order, tree)| {
             if order != old {
                 return None;
@@ -544,6 +644,10 @@ impl Desktop {
         }
         for id in ids {
             if !self.order.contains(id) {
+                if self.layout.centered_axis().is_some() {
+                    self.order.push(*id);
+                    continue;
+                }
                 let frames = self.frames(area, gap);
                 let target = frames
                     .iter()
@@ -557,19 +661,6 @@ impl Desktop {
                     })
                     .or_else(|| frames.last())
                     .copied();
-                if let (Some(tree), Some((target, r))) = (&mut self.tree, target) {
-                    tree.insert(
-                        target,
-                        *id,
-                        if r.size.width >= r.size.height {
-                            Zone::Right
-                        } else {
-                            Zone::Bottom
-                        },
-                    );
-                } else {
-                    self.tree = Some(Node::Leaf(*id));
-                }
                 if let (Some((layout, order, tree)), Some((target, r))) =
                     (&mut self.resized, target)
                 {
@@ -599,7 +690,7 @@ impl Desktop {
         if id == target || !self.order.contains(&target) {
             return;
         }
-        if self.layout != Layout::Dwindle && self.order.contains(&id) {
+        if self.order.contains(&id) {
             let old = self.order.clone();
             let a = self.order.iter().position(|w| *w == id).unwrap();
             if z == Zone::Center {
@@ -619,23 +710,10 @@ impl Desktop {
             }
             return;
         }
-        if z == Zone::Center && self.order.contains(&id) {
-            let a = self.order.iter().position(|w| *w == id).unwrap();
-            let b = self.order.iter().position(|w| *w == target).unwrap();
-            self.order.swap(a, b);
-            if let Some(t) = &mut self.tree {
-                t.swap(id, target);
-            }
-            return;
-        }
         self.remove(id);
         let i = self.order.iter().position(|w| *w == target).unwrap()
             + usize::from(matches!(z, Zone::Right | Zone::Bottom | Zone::Center));
         self.order.insert(i, id);
-        if let Some(t) = &mut self.tree {
-            debug_assert!(t.has(target));
-            t.insert(target, id, z);
-        }
     }
     pub fn proposed_drop(
         &self,
@@ -645,13 +723,67 @@ impl Desktop {
         gap: f64,
     ) -> Option<Self> {
         let mut result = self.clone();
-        if let DropIntent::Window(target, Zone::Center) = intent {
-            if self.order.contains(&id) {
-                result.place(id, target, Zone::Center);
-                return Some(result);
+        if self.order.contains(&id) {
+            let frames = self.frames(area, gap);
+            if frames.len() != self.order.len() {
+                return None;
             }
+            let target = match intent {
+                DropIntent::Window(target, _) => target,
+                DropIntent::Screen(side) => {
+                    let p = match side {
+                        Zone::Left => {
+                            NSPoint::new(area.origin.x, area.origin.y + area.size.height / 2.)
+                        }
+                        Zone::Right => NSPoint::new(
+                            area.origin.x + area.size.width,
+                            area.origin.y + area.size.height / 2.,
+                        ),
+                        Zone::Top => {
+                            NSPoint::new(area.origin.x + area.size.width / 2., area.origin.y)
+                        }
+                        Zone::Bottom | Zone::Center => NSPoint::new(
+                            area.origin.x + area.size.width / 2.,
+                            area.origin.y + area.size.height,
+                        ),
+                    };
+                    frames
+                        .iter()
+                        .min_by(|(_, a), (_, b)| {
+                            distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p))
+                        })?
+                        .0
+                }
+            };
+            if !self.order.contains(&target) {
+                return None;
+            }
+            // Reject a swap that cannot fit the receiving apps. Never accept an
+            // empty proposal or change the other slots to accommodate the swap.
+            for (old, frame) in &frames {
+                let new = if *old == id {
+                    target
+                } else if *old == target {
+                    id
+                } else {
+                    *old
+                };
+                if frame.size.width + 0.001 < self.window_minimum(new, true)
+                    || frame.size.height + 0.001 < self.window_minimum(new, false)
+                {
+                    return None;
+                }
+            }
+            let mut tree = self.effective_tree(area, gap)?;
+            result.place(id, target, Zone::Center);
+            tree.remap(&self.order, &result.order);
+            result.resized = Some((result.layout, result.order.clone(), tree));
+            return Some(result);
         }
         let old_tree = self.effective_tree(area, gap);
+        if !self.order.is_empty() && old_tree.is_none() {
+            return None;
+        }
         let remaining = old_tree.and_then(|tree| tree.remove(id));
         let tree = match (remaining, intent) {
             (None, _) => Node::Leaf(id),
@@ -686,16 +818,12 @@ impl Desktop {
                 }
             }
         }
-        if result.layout == Layout::Dwindle {
-            result.tree = Some(tree);
-            result.resized = None;
-        } else {
-            result.resized = Some((result.layout, result.order.clone(), tree));
-        }
+        result.resized = Some((result.layout, result.order.clone(), tree));
         let frames = result.frames(area, gap);
-        if frames
-            .iter()
-            .any(|(_, r)| r.size.width < 120. || r.size.height < 90.)
+        if frames.len() != result.order.len()
+            || frames
+                .iter()
+                .any(|(_, r)| r.size.width < 120. || r.size.height < 90.)
         {
             return None;
         }
@@ -726,17 +854,193 @@ impl Desktop {
         }
     }
     fn effective_tree(&self, area: NSRect, gap: f64) -> Option<Node> {
+        let mut tree = self.base_tree(area, gap)?;
+        if !self.center_tree(&mut tree, area, gap, None, None) {
+            return None;
+        }
+        if !self.minimums.is_empty() {
+            let minimum = |id, vertical| self.window_minimum(id, vertical);
+            if tree.minimum_with(true, gap, &minimum) > area.size.width
+                || tree.minimum_with(false, gap, &minimum) > area.size.height
+            {
+                return None;
+            }
+            tree.fit_divisions_with(area, gap, &minimum);
+        }
+        Some(tree)
+    }
+    fn center_tree(
+        &self,
+        tree: &mut Node,
+        area: NSRect,
+        gap: f64,
+        desired: Option<f64>,
+        grid: Option<(u32, u32)>,
+    ) -> bool {
+        let Some(axis) = self.layout.centered_axis() else {
+            return true;
+        };
+        if self.order.len() < 2 {
+            return true;
+        }
+        let Node::Split {
+            vertical,
+            ratio,
+            first,
+            second,
+        } = tree
+        else {
+            return false;
+        };
+        let Node::Split {
+            vertical: inner_axis,
+            ratio: inner_ratio,
+            first: main,
+            second: after,
+        } = second.as_mut()
+        else {
+            return false;
+        };
+        if *vertical != axis || *inner_axis != axis {
+            return false;
+        }
+        let span = if axis {
+            area.size.width
+        } else {
+            area.size.height
+        };
+        let minimum = |id, vertical| self.window_minimum(id, vertical);
+        let side_min = first
+            .minimum_with(axis, gap, &minimum)
+            .max(after.minimum_with(axis, gap, &minimum));
+        let main_min = main.minimum_with(axis, gap, &minimum);
+        let main_max = span - 2. * gap - 2. * side_min;
+        if main_max + 0.001 < main_min {
+            return false;
+        }
+        let rest = span - (span - gap) * *ratio - gap;
+        let width = ((desired.unwrap_or((rest - gap) * *inner_ratio) * 1_000_000.).round()
+            / 1_000_000.)
+            .clamp(main_min, main_max.max(main_min));
+        let mut side = (span - width - 2. * gap) / 2.;
+        if let Some((cols, rows)) = grid {
+            let step = span / if axis { cols } else { rows } as f64;
+            let low = ((side_min + gap / 2.) / step).ceil();
+            let high = ((span - main_min - gap) / (2. * step)).floor();
+            if low <= high {
+                side = ((side + gap / 2.) / step).round().clamp(low, high) * step - gap / 2.;
+            }
+        }
+        *ratio = side / (span - gap);
+        let rest = span - side - gap;
+        *inner_ratio = (span - 2. * side - 2. * gap) / (rest - gap);
+        true
+    }
+    fn window_minimum(&self, id: u32, vertical: bool) -> f64 {
+        let fallback: f64 = if vertical { 120. } else { 90. };
+        self.minimums.get(&id).map_or(fallback, |size| {
+            fallback.max(if vertical { size.width } else { size.height })
+        })
+    }
+    pub fn set_minimum_sizes(
+        &mut self,
+        minimums: &std::collections::HashMap<u32, objc2_foundation::NSSize>,
+    ) {
+        self.minimums
+            .retain(|id, _| self.order.contains(id) && minimums.contains_key(id));
+        for id in &self.order {
+            if let Some(size) = minimums.get(id) {
+                self.minimums.insert(*id, *size);
+            }
+        }
+    }
+    fn base_tree(&self, area: NSRect, gap: f64) -> Option<Node> {
         if self.order.is_empty() {
             return None;
         }
         if let Some((layout, order, tree)) = &self.resized {
-            if *layout == self.layout && *order == self.order {
+            if *layout == self.layout
+                && *order == self.order
+                && self.layout.centered_axis().is_none_or(|axis| {
+                    self.order.len() < 2 || tree.centered_ratios(axis, self.order[0]).is_some()
+                })
+            {
                 return Some(tree.clone());
             }
         }
         let leaves: Vec<_> = self.order.iter().map(|id| Node::Leaf(*id)).collect();
         Some(match self.layout {
-            Layout::Dwindle => return self.tree.clone(),
+            Layout::Centered | Layout::CenteredWide | Layout::VerticalMaster
+                if leaves.len() > 1 =>
+            {
+                let horizontal = self.layout != Layout::VerticalMaster;
+                let before: Vec<_> = leaves.iter().skip(1).step_by(2).cloned().collect();
+                let after: Vec<_> = leaves.iter().skip(2).step_by(2).cloned().collect();
+                let span = if horizontal {
+                    area.size.width
+                } else {
+                    area.size.height
+                };
+                let cross_span = if horizontal {
+                    area.size.height
+                } else {
+                    area.size.width
+                };
+                let side_span = (span / 6. - gap).max(1.);
+                let side = |nodes: &[Node], side_span: f64| {
+                    if nodes.is_empty() {
+                        return Node::Empty;
+                    }
+                    if !horizontal {
+                        return Self::equal_chain(nodes, true, cross_span, gap);
+                    }
+                    let rows = nodes.len().min(if self.layout == Layout::CenteredWide {
+                        3
+                    } else {
+                        2
+                    });
+                    let mut bands = Vec::with_capacity(rows);
+                    let mut start = 0;
+                    for row in 0..rows {
+                        let count = nodes.len() / rows + usize::from(row < nodes.len() % rows);
+                        bands.push(Self::equal_chain(
+                            &nodes[start..start + count],
+                            true,
+                            side_span,
+                            gap,
+                        ));
+                        start += count;
+                    }
+                    Self::equal_chain(&bands, false, cross_span, gap)
+                };
+                {
+                    let rest_span = span - side_span - gap;
+                    let defaults = (
+                        side_span / (span - gap),
+                        (rest_span - side_span - gap) / (rest_span - gap),
+                    );
+                    let (outer, inner) = self
+                        .resized
+                        .as_ref()
+                        .filter(|(layout, order, _)| *layout == self.layout && order.len() >= 2)
+                        .and_then(|(_, order, tree)| tree.centered_ratios(horizontal, order[0]))
+                        .unwrap_or(defaults);
+                    let before_span = (span - gap) * outer;
+                    let remaining = span - before_span - gap;
+                    let after_span = (remaining - gap) * (1. - inner);
+                    Node::branch(
+                        horizontal,
+                        outer,
+                        side(&before, before_span),
+                        Node::branch(
+                            horizontal,
+                            inner,
+                            leaves[0].clone(),
+                            side(&after, after_span),
+                        ),
+                    )
+                }
+            }
             Layout::Spiral => {
                 Self::spiral(&self.order, usize::from(area.size.height > area.size.width))
             }
@@ -818,6 +1122,74 @@ impl Desktop {
         if let Some((cols, rows)) = self.grid {
             tree.snap(area, area, cols.clamp(2, 240), rows.clamp(2, 60), gap);
         }
+        if !self.center_tree(&mut tree, area, gap, None, self.grid) {
+            return;
+        }
+        let centered_span = self.layout.centered_axis().and_then(|axis| {
+            let mut slots = vec![];
+            tree.frames(area, gap, &mut slots);
+            let primary = slots
+                .iter()
+                .find(|(window, _)| Some(*window) == self.order.first().copied())?
+                .1;
+            let (start, end, old_start, old_end, new_start, new_end, main_start, main_end) = if axis
+            {
+                (
+                    area.origin.x,
+                    area.origin.x + area.size.width,
+                    from.origin.x,
+                    from.origin.x + from.size.width,
+                    to.origin.x,
+                    to.origin.x + to.size.width,
+                    primary.origin.x,
+                    primary.origin.x + primary.size.width,
+                )
+            } else {
+                (
+                    area.origin.y,
+                    area.origin.y + area.size.height,
+                    from.origin.y,
+                    from.origin.y + from.size.height,
+                    to.origin.y,
+                    to.origin.y + to.size.height,
+                    primary.origin.y,
+                    primary.origin.y + primary.size.height,
+                )
+            };
+            let (left, right) = (new_start - old_start, new_end - old_end);
+            let width = main_end - main_start;
+            if self.order.first() == Some(&id) {
+                Some(if left.abs() > right.abs() {
+                    width - 2. * left
+                } else {
+                    width + 2. * right
+                })
+            } else if old_end <= main_start + 0.001 {
+                Some(
+                    width
+                        - 2. * if right.abs() > 0.001 {
+                            right
+                        } else if (old_start - start).abs() < 3. {
+                            -left
+                        } else {
+                            0.
+                        },
+                )
+            } else if old_start >= main_end - 0.001 {
+                Some(
+                    width
+                        + 2. * if left.abs() > 0.001 {
+                            left
+                        } else if (old_end - end).abs() < 3. {
+                            -right
+                        } else {
+                            0.
+                        },
+                )
+            } else {
+                None
+            }
+        });
         for (edge, old, new) in [
             (Zone::Left, from.origin.x, to.origin.x),
             (
@@ -856,11 +1228,10 @@ impl Desktop {
                 }
             }
         }
-        if self.layout == Layout::Dwindle {
-            self.tree = Some(tree);
-        } else {
-            self.resized = Some((self.layout, self.order.clone(), tree));
+        if !self.center_tree(&mut tree, area, gap, centered_span, self.grid) {
+            return;
         }
+        self.resized = Some((self.layout, self.order.clone(), tree));
     }
     pub fn save_distribution(&self, area: NSRect) -> Option<String> {
         let tree = self.effective_tree(area, 10.)?;
@@ -882,7 +1253,7 @@ impl Desktop {
         let Some(index) = tokens
             .next()
             .and_then(|s| s.parse::<isize>().ok())
-            .filter(|i| (0..Layout::ALL.len() as isize).contains(i))
+            .filter(|i| (1..=8).contains(i))
         else {
             return false;
         };
@@ -914,12 +1285,7 @@ impl Desktop {
         }
         self.grid = grid;
         self.layout = Layout::from_index(index);
-        if self.layout == Layout::Dwindle {
-            self.tree = Some(tree);
-            self.resized = None;
-        } else {
-            self.resized = Some((self.layout, self.order.clone(), tree));
-        }
+        self.resized = Some((self.layout, self.order.clone(), tree));
         true
     }
     /// Preserve the chosen topology. Only clamp divisions that became too small;
@@ -940,18 +1306,16 @@ impl Desktop {
             return;
         }
         tree.fit_divisions(area, gap);
-        if self.layout == Layout::Dwindle {
-            self.tree = Some(tree);
-        } else {
-            self.resized = Some((self.layout, self.order.clone(), tree));
-        }
+        self.resized = Some((self.layout, self.order.clone(), tree));
     }
     pub fn reset_template(&mut self, layout: Layout, area: NSRect) {
         let ids = self.order.clone();
         let grid = self.grid;
+        let minimums = self.minimums.clone();
         *self = Self {
             layout,
             grid,
+            minimums,
             ..Default::default()
         };
         self.reconcile_at(&ids, area, 10., None);
@@ -960,85 +1324,26 @@ impl Desktop {
         let mut out = vec![];
         if let Some(mut tree) = self.effective_tree(r, gap) {
             if let Some((cols, rows)) = self.grid {
-                tree.snap(r, r, cols.clamp(2, 240), rows.clamp(2, 60), gap);
+                if self.minimums.is_empty() {
+                    tree.snap(r, r, cols.clamp(2, 240), rows.clamp(2, 60), gap);
+                } else {
+                    tree.snap_with(
+                        r,
+                        r,
+                        cols.clamp(2, 240),
+                        rows.clamp(2, 60),
+                        gap,
+                        &|id, vertical| self.window_minimum(id, vertical),
+                    );
+                }
+            }
+            if !self.center_tree(&mut tree, r, gap, None, self.grid) {
+                return out;
             }
             tree.frames(r, gap.clamp(0., 24.), &mut out);
         }
         out
     }
-}
-
-/// Keep the requested layout when possible. Apps such as Spark enforce a native
-/// minimum size even when AX reports a successful resize. Repack into bands
-/// when those limits would make the requested tiles overlap.
-pub fn respect_minimum_sizes(
-    frames: &[(u32, NSRect)],
-    minimums: &std::collections::HashMap<u32, objc2_foundation::NSSize>,
-    area: NSRect,
-    gap: f64,
-) -> Option<Vec<(u32, NSRect)>> {
-    let minimum = |id: &u32| {
-        minimums
-            .get(id)
-            .copied()
-            .unwrap_or(objc2_foundation::NSSize::new(80., 60.))
-    };
-    if frames.iter().all(|(id, r)| {
-        let m = minimum(id);
-        r.size.width + 1. >= m.width && r.size.height + 1. >= m.height
-    }) {
-        return Some(frames.to_vec());
-    }
-    for columns in [
-        area.size.width >= area.size.height,
-        area.size.width < area.size.height,
-    ] {
-        let required: f64 = frames
-            .iter()
-            .map(|(id, _)| {
-                let m = minimum(id);
-                if columns { m.width } else { m.height }
-            })
-            .sum::<f64>()
-            + gap * frames.len().saturating_sub(1) as f64;
-        let span = if columns {
-            area.size.width
-        } else {
-            area.size.height
-        };
-        let cross = if columns {
-            area.size.height
-        } else {
-            area.size.width
-        };
-        if required > span
-            || frames.iter().any(|(id, _)| {
-                let m = minimum(id);
-                (if columns { m.height } else { m.width }) > cross
-            })
-        {
-            continue;
-        }
-        let extra = (span - required) / frames.len() as f64;
-        let mut offset = 0.;
-        return Some(
-            frames
-                .iter()
-                .map(|(id, _)| {
-                    let m = minimum(id);
-                    let length = (if columns { m.width } else { m.height }) + extra;
-                    let r = if columns {
-                        rect(area.origin.x + offset, area.origin.y, length, cross)
-                    } else {
-                        rect(area.origin.x, area.origin.y + offset, cross, length)
-                    };
-                    offset += length + gap;
-                    (*id, r)
-                })
-                .collect(),
-        );
-    }
-    None
 }
 
 /// Quintic easing has zero velocity AND acceleration at both endpoints.
@@ -1057,31 +1362,437 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 mod tests {
     use super::*;
     #[test]
-    fn spark_minimum_height_repacks_browser_and_mail_without_overlap() {
-        let area = rect(10., 41., 1660., 947.);
-        let frames = vec![
-            (1, rect(10., 41., 825., 947.)),
-            (2, rect(845., 41., 825., 468.)),
-            (3, rect(845., 519., 825., 469.)),
-        ];
-        let minimums = [(2, objc2_foundation::NSSize::new(720., 700.))]
-            .into_iter()
-            .collect();
-        let result = respect_minimum_sizes(&frames, &minimums, area, 10.).unwrap();
-        assert_eq!(result.len(), 3);
-        assert!(result[1].1.size.height >= 700.);
-        assert!(result[1].1.size.width >= 720.);
-        for pair in result.windows(2) {
-            assert!(
-                (pair[0].1.origin.x + pair[0].1.size.width + 10. - pair[1].1.origin.x).abs() < 0.01
-            );
+    fn centered_primary_has_two_thirds_and_two_slots_per_side() {
+        for area in [
+            rect(0., 41., 1800., 1000.),
+            rect(-1200., -300., 1200., 1800.),
+        ] {
+            for gap in [0., 10.] {
+                for count in 3..=5 {
+                    let mut desktop = Desktop::configured(Layout::Centered, None);
+                    desktop.reconcile(&(1..=count).collect::<Vec<_>>(), area, gap);
+                    let frames = desktop.frames(area, gap);
+                    let primary = frames.iter().find(|(id, _)| *id == 1).unwrap().1;
+                    assert!((primary.size.width - area.size.width * 2. / 3.).abs() < 0.001);
+                    assert!(
+                        (primary.origin.x + primary.size.width / 2.
+                            - area.origin.x
+                            - area.size.width / 2.)
+                            .abs()
+                            < 0.001
+                    );
+                    assert_eq!(primary.size.height, area.size.height);
+                    for (id, frame) in &frames {
+                        if *id == 1 {
+                            continue;
+                        }
+                        assert_eq!(frame.origin.x < primary.origin.x, id % 2 == 0);
+                        assert!(frame.origin.y >= area.origin.y);
+                        assert!(
+                            frame.origin.y + frame.size.height
+                                <= area.origin.y + area.size.height + 0.001
+                        );
+                    }
+                    let saved = desktop.save_distribution(area).unwrap();
+                    let mut restored = Desktop::default();
+                    restored.reconcile(&(1..=count).collect::<Vec<_>>(), area, gap);
+                    assert!(restored.restore_distribution(&saved));
+                    assert_eq!(restored.frames(area, 10.), desktop.frames(area, 10.));
+                }
+            }
         }
-        let last = result.last().unwrap().1;
-        assert!((last.origin.x + last.size.width - 1670.).abs() < 0.01);
-        assert_eq!(
-            respect_minimum_sizes(&result, &minimums, area, 10.),
-            Some(result)
+    }
+    #[test]
+    fn centered_xl_and_vertical_have_the_requested_seven_and_five_slots() {
+        for (layout, area, count) in [
+            (Layout::CenteredWide, rect(10., 40., 3000., 1600.), 7),
+            (Layout::VerticalMaster, rect(-1200., -400., 1200., 2400.), 5),
+        ] {
+            let mut desktop = Desktop::configured(layout, None);
+            desktop.reconcile(&(1..=count).collect::<Vec<_>>(), area, 10.);
+            let frames = desktop.frames(area, 10.);
+            assert_eq!(frames.len(), count as usize);
+            let main = frames.iter().find(|(id, _)| *id == 1).unwrap().1;
+            let horizontal = layout == Layout::CenteredWide;
+            let main_span = if horizontal {
+                main.size.width
+            } else {
+                main.size.height
+            };
+            let span = if horizontal {
+                area.size.width
+            } else {
+                area.size.height
+            };
+            assert!((main_span - span * 2. / 3.).abs() < 0.001);
+            for (id, r) in &frames {
+                if *id == 1 {
+                    continue;
+                }
+                if horizontal {
+                    assert_eq!(r.origin.x < main.origin.x, id % 2 == 0);
+                    assert!((r.size.height - (area.size.height - 20.) / 3.).abs() < 0.001);
+                } else {
+                    assert_eq!(r.origin.y < main.origin.y, id % 2 == 0);
+                    assert!((r.size.width - (area.size.width - 10.) / 2.).abs() < 0.001);
+                }
+            }
+            assert_layout_invariants(&desktop, area);
+        }
+    }
+    #[test]
+    fn centered_sidebars_rebalance_new_windows_after_a_slot_swap() {
+        for (layout, count, area) in [
+            (Layout::Centered, 5, rect(10., 41., 1660., 947.)),
+            (Layout::CenteredWide, 7, rect(0., 30., 3000., 1600.)),
+            (Layout::VerticalMaster, 5, rect(-1200., -400., 1200., 2400.)),
+        ] {
+            let mut desktop = Desktop::configured(layout, None);
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            let original = desktop
+                .frames(area, 10.)
+                .iter()
+                .find(|(id, _)| *id == 1)
+                .unwrap()
+                .1;
+            let adjusted = if layout == Layout::VerticalMaster {
+                rect(
+                    original.origin.x,
+                    original.origin.y - 20.,
+                    original.size.width,
+                    original.size.height + 40.,
+                )
+            } else {
+                rect(
+                    original.origin.x - 20.,
+                    original.origin.y,
+                    original.size.width + 40.,
+                    original.size.height,
+                )
+            };
+            desktop.resize(1, original, adjusted, area, 10.);
+            let main_before = desktop
+                .frames(area, 10.)
+                .iter()
+                .find(|(id, _)| *id == 1)
+                .unwrap()
+                .1;
+            desktop = desktop
+                .proposed_drop(2, DropIntent::Window(3, Zone::Center), area, 10.)
+                .unwrap();
+            for n in 4..=count {
+                desktop.reconcile_at(&(1..=n).collect::<Vec<_>>(), area, 10., Some(2));
+            }
+            let frames = desktop.frames(area, 10.);
+            assert_eq!(frames.len(), count as usize);
+            let main = frames.iter().find(|(id, _)| *id == 1).unwrap().1;
+            assert_eq!(main, main_before);
+            let horizontal = layout != Layout::VerticalMaster;
+            let before = frames
+                .iter()
+                .filter(|(id, r)| {
+                    *id != 1
+                        && if horizontal {
+                            r.origin.x < main.origin.x
+                        } else {
+                            r.origin.y < main.origin.y
+                        }
+                })
+                .count();
+            assert_eq!(
+                before,
+                (count as usize - 1) / 2,
+                "{layout:?} must rebalance both sides after adding windows"
+            );
+            for (_, r) in frames.iter().filter(|(id, _)| *id != 1) {
+                if horizontal {
+                    let expected = if r.origin.x < main.origin.x {
+                        main.origin.x - area.origin.x - 10.
+                    } else {
+                        area.origin.x + area.size.width - main.origin.x - main.size.width - 10.
+                    };
+                    assert!((r.size.width - expected).abs() < 0.001);
+                } else {
+                    let expected = if r.origin.y < main.origin.y {
+                        main.origin.y - area.origin.y - 10.
+                    } else {
+                        area.origin.y + area.size.height - main.origin.y - main.size.height - 10.
+                    };
+                    assert!((r.size.height - expected).abs() < 0.001);
+                }
+            }
+            assert_layout_invariants(&desktop, area);
+        }
+    }
+    #[test]
+    fn centered_sidebar_growth_and_closure_preserve_learned_primary_size() {
+        let area = rect(10., 41., 1660., 947.);
+        for grid in [None, Some((120, 6))] {
+            let minima: std::collections::HashMap<_, _> = (1..=7)
+                .map(|id| {
+                    (
+                        id,
+                        if id == 1 {
+                            objc2_foundation::NSSize::new(618., 700.)
+                        } else {
+                            objc2_foundation::NSSize::new(511., 300.)
+                        },
+                    )
+                })
+                .collect();
+            let mut desktop = Desktop::configured(Layout::Centered, grid);
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            desktop.set_minimum_sizes(&minima);
+            let primary = desktop
+                .frames(area, 10.)
+                .iter()
+                .find(|(id, _)| *id == 1)
+                .unwrap()
+                .1;
+            desktop = desktop
+                .proposed_drop(2, DropIntent::Window(3, Zone::Center), area, 10.)
+                .unwrap();
+            for ids in [
+                vec![1, 2, 3, 4],
+                vec![1, 2, 3, 4, 5],
+                vec![1, 2, 3, 5],
+                vec![1, 2, 3],
+                vec![1, 2, 3, 6],
+                vec![1, 2, 3, 6, 7],
+            ] {
+                desktop.reconcile_at(&ids, area, 10., Some(2));
+                desktop.set_minimum_sizes(&minima);
+                let frames = desktop.frames(area, 10.);
+                assert_eq!(frames.len(), ids.len());
+                assert_eq!(frames.iter().find(|(id, _)| *id == 1).unwrap().1, primary);
+                assert_layout_invariants(&desktop, area);
+                if ids.len() == 5 {
+                    assert_eq!(
+                        frames
+                            .iter()
+                            .filter(|(_, r)| r.origin.x < primary.origin.x)
+                            .count(),
+                        2
+                    );
+                    assert_eq!(
+                        frames
+                            .iter()
+                            .filter(|(_, r)| r.origin.x > primary.origin.x)
+                            .count(),
+                        2
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn every_template_resizes_shared_edges_and_preserves_slot_sizes_when_swapped() {
+        for layout in Layout::ALL {
+            for area in [
+                rect(200., -900., 3000., 1800.),
+                rect(-1440., -500., 1440., 2700.),
+            ] {
+                for grid in [None, Some((120, 6)), Some((17, 9))] {
+                    let mut baseline = Desktop::configured(layout, grid);
+                    let count = layout.example_count().max(5);
+                    baseline.reconcile(&(1..=count).collect::<Vec<_>>(), area, 10.);
+                    for id in &baseline.order {
+                        let mut desktop = baseline.clone();
+                        let before = desktop.frames(area, 10.);
+                        let from = before.iter().find(|(window, _)| window == id).unwrap().1;
+                        let to = rect(
+                            from.origin.x,
+                            from.origin.y,
+                            from.size.width + area.size.width * 0.15,
+                            from.size.height + area.size.height * 0.25,
+                        );
+                        desktop.resize(*id, from, to, area, 10.);
+                        if desktop.frames(area, 10.) == before {
+                            desktop = baseline.clone();
+                            desktop.resize(
+                                *id,
+                                from,
+                                rect(
+                                    from.origin.x,
+                                    from.origin.y,
+                                    from.size.width - area.size.width * 0.15,
+                                    from.size.height - area.size.height * 0.25,
+                                ),
+                                area,
+                                10.,
+                            );
+                        }
+                        let resized = desktop.frames(area, 10.);
+                        assert_ne!(resized, before, "{layout:?} id={id} cannot resize");
+                        assert_layout_invariants(&desktop, area);
+                        if let Some(axis) = layout.centered_axis() {
+                            let main = resized
+                                .iter()
+                                .find(|(window, _)| Some(*window) == desktop.order.first().copied())
+                                .unwrap()
+                                .1;
+                            let offset = if axis {
+                                main.origin.x + main.size.width / 2.
+                                    - area.origin.x
+                                    - area.size.width / 2.
+                            } else {
+                                main.origin.y + main.size.height / 2.
+                                    - area.origin.y
+                                    - area.size.height / 2.
+                            };
+                            assert!(offset.abs() < 0.001, "{layout:?}: primary drifted {offset}");
+                        }
+                        let target = *desktop.order.iter().find(|window| *window != id).unwrap();
+                        let swapped = desktop
+                            .proposed_drop(*id, DropIntent::Window(target, Zone::Center), area, 10.)
+                            .unwrap();
+                        let after = swapped.frames(area, 10.);
+                        assert_eq!(
+                            resized.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                            after.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                            "{layout:?}: moving a window changed slot sizes"
+                        );
+                        let saved = swapped.save_distribution(area).unwrap();
+                        let mut restored = swapped.clone();
+                        restored.reset_template(layout, area);
+                        assert!(restored.restore_distribution(&saved));
+                        assert_eq!(restored.frames(area, 10.), after);
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn centered_resize_stays_symmetric_with_two_windows_unequal_minima_and_odd_grid() {
+        for layout in [
+            Layout::Centered,
+            Layout::CenteredWide,
+            Layout::VerticalMaster,
+        ] {
+            let axis = layout != Layout::VerticalMaster;
+            let area = if axis {
+                rect(10., 41., 3000., 1800.)
+            } else {
+                rect(-1440., -500., 1440., 2700.)
+            };
+            for grid in [None, Some((17, 9))] {
+                for count in [2, 5] {
+                    let mut desktop = Desktop::configured(layout, grid);
+                    desktop.reconcile(&(1..=count).collect::<Vec<_>>(), area, 10.);
+                    desktop.set_minimum_sizes(
+                        &[
+                            (1, objc2_foundation::NSSize::new(500., 500.)),
+                            (
+                                2,
+                                if axis {
+                                    objc2_foundation::NSSize::new(600., 90.)
+                                } else {
+                                    objc2_foundation::NSSize::new(120., 600.)
+                                },
+                            ),
+                        ]
+                        .into(),
+                    );
+                    let before = desktop.frames(area, 10.);
+                    assert_eq!(before.len(), count as usize);
+                    let from = before.iter().find(|(id, _)| *id == 1).unwrap().1;
+                    let to = if axis {
+                        rect(
+                            from.origin.x,
+                            from.origin.y,
+                            from.size.width - 100.,
+                            from.size.height,
+                        )
+                    } else {
+                        rect(
+                            from.origin.x,
+                            from.origin.y,
+                            from.size.width,
+                            from.size.height - 100.,
+                        )
+                    };
+                    desktop.resize(1, from, to, area, 10.);
+                    let after = desktop.frames(area, 10.);
+                    let main = after.iter().find(|(id, _)| *id == 1).unwrap().1;
+                    let offset = if axis {
+                        main.origin.x + main.size.width / 2. - area.origin.x - area.size.width / 2.
+                    } else {
+                        main.origin.y + main.size.height / 2.
+                            - area.origin.y
+                            - area.size.height / 2.
+                    };
+                    assert!(offset.abs() < 0.001);
+                    if grid.is_none() {
+                        assert_ne!(main, from);
+                    }
+                    let saved = desktop.save_distribution(area).unwrap();
+                    let mut restored = desktop.clone();
+                    restored.reset_template(layout, area);
+                    assert!(restored.restore_distribution(&saved));
+                    assert_eq!(restored.frames(area, 10.), after);
+                    assert_layout_invariants(&desktop, area);
+                }
+            }
+        }
+    }
+    #[test]
+    fn retired_layout_migrates_without_reinterpreting_other_preferences_or_saved_trees() {
+        assert_eq!(Layout::default(), Layout::Spiral);
+        assert_eq!(Layout::from_index(0), Layout::Spiral);
+        for layout in Layout::ALL {
+            assert_eq!(Layout::from_index(layout.index()), layout);
+            assert_eq!(Layout::from_selection(layout.selection_index()), layout);
+        }
+        let mut desktop = Desktop::default();
+        let area = rect(0., 0., 1600., 1000.);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let before = desktop.frames(area, 10.);
+        // An old Dwindle distribution must not override the new default with its old topology.
+        assert!(!desktop.restore_distribution("2 0 3 0 0 v 0.5 l 0 h 0.5 l 1 l 2"));
+        assert_eq!(desktop.frames(area, 10.), before);
+    }
+    #[test]
+    fn spark_minimum_height_adjusts_spiral_without_replacing_it_with_columns() {
+        let area = rect(10., 41., 1660., 947.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        desktop.set_minimum_sizes(
+            &[(2, objc2_foundation::NSSize::new(720., 700.))]
+                .into_iter()
+                .collect(),
         );
+        for grid in [None, Some((12, 6)), Some((120, 6))] {
+            desktop.grid = grid;
+            let result = desktop.frames(area, 10.);
+            assert_eq!(result.len(), 3);
+            assert!(result[1].1.size.height >= 700.);
+            assert!(result[1].1.size.width >= 720.);
+            assert_eq!(result[0].1.size.height, area.size.height);
+            assert!(result[1].1.size.height < area.size.height);
+            assert_eq!(result[1].1.origin.x, result[2].1.origin.x);
+            assert_layout_invariants(&desktop, area);
+            assert_eq!(desktop.frames(area, 10.), result);
+        }
+    }
+    #[test]
+    fn impossible_spiral_minimum_does_not_silently_become_three_columns() {
+        let area = rect(10., 41., 1660., 947.);
+        let mut desktop = Desktop::configured(Layout::Spiral, Some((120, 6)));
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let original = desktop.frames(area, 10.);
+        desktop.set_minimum_sizes(
+            &[(2, objc2_foundation::NSSize::new(120., 947.))]
+                .into_iter()
+                .collect(),
+        );
+        assert!(desktop.frames(area, 10.).is_empty());
+        assert_eq!(desktop.layout, Layout::Spiral);
+        assert_eq!(desktop.order, vec![1, 2, 3]);
+        let mut columns = desktop.clone();
+        columns.reset_template(Layout::ThreeBands, area);
+        assert_eq!(columns.frames(area, 10.).len(), 3);
+        desktop.set_minimum_sizes(&Default::default());
+        assert_eq!(desktop.frames(area, 10.), original);
     }
     fn assert_layout_invariants(desktop: &Desktop, area: NSRect) {
         let frames = desktop.frames(area, 10.);
@@ -1112,7 +1823,9 @@ mod tests {
                 assert!(width <= 0.001 || height <= 0.001, "overlap {a:?} / {b:?}");
             }
         }
-        if !frames.is_empty() {
+        if !frames.is_empty()
+            && !(desktop.layout.centered_axis().is_some() && desktop.order.len() == 2)
+        {
             let left = frames
                 .iter()
                 .map(|(_, r)| r.origin.x)
@@ -1157,7 +1870,7 @@ mod tests {
                             let target = ids[(step + 1) % ids.len()];
                             match step % 6 {
                                 0 => desktop.reset_template(
-                                    Layout::ALL[(layout_index + step / 6) % 6],
+                                    Layout::ALL[(layout_index + step / 6) % Layout::ALL.len()],
                                     area,
                                 ),
                                 1 => {
@@ -1268,55 +1981,62 @@ mod tests {
         }
     }
     #[test]
-    fn screen_drop_reorients_every_template_and_survives_reconciliation() {
-        for layout in [
-            Layout::Dwindle,
-            Layout::Spiral,
-            Layout::Grid,
-            Layout::Master,
-        ] {
+    fn all_drop_zones_preserve_existing_template_slots_and_reconciliation() {
+        for layout in Layout::ALL {
             for grid in [None, Some((120, 6)), Some((12, 6))] {
                 for area in [rect(0., 30., 1600., 900.), rect(-900., -400., 900., 1600.)] {
                     let mut original = Desktop::configured(layout, grid);
-                    original.reconcile(&[1, 2], area, 10.);
-                    for side in [Zone::Top, Zone::Bottom, Zone::Left, Zone::Right] {
-                        let mut proposed = original
-                            .proposed_drop(1, DropIntent::Screen(side), area, 10.)
-                            .unwrap();
-                        let preview = proposed.frames(area, 10.);
-                        let dragged = preview.iter().find(|(id, _)| *id == 1).unwrap().1;
-                        let other = preview.iter().find(|(id, _)| *id == 2).unwrap().1;
-                        match side {
-                            Zone::Top | Zone::Bottom => {
-                                assert_eq!(dragged.size.width, area.size.width);
-                                assert_eq!(dragged.origin.x, other.origin.x);
-                                assert!(
-                                    (dragged.size.height + other.size.height + 10.
-                                        - area.size.height)
-                                        .abs()
-                                        < 0.01
-                                );
-                                assert_eq!(dragged.origin.y < other.origin.y, side == Zone::Top);
-                            }
-                            _ => {
-                                assert_eq!(dragged.size.height, area.size.height);
-                                assert_eq!(dragged.origin.y, other.origin.y);
-                                assert!(
-                                    (dragged.size.width + other.size.width + 10. - area.size.width)
-                                        .abs()
-                                        < 0.01
-                                );
-                                assert_eq!(dragged.origin.x < other.origin.x, side == Zone::Left);
-                            }
+                    original.reconcile(&[1, 2, 3, 4, 5], area, 10.);
+                    let before = original.frames(area, 10.);
+                    for side in [
+                        Zone::Top,
+                        Zone::Bottom,
+                        Zone::Left,
+                        Zone::Right,
+                        Zone::Center,
+                    ] {
+                        for intent in [DropIntent::Screen(side), DropIntent::Window(2, side)] {
+                            let mut proposed =
+                                original.proposed_drop(1, intent, area, 10.).unwrap();
+                            let preview = proposed.frames(area, 10.);
+                            assert_eq!(proposed.layout, layout);
+                            assert_eq!(
+                                preview.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                                before.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+                            );
+                            proposed.reconcile(&[5, 4, 3, 2, 1], area, 10.);
+                            proposed.fit(area, 10.);
+                            assert_eq!(proposed.frames(area, 10.), preview);
+                            assert_eq!(original.frames(area, 10.), before);
                         }
-                        proposed.reconcile(&[2, 1], area, 10.);
-                        proposed.fit(area, 10.);
-                        assert_eq!(proposed.frames(area, 10.), preview);
-                        assert_eq!(original.order, vec![1, 2]); // Preview has no side effects.
                     }
                 }
             }
         }
+    }
+    #[test]
+    fn slot_swap_rejects_incompatible_app_minimum_without_destroying_layout() {
+        let area = rect(0., 0., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        desktop.set_minimum_sizes(&[(1, objc2_foundation::NSSize::new(600., 900.))].into());
+        let before = desktop.frames(area, 10.);
+        assert!(
+            desktop
+                .proposed_drop(1, DropIntent::Window(2, Zone::Center), area, 10.)
+                .is_none()
+        );
+        assert!(
+            desktop
+                .proposed_drop(1, DropIntent::Window(2, Zone::Top), area, 10.)
+                .is_none()
+        );
+        assert_eq!(desktop.frames(area, 10.), before);
+        assert!(
+            desktop
+                .proposed_drop(2, DropIntent::Window(3, Zone::Left), area, 10.)
+                .is_some()
+        );
     }
     #[test]
     fn intent_distinguishes_screen_edges_local_edges_and_centers() {
@@ -1349,7 +2069,7 @@ mod tests {
                 ),
             ] {
                 assert_eq!(
-                    drop_intent(area, &frames, 1, p, true),
+                    drop_intent(area, &frames, 99, p, true),
                     Some(DropIntent::Screen(side))
                 );
             }
@@ -1359,10 +2079,13 @@ mod tests {
                 target.origin.y + target.size.height / 2.,
             );
             assert_eq!(
-                drop_intent(area, &frames, 1, center, true),
+                drop_intent(area, &frames, 99, center, true),
                 Some(DropIntent::Window(2, Zone::Center))
             );
-            assert_eq!(drop_intent(area, &frames, 2, center, true), None);
+            assert_eq!(
+                drop_intent(area, &frames, 2, center, true),
+                Some(DropIntent::Window(2, Zone::Center))
+            );
             assert_eq!(
                 drop_intent(
                     area,
@@ -1381,11 +2104,11 @@ mod tests {
         ];
         let p = NSPoint::new(820., 500.);
         assert_eq!(
-            drop_intent(area, &frames, 1, p, true),
+            drop_intent(area, &frames, 99, p, true),
             Some(DropIntent::Window(2, Zone::Left))
         );
         assert_eq!(
-            drop_intent(area, &frames, 1, p, false),
+            drop_intent(area, &frames, 99, p, false),
             Some(DropIntent::Window(2, Zone::Center))
         );
     }
@@ -1424,7 +2147,7 @@ mod tests {
     #[test]
     fn portrait_defaults_stack_and_coordinate_conversion_preserves_global_points() {
         let portrait = rect(-900., -400., 900., 1600.);
-        for layout in [Layout::Dwindle, Layout::Spiral, Layout::Master] {
+        for layout in [Layout::Spiral, Layout::Master] {
             let mut d = Desktop::configured(layout, None);
             d.reconcile(&[1, 2], portrait, 10.);
             for (_, frame) in d.frames(portrait, 10.) {
@@ -1453,7 +2176,7 @@ mod tests {
     #[test]
     fn templates_cover_without_overlap() {
         for layout in [
-            Layout::Dwindle,
+            Layout::Centered,
             Layout::Spiral,
             Layout::Grid,
             Layout::Master,
@@ -1471,7 +2194,12 @@ mod tests {
                     .iter()
                     .map(|(_, r)| r.size.width * r.size.height)
                     .sum();
-                assert!((area - 1080000.).abs() < 0.01);
+                let expected = if layout.centered_axis().is_some() && n == 2 {
+                    900000.
+                } else {
+                    1080000.
+                };
+                assert!((area - expected).abs() < 0.01);
                 for (i, (_, a)) in frames.iter().enumerate() {
                     assert!(a.size.width > 0. && a.size.height > 0.);
                     for (_, b) in &frames[i + 1..] {
@@ -1501,7 +2229,7 @@ mod tests {
         assert_eq!(d.order, vec![2, 4]);
     }
     #[test]
-    fn new_window_splits_focused_tile_and_spaces_are_independent() {
+    fn default_spiral_splits_last_tile_and_spaces_are_independent() {
         let area = rect(0., 0., 1200., 800.);
         let mut first = Desktop::default();
         first.reconcile(&[1, 2], area, 10.);
@@ -1509,8 +2237,8 @@ mod tests {
         let second = first.clone();
         first.reconcile_at(&[1, 2, 3], area, 10., Some(1));
         assert_eq!(
-            first.frames(area, 10.).iter().find(|(id, _)| *id == 2),
-            before.iter().find(|(id, _)| *id == 2)
+            first.frames(area, 10.).iter().find(|(id, _)| *id == 1),
+            before.iter().find(|(id, _)| *id == 1)
         );
         assert_eq!(second.order, vec![1, 2]);
         assert_eq!(second.frames(area, 10.), before);
@@ -1548,12 +2276,7 @@ mod tests {
     #[test]
     fn resize_shared_edges_in_every_template_without_overlap() {
         let area = rect(-1400., 40., 1400., 1000.);
-        for layout in [
-            Layout::Dwindle,
-            Layout::Spiral,
-            Layout::Grid,
-            Layout::Master,
-        ] {
+        for layout in Layout::ALL {
             let mut desktop = Desktop {
                 layout,
                 ..Default::default()
@@ -1686,7 +2409,7 @@ mod tests {
     fn removing_tiles_and_resizing_always_reclaims_the_entire_area() {
         let area = rect(-1200., 40., 1200., 900.);
         for layout in [
-            Layout::Dwindle,
+            Layout::Centered,
             Layout::Spiral,
             Layout::Grid,
             Layout::Master,
@@ -1719,7 +2442,11 @@ mod tests {
             for id in 1..12 {
                 d.remove(id);
                 d.fit(area, 10.);
-                assert_full_area(&d.frames(area, 10.), area, 10.);
+                if layout.centered_axis().is_some() && d.order.len() == 2 {
+                    assert_layout_invariants(&d, area);
+                } else {
+                    assert_full_area(&d.frames(area, 10.), area, 10.);
+                }
             }
             assert_eq!(d.frames(area, 10.), vec![(12, area)]);
         }
@@ -1804,7 +2531,7 @@ mod tests {
     #[test]
     fn closing_a_stacked_neighbor_preserves_the_adjusted_column_width() {
         let area = rect(0., 0., 1600., 1000.);
-        for layout in [Layout::Dwindle, Layout::Spiral, Layout::Master] {
+        for layout in [Layout::Spiral, Layout::Master] {
             for closed in [2, 3] {
                 let mut d = Desktop {
                     layout,

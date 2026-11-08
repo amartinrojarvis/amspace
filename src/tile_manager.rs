@@ -18,6 +18,57 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn centered_resize_request(
+    from: NSRect,
+    start: NSRect,
+    press: NSPoint,
+    pointer: NSPoint,
+    mut native: NSRect,
+    horizontal: bool,
+) -> NSRect {
+    let (base, span, initial, initial_span, pressed, point) = if horizontal {
+        (
+            from.origin.x,
+            from.size.width,
+            start.origin.x,
+            start.size.width,
+            press.x,
+            pointer.x,
+        )
+    } else {
+        (
+            from.origin.y,
+            from.size.height,
+            start.origin.y,
+            start.size.height,
+            press.y,
+            pointer.y,
+        )
+    };
+    let near_start = (pressed - initial).abs();
+    let near_end = (pressed - initial - initial_span).abs();
+    let (origin, length) = if near_start.min(near_end) > 12. {
+        (base, span)
+    } else if near_start < near_end {
+        let delta = point - pressed + initial - base;
+        (base + delta, span - delta)
+    } else {
+        let delta = point - pressed + initial + initial_span - base - span;
+        (base, span + delta)
+    };
+    if horizontal {
+        native.origin.x = origin;
+        native.size.width = length;
+    } else {
+        native.origin.y = origin;
+        native.size.height = length;
+    }
+    native
+}
+fn trace_tiling() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("AMSPACE_TRACE_TILING").is_some())
+}
 pub type Workspace = (u32, u64); // Display identity + native Space identity.
 
 #[derive(Clone)]
@@ -31,6 +82,7 @@ impl PickerContext {
         let mut desktop = self.desktop.clone();
         desktop.reset_template(layout, self.area);
         let frames = desktop.frames(self.area, 10.);
+        (frames.len() == desktop.order.len()).then_some(())?;
         frames
             .iter()
             .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.)
@@ -191,11 +243,12 @@ fn arrival_proposal(
     }
     proposed.reconcile_at(&ids, area, 10., None);
     proposed.fit(area, 10.);
-    proposed
-        .frames(area, 10.)
-        .iter()
-        .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.)
-        .then_some(proposed)
+    let frames = proposed.frames(area, 10.);
+    (frames.len() == proposed.order.len()
+        && frames
+            .iter()
+            .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.))
+    .then_some(proposed)
 }
 impl Drag {
     fn observe(&mut self, frame: NSRect, point: NSPoint, pointer_workspace: Option<Workspace>) {
@@ -331,6 +384,12 @@ pub struct Manager {
     constrained: HashMap<u32, (NSRect, NSRect)>,
     minimum_sizes: HashMap<u32, objc2_foundation::NSSize>,
     membership_grace: MembershipGrace,
+    presentation: crate::desktop_mode::Mode,
+    desktop_baseline: Option<HashSet<(i32, u32)>>,
+    desktop_floating: HashSet<(i32, u32)>,
+    last_visible_windows: Option<HashSet<(i32, u32)>>,
+    restore_after_presentation: bool,
+    restore_spaces_after_presentation: HashSet<u64>,
     drag: Option<Drag>,
     pending_drop: Option<PendingDrop>,
     handoffs: HashMap<u32, MonitorHandoff>,
@@ -345,6 +404,104 @@ pub struct Manager {
     pub last_error: Option<String>,
 }
 impl Manager {
+    fn presentation_blocks_input(&mut self) -> bool {
+        if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
+            return true;
+        }
+        crate::desktop_mode::refresh();
+        if crate::desktop_mode::active() {
+            self.set_presentation(crate::desktop_mode::current());
+            return true;
+        }
+        false
+    }
+    pub fn finish_deferred_restores(&mut self, defaults: Obj) -> bool {
+        self.set_presentation(crate::desktop_mode::current());
+        if self.presentation != crate::desktop_mode::Mode::Normal {
+            return false;
+        }
+        let all = std::mem::take(&mut self.restore_after_presentation);
+        let spaces = std::mem::take(&mut self.restore_spaces_after_presentation);
+        if all && pref(defaults, "tile.enabled") == 0 {
+            self.restore();
+        }
+        for space in spaces {
+            if pref(defaults, &format!("tile.off.{space}")) != 0 {
+                self.restore_space(space);
+            }
+        }
+        true
+    }
+    pub fn set_presentation(&mut self, mode: crate::desktop_mode::Mode) {
+        if self.presentation == mode {
+            return;
+        }
+        let snapshot = if mode == crate::desktop_mode::Mode::Desktop
+            || self.presentation == crate::desktop_mode::Mode::Desktop
+        {
+            ws::all_window_ids()
+        } else {
+            None
+        };
+        self.set_presentation_at(mode, Instant::now(), snapshot);
+        if mode == crate::desktop_mode::Mode::Desktop
+            && let Some(visible) = ws::visible_normal_window_ids()
+        {
+            self.remember_late_desktop_windows(&visible);
+        }
+    }
+    fn remember_late_desktop_windows(&mut self, visible: &HashSet<(i32, u32)>) {
+        if let Some(before) = &self.last_visible_windows {
+            self.desktop_floating.extend(
+                visible.difference(before).copied().filter(|(pid, id)| {
+                    self.windows.get(id).is_none_or(|window| window.pid != *pid)
+                }),
+            );
+        }
+    }
+    fn set_presentation_at(
+        &mut self,
+        mode: crate::desktop_mode::Mode,
+        now: Instant,
+        snapshot: Option<HashSet<(i32, u32)>>,
+    ) {
+        use crate::desktop_mode::Mode;
+        if self.presentation == mode {
+            return;
+        }
+        if self.presentation == Mode::Desktop {
+            let Some(after) = snapshot.as_ref() else {
+                return;
+            };
+            let before = self.desktop_baseline.take().unwrap_or_else(|| {
+                self.windows
+                    .iter()
+                    .map(|(id, w)| (w.pid, *id))
+                    .chain(
+                        self.last_visible_windows
+                            .iter()
+                            .flat_map(|ids| ids.iter().copied()),
+                    )
+                    .collect()
+            });
+            self.desktop_floating
+                .extend(after.difference(&before).copied());
+        }
+        if mode == Mode::Desktop {
+            if let Some(snapshot) = &snapshot {
+                self.desktop_floating.retain(|key| snapshot.contains(key));
+            }
+            self.desktop_baseline = snapshot;
+        }
+        let was_paused = self.presentation != Mode::Normal;
+        self.presentation = mode;
+        if !was_paused {
+            self.cancel_drag(); // Cancels writes/previews, preserving trees and originals.
+        } else if mode == Mode::Normal {
+            // Let macOS put the parked windows back before consulting geometry.
+            self.space_changed_with_visible_at(now, &[]);
+        }
+    }
     pub fn invalidate(&mut self) {
         self.dirty = true;
         self.last_scan = None;
@@ -443,6 +600,10 @@ impl Manager {
         self.hide_preview();
     }
     pub fn restore(&mut self) {
+        if self.presentation_blocks_input() {
+            self.restore_after_presentation = true;
+            return;
+        }
         self.cancel_drag();
         for (id, w) in &self.windows {
             if !self.inactive_tabs.contains(id)
@@ -500,6 +661,9 @@ impl Manager {
         }
     }
     pub fn toggle_float(&mut self, defaults: Obj) {
+        if self.presentation_blocks_input() {
+            return;
+        }
         unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
@@ -726,6 +890,12 @@ impl Manager {
                     self.verifications.remove(&id);
                 }
                 VerificationStep::Limited => {
+                    if trace_tiling() {
+                        eprintln!(
+                            "tiling limit: id={id} requested={:?} actual={actual:?}",
+                            verification.target
+                        );
+                    }
                     let minimum = self
                         .minimum_sizes
                         .entry(id)
@@ -766,10 +936,17 @@ impl Manager {
             .find(|(id, _)| *id == drag.id)
             .map(|(_, r)| *r)
             .unwrap_or(drag.start);
-        layout.resize(drag.id, from, frame, drag.area, 10.);
+        let centered_axis = (layout.order.first() == Some(&drag.id))
+            .then(|| layout.layout.primary_center_axis())
+            .flatten();
+        let requested = centered_axis.map_or(frame, |axis| {
+            centered_resize_request(from, drag.start, drag.point, point, frame, axis)
+        });
+        layout.resize(drag.id, from, requested, drag.area, 10.);
         for (id, target) in layout.frames(drag.area, 10.) {
-            // macOS owns the user's window throughout the native resize gesture.
-            if id == drag.id && !final_sample {
+            // The centered primary is driven from pointer displacement so its
+            // mirrored AX frame cannot feed back into the next native sample.
+            if id == drag.id && !final_sample && centered_axis.is_none() {
                 continue;
             }
             if ws::bounds(id).is_some_and(|actual| near(actual, target)) {
@@ -783,7 +960,10 @@ impl Manager {
         self.desktops.insert(drag.space, layout);
     }
     pub fn current_workspace(&self) -> Option<Workspace> {
-        if self.space_quiet_until.is_some() {
+        if self.space_quiet_until.is_some()
+            || crate::desktop_mode::active()
+            || self.presentation != crate::desktop_mode::Mode::Normal
+        {
             return None; // Cached display/Space data still belongs to the transition.
         }
         let display = pointer_display()?;
@@ -815,6 +995,9 @@ impl Manager {
         context: &PickerContext,
         layout: Layout,
     ) -> bool {
+        if self.space_quiet_until.is_some() || self.presentation_blocks_input() {
+            return false;
+        }
         // A picker is tied to one display/Space and one window set for its entire lifetime.
         if self.space_quiet_until.is_some()
             || !spaces::visible_desktops().contains(&context.workspace)
@@ -834,13 +1017,22 @@ impl Manager {
             self.cancel_window_placement(*id);
         }
         save(defaults, &layout_key(context.workspace), layout.index());
+        if trace_tiling() {
+            eprintln!(
+                "tiling apply: workspace={:?} layout={layout:?} frames={:?}",
+                context.workspace,
+                proposed.frames(context.area, 10.)
+            );
+        }
         self.desktops.insert(context.workspace, proposed);
         self.invalidate();
         true
     }
-    pub fn reset_template(&mut self, defaults: Obj, layout: Layout) {
+    pub fn reset_template(&mut self, defaults: Obj, layout: Layout) -> bool {
         if let Some(context) = self.picker_context() {
-            self.apply_template(defaults, &context, layout);
+            self.apply_template(defaults, &context, layout)
+        } else {
+            false
         }
     }
     pub fn save_distribution(&self, defaults: Obj) -> bool {
@@ -911,6 +1103,10 @@ impl Manager {
     }
     /// False tells the UI to stop its timer after permission is revoked.
     pub fn tick(&mut self, defaults: Obj) -> bool {
+        self.set_presentation(crate::desktop_mode::current());
+        if self.presentation != crate::desktop_mode::Mode::Normal {
+            return true;
+        }
         if !ax::trusted() {
             self.cancel_drag();
             return false;
@@ -919,6 +1115,9 @@ impl Manager {
         true
     }
     pub fn refresh_for_picker(&mut self, defaults: Obj) {
+        if self.presentation_blocks_input() {
+            return;
+        }
         self.cancel_drag();
         self.invalidate();
         if ax::trusted() {
@@ -926,9 +1125,32 @@ impl Manager {
         }
     }
     fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
+        if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
+            return;
+        }
         let resuming_space = self.space_quiet_until.is_some();
         if self.waiting_for_space(Instant::now()) {
             return;
+        }
+        let down: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        let scan_interval = if self.settling_space() { 100 } else { 500 };
+        if down & 1 != 0
+            || self.pressed
+            || self.pending_drop.is_some()
+            || !self.transitions.is_empty()
+            || !self.verifications.is_empty()
+            || self.dirty
+            || self
+                .last_area_update
+                .is_none_or(|last| last.elapsed() >= Duration::from_millis(500))
+            || self
+                .last_scan
+                .is_none_or(|last| last.elapsed() >= Duration::from_millis(scan_interval))
+        {
+            crate::desktop_mode::refresh();
+            if crate::desktop_mode::active() {
+                return;
+            }
         }
         if self
             .last_area_update
@@ -1005,7 +1227,6 @@ impl Manager {
                 )
             });
         }
-        let down: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
         let down = place_windows && down & 1 != 0;
         let Some(p) = pointer() else {
             self.cancel_drag();
@@ -1104,6 +1325,14 @@ impl Manager {
                 self.handoffs.remove(&drag.id);
             }
         }
+        if trace_tiling() && down && !self.pressed {
+            eprintln!(
+                "tiling capture: point={p:?} drag={:?}",
+                self.drag
+                    .as_ref()
+                    .map(|d| (d.id, d.space, d.start, d.resize_gesture))
+            );
+        }
         self.pressed = down;
         if down {
             let mut preview = None;
@@ -1183,6 +1412,12 @@ impl Manager {
         }
         self.resize_drag(true);
         if let Some(drag) = self.drag.take() {
+            if trace_tiling() {
+                eprintln!(
+                    "tiling release: id={} moved={} resized={} destination={:?} minimums={:?}",
+                    drag.id, drag.moved, drag.resized, drag.drop, self.minimum_sizes
+                );
+            }
             self.hide_preview();
             if drag.moved && !drag.resized && !self.floating.contains(&drag.id) {
                 let selected = drag
@@ -1241,6 +1476,14 @@ impl Manager {
                                     },
                                 );
                             }
+                            if trace_tiling() {
+                                eprintln!(
+                                    "tiling commit: id={} workspace={:?} frames={:?}",
+                                    drop.id,
+                                    drop.destination,
+                                    proposed.frames(*area, 10.)
+                                );
+                            }
                             self.desktops.insert(drop.destination, proposed);
                             if let Some(w) = self.windows.get_mut(&drop.id) {
                                 if w.space != drop.destination {
@@ -1273,7 +1516,6 @@ impl Manager {
             // Space/screen changes and real gestures already cancel that batch.
             return;
         }
-        let scan_interval = if self.settling_space() { 100 } else { 500 };
         if self
             .last_scan
             .is_some_and(|t| t.elapsed() < Duration::from_millis(scan_interval))
@@ -1284,6 +1526,8 @@ impl Manager {
         let Some(candidates) = ws::try_tile_windows() else {
             return;
         };
+        self.last_visible_windows =
+            Some(candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect());
         self.last_scan = Some(Instant::now());
         let focused = unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -1368,7 +1612,9 @@ impl Manager {
                 continue;
             };
             if let std::collections::hash_map::Entry::Vacant(entry) = self.windows.entry(id) {
-                if crate::tile_rules::floats(defaults, pid) {
+                if self.desktop_floating.remove(&(pid, id))
+                    || crate::tile_rules::floats(defaults, pid)
+                {
                     self.floating.insert(id);
                 }
                 entry.insert(Managed {
@@ -1569,6 +1815,10 @@ impl Manager {
                 }
             }
         }
+        crate::desktop_mode::refresh();
+        if crate::desktop_mode::active() {
+            return;
+        }
         for (space, r) in active {
             let d = self.desktops.entry(space).or_default();
             d.grid = if pref(defaults, "tile.grid.enabled") != 0 {
@@ -1587,11 +1837,13 @@ impl Manager {
             let ids = members.entry(space).or_default();
             ids.sort_unstable();
             d.reconcile_at(ids, r, 10., focused);
+            d.set_minimum_sizes(&self.minimum_sizes);
             d.fit(r, 10.);
-            let proposed = d.frames(r, 10.);
-            let frames =
-                crate::tiling::respect_minimum_sizes(&proposed, &self.minimum_sizes, r, 10.)
-                    .unwrap_or(proposed);
+            let frames = d.frames(r, 10.);
+            if frames.len() != d.order.len() {
+                self.last_error = Some("Esta plantilla no admite los tamaños mínimos de estas ventanas; prueba otra o deja una ventana flotante.".into());
+                continue;
+            }
             // Do not create unusably small tiles; retain the layout until space is available.
             if frames
                 .iter()
@@ -1602,6 +1854,9 @@ impl Manager {
                 continue;
             }
             for (id, frame) in frames {
+                if crate::desktop_mode::active() {
+                    return;
+                }
                 if !place_windows || !visible_ids.contains(&id) || uncertain.contains(&id) {
                     continue;
                 }
@@ -1679,6 +1934,10 @@ impl Manager {
         self.constrained.remove(&id);
     }
     pub fn restore_space(&mut self, space: u64) {
+        if self.presentation_blocks_input() {
+            self.restore_spaces_after_presentation.insert(space);
+            return;
+        }
         for (id, w) in &self.windows {
             if w.space.1 == space
                 && !self.inactive_tabs.contains(id)
@@ -1829,6 +2088,184 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn picker_disables_a_template_that_cannot_fit_app_minima_instead_of_previewing_columns_as_spiral()
+     {
+        let area = rect(10., 41., 1660., 947.);
+        let mut desktop = Desktop::configured(Layout::Spiral, Some((120, 6)));
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        desktop.set_minimum_sizes(
+            &[(2, objc2_foundation::NSSize::new(120., 947.))]
+                .into_iter()
+                .collect(),
+        );
+        let context = PickerContext {
+            workspace: (1, 7),
+            area,
+            desktop,
+        };
+        assert!(context.proposal(Layout::Spiral).is_none());
+        assert!(context.proposal(Layout::ThreeBands).is_some());
+    }
+    #[test]
+    fn show_desktop_preserves_tree_and_leaves_new_windows_floating_after_exit() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager::default();
+        let workspace = (2, 8);
+        let area = rect(-900., -400., 880., 1580.);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, Some((120, 6)));
+        desktop.reconcile(&[1, 2], area, 10.);
+        let before = desktop.frames(area, 10.);
+        manager.desktops.insert(workspace, desktop);
+        manager.transition_from(1, area, before[0].1);
+        manager
+            .verifications
+            .insert(2, Verification::new(before[1].1));
+        let now = Instant::now();
+        let existing = HashSet::from([(7, 1), (7, 2), (7, 30)]);
+        manager.set_presentation_at(Mode::Desktop, now, Some(existing));
+        assert!(manager.transitions.is_empty() && manager.verifications.is_empty());
+        // A null defaults pointer is safe only if every operation returns before
+        // touching AX, screen geometry, preferences or the desktop membership.
+        manager.tick_mode(ptr::null_mut(), true);
+        manager.refresh_for_picker(ptr::null_mut());
+        manager.toggle_float(ptr::null_mut());
+        assert_eq!(manager.desktops[&workspace].frames(area, 10.), before);
+        let after = HashSet::from([(7, 1), (7, 2), (9, 3), (9, 4), (8, 30)]);
+        // Repeated desktop notifications cannot reset the original baseline.
+        manager.set_presentation_at(Mode::Desktop, now, Some(after.clone()));
+        manager.set_presentation_at(Mode::Overview, now, Some(after));
+        assert_eq!(
+            manager.desktop_floating,
+            HashSet::from([(9, 3), (9, 4), (8, 30)])
+        );
+        manager.tick_mode(ptr::null_mut(), true);
+        manager.set_presentation_at(Mode::Normal, now, None);
+        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert_eq!(manager.desktops[&workspace].frames(area, 10.), before);
+        assert_eq!(manager.desktop_floating.len(), 3);
+        assert!(!manager.desktop_floating.contains(&(7, 30)));
+    }
+    #[test]
+    fn failed_desktop_snapshot_preserves_known_windows_and_retries_before_resume() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager {
+            last_visible_windows: Some(HashSet::from([(7, 1)])),
+            ..Default::default()
+        };
+        let now = Instant::now();
+        manager.set_presentation_at(Mode::Desktop, now, None);
+        manager.set_presentation_at(Mode::Normal, now, None);
+        assert_eq!(manager.presentation, Mode::Desktop);
+        manager.tick_mode(ptr::null_mut(), true);
+        manager.set_presentation_at(Mode::Normal, now, Some(HashSet::from([(7, 1), (9, 2)])));
+        assert_eq!(manager.presentation, Mode::Normal);
+        assert_eq!(manager.desktop_floating, HashSet::from([(9, 2)]));
+        manager.set_presentation_at(Mode::Overview, now, None);
+        manager.set_presentation_at(
+            Mode::Normal,
+            now,
+            Some(HashSet::from([(7, 1), (9, 2), (9, 3)])),
+        );
+        assert_eq!(manager.desktop_floating, HashSet::from([(9, 2)]));
+    }
+    #[test]
+    fn folder_opened_before_desktop_entry_delivery_still_stays_floating() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager {
+            last_visible_windows: Some(HashSet::from([(7, 1)])),
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let after = HashSet::from([(7, 1), (9, 2)]);
+        manager.set_presentation_at(Mode::Desktop, now, Some(after.clone()));
+        manager.remember_late_desktop_windows(&after);
+        manager.set_presentation_at(Mode::Normal, now, Some(after));
+        assert_eq!(manager.desktop_floating, HashSet::from([(9, 2)]));
+    }
+    #[test]
+    fn show_desktop_round_trip_preserves_every_rect_and_saved_tree_across_displays_and_spaces() {
+        use crate::desktop_mode::Mode;
+        let contexts = [
+            ((1, 7), rect(10., 41., 1660., 947.)),
+            ((1, 9), rect(10., 41., 1660., 947.)),
+            ((2, 8), rect(-900., -400., 880., 1580.)),
+            ((2, 10), rect(-900., -400., 880., 1580.)),
+        ];
+        for layout in Layout::ALL {
+            for grid in [None, Some((120, 6))] {
+                let mut manager = Manager::default();
+                let mut snapshots = HashMap::new();
+                let mut before_ids = HashSet::new();
+                for (index, (key, area)) in contexts.iter().enumerate() {
+                    let ids = [
+                        index as u32 * 3 + 1,
+                        index as u32 * 3 + 2,
+                        index as u32 * 3 + 3,
+                    ];
+                    let mixed_layout = Layout::ALL[(layout.selection_index() as usize
+                        + [0, 1, 3, 4][index])
+                        % Layout::ALL.len()];
+                    let mut desktop = Desktop::configured(mixed_layout, grid);
+                    desktop.reconcile(&ids, *area, 10.);
+                    let frame = desktop
+                        .frames(*area, 10.)
+                        .iter()
+                        .find(|(id, _)| *id == ids[0])
+                        .unwrap()
+                        .1;
+                    let mut resized = frame;
+                    resized.size.width -= 35.;
+                    resized.size.height += 50.;
+                    desktop.resize(ids[0], frame, resized, *area, 10.);
+                    let second = desktop
+                        .frames(*area, 10.)
+                        .iter()
+                        .find(|(id, _)| *id == ids[1])
+                        .unwrap()
+                        .1;
+                    let minimum = if second.size.width + 20. < area.size.width {
+                        objc2_foundation::NSSize::new(second.size.width + 20., 90.)
+                    } else {
+                        objc2_foundation::NSSize::new(120., second.size.height + 20.)
+                    };
+                    manager.minimum_sizes.insert(ids[1], minimum);
+                    desktop.set_minimum_sizes(&manager.minimum_sizes);
+                    assert_eq!(desktop.frames(*area, 10.).len(), 3);
+                    snapshots.insert(
+                        *key,
+                        (desktop.frames(*area, 10.), desktop.save_distribution(*area)),
+                    );
+                    before_ids.extend(ids.map(|id| (7, id)));
+                    manager.desktops.insert(*key, desktop);
+                }
+                let now = Instant::now();
+                manager.set_presentation_at(Mode::Desktop, now, Some(before_ids.clone()));
+                manager.space_changed_with_visible_at(now, &[(1, 9), (2, 8)]);
+                manager.space_changed_with_visible_at(now, &[(1, 9), (2, 10)]);
+                manager.tick_mode(ptr::null_mut(), true);
+                let mut after_ids = before_ids;
+                after_ids.extend([(8, 100), (9, 101)]);
+                manager.set_presentation_at(Mode::Normal, now, Some(after_ids));
+                assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
+                assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+                for (key, area) in contexts {
+                    let desktop = manager.desktops.get_mut(&key).unwrap();
+                    let ids = desktop.order.clone();
+                    desktop.reconcile_at(&ids, area, 10., Some(ids[2]));
+                    desktop.set_minimum_sizes(&manager.minimum_sizes);
+                    desktop.fit(area, 10.);
+                    assert_eq!(desktop.frames(area, 10.), snapshots[&key].0);
+                    assert_eq!(desktop.save_distribution(area), snapshots[&key].1);
+                }
+                assert_eq!(
+                    manager.desktop_floating,
+                    HashSet::from([(8, 100), (9, 101)])
+                );
+            }
+        }
+    }
     #[test]
     fn ax_workspace_membership_preserves_real_shared_space_monitor_transfers() {
         let mut manager = Manager::default();
@@ -2653,7 +3090,7 @@ mod tests {
             save(raw, &layout_key((1, 7)), 4);
             assert_eq!(layout_pref(raw, (1, 7)), Layout::ThreeBands);
             assert_eq!(layout_pref(raw, (2, 7)), Layout::Spiral);
-            assert_eq!(layout_pref(raw, (1, 8)), Layout::Dwindle);
+            assert_eq!(layout_pref(raw, (1, 8)), Layout::Spiral);
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
         });
     }
@@ -2679,6 +3116,153 @@ mod tests {
             }
             assert_ne!(layout_key((1, 7)), layout_key((2, 7)));
         }
+    }
+    #[test]
+    fn picker_template_then_drag_to_any_slot_preserves_preview_and_virtual_grid() {
+        for area in [
+            rect(0., 41., 1800., 1000.),
+            rect(-1200., -400., 1200., 1800.),
+        ] {
+            for grid in [None, Some((120, 6))] {
+                let mut initial = Desktop::configured(Layout::Spiral, grid);
+                initial.reconcile(&[1, 2, 3, 4, 5], area, 10.);
+                let context = PickerContext {
+                    workspace: (1, 7),
+                    area,
+                    desktop: initial,
+                };
+                for layout in Layout::ALL {
+                    let committed = context.proposal(layout).unwrap();
+                    let slots = committed.frames(area, 10.);
+                    let source = slots[0].0;
+                    for (target, frame) in &slots {
+                        if *target == source {
+                            continue;
+                        }
+                        // Includes the region that previously requested a new split.
+                        for point in [
+                            NSPoint::new(frame.origin.x + 2., frame.origin.y + 2.),
+                            NSPoint::new(
+                                frame.origin.x + frame.size.width / 2.,
+                                frame.origin.y + frame.size.height / 2.,
+                            ),
+                        ] {
+                            let intent = drop_intent(area, &slots, source, point, true).unwrap();
+                            let preview =
+                                committed.proposed_drop(source, intent, area, 10.).unwrap();
+                            assert_eq!(preview.layout, layout);
+                            let after = preview.frames(area, 10.);
+                            assert_eq!(
+                                after.iter().find(|(id, _)| *id == source).unwrap().1,
+                                *frame,
+                                "{layout:?}: drag must use the target slot"
+                            );
+                            let mut released =
+                                arrival_proposal(&committed, source, Some(intent), area).unwrap();
+                            released.reconcile(&[5, 4, 3, 2, 1], area, 10.);
+                            released.fit(area, 10.);
+                            assert_eq!(released.frames(area, 10.), after);
+                            assert_eq!(
+                                slots.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                                after.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                                "{layout:?}: drag changed the template geometry"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn mixed_templates_drag_and_save_are_isolated_across_monitors_and_spaces() {
+        let areas = [
+            ((1, 7), rect(10., 41., 3200., 1700.)),
+            ((1, 9), rect(10., 41., 3200., 1700.)),
+            ((2, 8), rect(-1440., -500., 1420., 2500.)),
+            ((2, 10), rect(-1440., -500., 1420., 2500.)),
+            ((3, 7), rect(3210., 200., 1900., 1100.)),
+        ];
+        for offset in 0..Layout::ALL.len() {
+            let mut desktops = HashMap::new();
+            for (index, (key, area)) in areas.iter().enumerate() {
+                let layout = Layout::ALL[(offset + index) % Layout::ALL.len()];
+                let ids: Vec<_> = (1..=layout.example_count().max(5))
+                    .map(|id| id + index as u32 * 100)
+                    .collect();
+                let mut desktop =
+                    Desktop::configured(layout, if index % 2 == 0 { Some((120, 6)) } else { None });
+                desktop.reconcile(&ids, *area, 10.);
+                desktops.insert(*key, desktop);
+            }
+            for (key, area) in areas {
+                let unaffected: HashMap<_, _> = areas
+                    .iter()
+                    .filter(|(other, _)| *other != key)
+                    .map(|(other, r)| (*other, desktops[other].save_distribution(*r)))
+                    .collect();
+                let context = PickerContext {
+                    workspace: key,
+                    area,
+                    desktop: desktops[&key].clone(),
+                };
+                let committed = context.proposal(context.desktop.layout).unwrap();
+                let frames = committed.frames(area, 10.);
+                let source = frames[0].0;
+                let (target, slot) = frames.last().copied().unwrap();
+                let point = NSPoint::new(slot.origin.x + 2., slot.origin.y + 2.);
+                let intent = drop_intent(area, &frames, source, point, true).unwrap();
+                let proposed = arrival_proposal(&committed, source, Some(intent), area).unwrap();
+                assert_eq!(
+                    proposed
+                        .frames(area, 10.)
+                        .iter()
+                        .find(|(id, _)| *id == source)
+                        .unwrap()
+                        .1,
+                    slot
+                );
+                assert_eq!(proposed.order.len(), committed.order.len());
+                assert_ne!(source, target);
+                let saved = proposed.save_distribution(area).unwrap();
+                let mut restored = proposed.clone();
+                restored.reset_template(proposed.layout, area);
+                assert!(restored.restore_distribution(&saved));
+                assert_eq!(restored.frames(area, 10.), proposed.frames(area, 10.));
+                desktops.insert(key, restored);
+                for (other, other_area) in areas {
+                    if other != key {
+                        assert_eq!(
+                            desktops[&other].save_distribution(other_area),
+                            unaffected[&other]
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn centered_live_resize_uses_pointer_not_its_own_mirrored_feedback() {
+        let from = rect(400., 40., 1200., 1600.);
+        let start = rect(400., 40., 1220., 1600.);
+        let press = NSPoint::new(1620., 500.);
+        let point = NSPoint::new(1650., 500.);
+        let first = centered_resize_request(from, start, press, point, start, true);
+        let mirrored = rect(350., 40., 1300., 1600.);
+        assert_eq!(
+            centered_resize_request(from, start, press, point, mirrored, true),
+            first
+        );
+        assert_eq!(first.size.width, 1250.);
+        let vertical = rect(-900., 400., 1200., 1200.);
+        let requested = centered_resize_request(
+            vertical,
+            vertical,
+            NSPoint::new(-500., 1600.),
+            NSPoint::new(-500., 1640.),
+            vertical,
+            false,
+        );
+        assert_eq!(requested.size.height, 1240.);
     }
     #[test]
     fn picker_rejects_templates_that_do_not_fit() {

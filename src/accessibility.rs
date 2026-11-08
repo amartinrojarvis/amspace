@@ -176,9 +176,17 @@ pub fn focused_id(pid: i32) -> Option<u32> {
     window_id(attr(application(pid)?.0, "AXFocusedWindow")?.0)
 }
 fn protected_focus_role(role: Cf) -> bool {
-    ["AXDialog", "AXSystemDialog", "AXSheet", "AXSecureTextField"]
-        .iter()
-        .any(|name| equals_text(role, name))
+    [
+        "AXDialog",
+        "AXSystemDialog",
+        "AXSheet",
+        "AXSecureTextField",
+        "AXMenu",
+        "AXMenuItem",
+        "AXMenuBarItem",
+    ]
+    .iter()
+    .any(|name| equals_text(role, name))
 }
 /// Modal dialogs and sheets keep keyboard ownership even when the pointer rests
 /// on another app. Secure input is checked separately and needs no AX access.
@@ -300,6 +308,9 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
     Some((window, pid))
 }
 pub fn focus(window: Cf, pid: i32) -> bool {
+    if crate::desktop_mode::active() {
+        return false;
+    }
     let Some(app) = application(pid) else {
         return false;
     };
@@ -384,12 +395,87 @@ extern "C" fn changed(_: Cf, _: Cf, notification: Cf, _: *mut c_void) {
     );
 }
 
+/// Dock publishes presentation transitions independently of the frontmost app.
+/// Notification names are documented by yabai's mission_control.c (MIT).
+pub struct DesktopObserver {
+    handle: Owned,
+    pub pid: i32,
+}
+impl DesktopObserver {
+    pub fn dock_pid() -> Option<i32> {
+        use objc2::{class, msg_send};
+        unsafe {
+            let apps: crate::native::Obj = msg_send![class!(NSRunningApplication), runningApplicationsWithBundleIdentifier:ns_string!("com.apple.dock")];
+            let app: crate::native::Obj = msg_send![apps, firstObject];
+            if app.is_null() {
+                None
+            } else {
+                Some(msg_send![app, processIdentifier])
+            }
+        }
+    }
+    pub fn new(pid: i32) -> Option<Self> {
+        let app = application(pid)?;
+        let mut raw = ptr::null();
+        if unsafe { AXObserverCreate(pid, desktop_changed, &mut raw) } != 0 {
+            return None;
+        }
+        let this = Self {
+            handle: Owned::new(raw)?,
+            pid,
+        };
+        for (name, _) in crate::desktop_mode::NOTIFICATIONS {
+            if unsafe {
+                AXObserverAddNotification(
+                    this.handle.0,
+                    app.0,
+                    cf(&NSString::from_str(name)),
+                    ptr::null_mut(),
+                )
+            } != 0
+            {
+                return None;
+            }
+        }
+        unsafe {
+            CFRunLoopAddSource(
+                CFRunLoopGetMain(),
+                AXObserverGetRunLoopSource(this.handle.0),
+                kCFRunLoopCommonModes,
+            );
+        }
+        Some(this)
+    }
+}
+impl Drop for DesktopObserver {
+    fn drop(&mut self) {
+        unsafe {
+            CFRunLoopRemoveSource(
+                CFRunLoopGetMain(),
+                AXObserverGetRunLoopSource(self.handle.0),
+                kCFRunLoopCommonModes,
+            );
+        }
+        crate::desktop_mode::update(crate::desktop_mode::Mode::Normal);
+    }
+}
+extern "C" fn desktop_changed(_: Cf, _: Cf, notification: Cf, _: *mut c_void) {
+    if let Some((_, mode)) = crate::desktop_mode::NOTIFICATIONS
+        .iter()
+        .find(|(name, _)| equals_text(notification, name))
+    {
+        crate::desktop_mode::update(*mode);
+    }
+}
+
 /// Only standard, movable/resizable windows participate. Dialogs stay floating.
 pub fn tileable(window: Cf) -> bool {
     unsafe extern "C" {
         fn AXUIElementIsAttributeSettable(element: Cf, name: Cf, result: *mut bool) -> i32;
     }
     if !attr(window, "AXSubrole").is_some_and(|v| equals_text(v.0, "AXStandardWindow"))
+        || flag(window, "AXModal")
+        || system_utility_window(window)
         || geometry(window).is_none()
     {
         return false;
@@ -402,6 +488,25 @@ pub fn tileable(window: Cf) -> bool {
                 && settable
         }
     })
+}
+fn finder_info_identifier(bundle: Option<&str>, identifier: Cf) -> bool {
+    bundle == Some("com.apple.finder")
+        && ["Info", "Inspector"]
+            .iter()
+            .any(|name| equals_text(identifier, name))
+}
+fn always_floating_bundle(bundle: Option<&str>) -> bool {
+    bundle == Some("com.apple.archiveutility")
+}
+fn system_utility_window(window: Cf) -> bool {
+    let mut pid = 0;
+    if unsafe { AXUIElementGetPid(window, &mut pid) } != 0 {
+        return true;
+    }
+    let bundle = crate::tile_rules::application_id(pid);
+    always_floating_bundle(bundle.as_deref())
+        || attr(window, "AXIdentifier")
+            .is_some_and(|identifier| finder_info_identifier(bundle.as_deref(), identifier.0))
 }
 /// Temporarily suppress AppKit's own AX geometry animation, restoring the exact
 /// app attribute when this transaction ends (Rectangle PR #285).
@@ -472,6 +577,10 @@ pub(crate) fn integral_frame(frame: objc2_foundation::NSRect) -> objc2_foundatio
     )
 }
 pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
+    crate::desktop_mode::refresh();
+    if crate::desktop_mode::active() {
+        return false;
+    }
     unsafe extern "C" {
         fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
     }
@@ -497,8 +606,14 @@ pub fn set_frame(window: Cf, frame: objc2_foundation::NSRect) -> bool {
     unsafe {
         // Size first permits movement from a larger display to a smaller one.
         apply_frame(
-            || AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), s.0) == 0,
-            || AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), p.0) == 0,
+            || {
+                !crate::desktop_mode::active()
+                    && AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), s.0) == 0
+            },
+            || {
+                !crate::desktop_mode::active()
+                    && AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), p.0) == 0
+            },
         )
     }
 }
@@ -510,6 +625,10 @@ pub fn set_frame_step(
     previous: objc2_foundation::NSRect,
     next: objc2_foundation::NSRect,
 ) -> bool {
+    crate::desktop_mode::refresh();
+    if crate::desktop_mode::active() {
+        return false;
+    }
     unsafe extern "C" {
         fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
     }
@@ -560,6 +679,47 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 mod placement_tests {
     use super::*;
     #[test]
+    #[ignore = "read-only focused AX roles diagnostic; requires an interactive desktop"]
+    fn inspect_native_focus_roles() {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let ws: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: *mut AnyObject = msg_send![ws, frontmostApplication];
+            assert!(!front.is_null(), "An interactive session is required");
+            let pid: i32 = msg_send![front, processIdentifier];
+            println!("front_pid={pid} protected={}", focus_is_protected(pid));
+            println!(
+                "native_menu_open={:?}",
+                crate::window_server::inspect_menu_open()
+            );
+            let root = Owned::new(AXUIElementCreateSystemWide()).unwrap();
+            for (label, root) in [("system", root), ("front", application(pid).unwrap())] {
+                let mut element = attr(root.0, "AXFocusedUIElement");
+                for depth in 0..6 {
+                    let Some(current) = element else { break };
+                    for key in ["AXRole", "AXSubrole"] {
+                        let value = attr(current.0, key);
+                        let roles: Vec<_> = [
+                            "AXMenu",
+                            "AXMenuItem",
+                            "AXMenuBar",
+                            "AXMenuBarItem",
+                            "AXWindow",
+                            "AXApplication",
+                            "AXTextField",
+                            "AXSecureTextField",
+                        ]
+                        .into_iter()
+                        .filter(|role| value.as_ref().is_some_and(|v| equals_text(v.0, role)))
+                        .collect();
+                        println!("{label} depth={depth} {key}={roles:?}");
+                    }
+                    element = attr(current.0, "AXParent");
+                }
+            }
+        });
+    }
+    #[test]
     fn array_traversal_retains_source_and_checks_types() {
         use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
         objc2::rc::autoreleasepool(|_| unsafe {
@@ -585,6 +745,36 @@ mod placement_tests {
             assert!(!protected_focus_role(cf(&NSString::from_str(role))));
         }
         assert!(!protected_focus_role(ptr::null()));
+        for role in ["AXMenu", "AXMenuItem", "AXMenuBarItem"] {
+            assert!(protected_focus_role(cf(&NSString::from_str(role))));
+        }
+        assert!(!protected_focus_role(cf(ns_string!("AXMenuBar"))));
+    }
+    #[test]
+    fn finder_information_uses_stable_identifier_without_excluding_folder_windows() {
+        for identifier in ["Info", "Inspector"] {
+            let value = NSString::from_str(identifier);
+            assert!(finder_info_identifier(Some("com.apple.finder"), cf(&value)));
+            assert!(!finder_info_identifier(
+                Some("org.example.editor"),
+                cf(&value)
+            ));
+            assert!(!finder_info_identifier(None, cf(&value)));
+        }
+        for identifier in ["FinderWindow", "", "Information"] {
+            assert!(!finder_info_identifier(
+                Some("com.apple.finder"),
+                cf(&NSString::from_str(identifier))
+            ));
+        }
+        assert!(!finder_info_identifier(
+            Some("com.apple.finder"),
+            ptr::null()
+        ));
+        assert!(always_floating_bundle(Some("com.apple.archiveutility")));
+        assert!(!always_floating_bundle(Some("com.apple.finder")));
+        assert!(!always_floating_bundle(Some("org.example.editor")));
+        assert!(!always_floating_bundle(None));
     }
     #[test]
     #[ignore = "metadata microbenchmark; run with --release --ignored --nocapture"]

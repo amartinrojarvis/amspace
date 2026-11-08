@@ -4,7 +4,7 @@ AMSpace usa [Sparkle 2.10.1](https://sparkle-project.org/documentation/) desde R
 
 ## Usuario
 
-Ajustes → Buscar… → revisar novedades → Instalar actualización. Sparkle gestiona descarga, verificación, sustitución y reinicio. Los errores de red y la ausencia de novedades se muestran en diálogos nativos. Las preferencias permanecen en NSUserDefaults.
+Ajustes → General → Buscar ahora → revisar novedades → Instalar actualización. Sparkle gestiona descarga, verificación, sustitución y reinicio. Los errores de red y la ausencia de novedades se muestran en diálogos nativos. Las preferencias permanecen en NSUserDefaults.
 
 La búsqueda diaria es opcional. Nunca se instala automáticamente. El feed y el ZIP exigen firma Ed25519, además de HTTPS. La clave privada se guarda en el Llavero, cuenta `io.github.amartinrojarvis.amspace`; solo la clave pública está en Info.plist. No se exporta ni se sube en CI.
 

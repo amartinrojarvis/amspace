@@ -28,6 +28,8 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         21 => Input::Select(3),
         23 => Input::Select(4),
         22 => Input::Select(5),
+        26 => Input::Select(6),
+        28 => Input::Select(7),
         123 => Input::Move(-1),
         124 => Input::Move(1),
         125 => Input::Move(columns as isize),
@@ -40,8 +42,8 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
 }
 fn gallery_geometry(area: NSRect) -> (NSRect, Vec<NSRect>, usize) {
     let portrait = area.size.height > area.size.width;
-    let columns = if portrait { 2 } else { 3 };
-    let rows = 6 / columns;
+    let columns = if portrait { 2 } else { 4 };
+    let rows = Layout::ALL.len().div_ceil(columns);
     let (cw, ch) = if portrait { (180., 244.) } else { (210., 158.) };
     let width = columns as f64 * (cw + 12.) + 36.;
     let height = rows as f64 * (ch + 12.) + 120.;
@@ -55,7 +57,7 @@ fn gallery_geometry(area: NSRect) -> (NSRect, Vec<NSRect>, usize) {
         width,
         height,
     );
-    let cards = (0..6)
+    let cards = (0..Layout::ALL.len())
         .map(|index| {
             rect(
                 panel.origin.x + 24. * scale + (index % columns) as f64 * (cw + 12. * scale),
@@ -223,7 +225,7 @@ pub struct Picker {
     pub context: PickerContext,
     pub selected: usize,
     pub columns: usize,
-    valid: [bool; 6],
+    valid: [bool; Layout::ALL.len()],
     card_views: Vec<Obj>,
     buttons: Vec<Obj>,
     ghost: Obj,
@@ -319,11 +321,7 @@ impl Picker {
                 plate(root, thumb, 0.75, false, 4.);
                 // Representative thumbnails remain recognizable with 0–2 windows.
                 let mut example = Desktop::configured(layout, None);
-                let examples = match layout {
-                    Layout::ThreeBands => 3,
-                    Layout::FourBands => 4,
-                    _ => context.desktop.order.len().clamp(4, 8) as u32,
-                };
+                let examples = layout.example_count();
                 let ids: Vec<u32> = (1..=examples).collect();
                 example.reconcile_at(&ids, area, 10., None);
                 for (_, frame) in example.frames(area, 10.) {
@@ -350,7 +348,7 @@ impl Picker {
                         card.size.width - 24.,
                         20.,
                     ),
-                    &format!("{}  {}", index + 1, layout.screen_name(area)),
+                    &format!("{}  {}", index + 1, layout.short_name(area)),
                     13.,
                     true,
                 );
@@ -380,7 +378,7 @@ impl Picker {
                 11.,
                 false,
             );
-            let selected = context.desktop.layout.index() as usize;
+            let selected = context.desktop.layout.selection_index() as usize;
             let mut picker = Self {
                 panel,
                 context,
@@ -408,8 +406,9 @@ impl Picker {
         }
     }
     pub fn move_selection(&mut self, offset: isize) {
-        for step in 1..=6 {
-            let index = (self.selected as isize + offset * step).rem_euclid(6) as usize;
+        for step in 1..=Layout::ALL.len() as isize {
+            let index = (self.selected as isize + offset * step)
+                .rem_euclid(Layout::ALL.len() as isize) as usize;
             if self.valid[index] {
                 self.select(index);
                 break;
@@ -470,7 +469,7 @@ impl Picker {
             crate::native::text(
                 self.status,
                 if self.valid[self.selected] {
-                    "Ratón o 1–6 · Flechas · Intro: aplicar · Esc: cancelar"
+                    "Ratón o 1–8 · Flechas · Intro: aplicar · Esc: cancelar"
                 } else {
                     "Esta distribución no cabe. Elige otra plantilla."
                 },
@@ -502,7 +501,7 @@ mod tests {
                 if area.size.height > area.size.width {
                     2
                 } else {
-                    3
+                    4
                 }
             );
             assert!(gallery.origin.x >= 0. && gallery.origin.y >= 0.);
@@ -528,7 +527,7 @@ mod tests {
         assert_eq!(key_input(48, 2, true), Some(Input::Move(-1)));
         assert_eq!(key_input(53, 2, false), Some(Input::Cancel));
         assert_eq!(key_input(36, 2, false), Some(Input::Confirm));
-        for (index, key) in [18, 19, 20, 21, 23, 22].into_iter().enumerate() {
+        for (index, key) in [18, 19, 20, 21, 23, 22, 26, 28].into_iter().enumerate() {
             assert_eq!(key_input(key, 3, false), Some(Input::Select(index)));
         }
     }

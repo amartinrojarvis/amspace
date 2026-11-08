@@ -1,10 +1,19 @@
-AMSpace 0.6.11 — estabilidad del monitor secundario al cambiar de escritorio.
+AMSpace 0.6.11 — escritorio libre, mosaicos estables y ventanas auxiliares.
 
-- Usa la geometría AX también para decidir a qué monitor pertenece una ventana. Los desplazamientos temporales de WindowServer durante el cambio de Space ya no retiran una ventana de su mosaico por quedar momentáneamente fuera del área del monitor.
-- Conserva temporalmente el hueco de una ventana gestionada cuando su lectura de geometría es incierta, sin recolocarla durante esa incertidumbre. Los cambios nativos de Space confirmados y las transferencias reales entre monitores siguen prevaleciendo.
-- Reutiliza la misma lectura de geometría para pertenencia y colocación, sin añadir sondeo ni ampliar las pausas.
+- Ajustes reorganizados con navegación lateral, miniaturas seleccionables de las ocho plantillas y menos texto de relleno. Fondo opcional del widget con la paleta suave de Kairos Monitor.
+- Espiral pasa a ser la plantilla predeterminada. Se retira Dwindle y se añade Principal centrada: principal de dos tercios del ancho con ventanas secundarias a ambos lados. Se añaden Centrada XL (tres por lado) y Principal vertical (dos arriba y dos abajo).
+- Recolocar ventanas dentro del escritorio mantiene la rejilla y las proporciones de la plantilla, también después de seleccionarla con el atajo. Se rechazan intercambios incompatibles con los mínimos de las apps.
+- Al abrir o cerrar ventanas en las plantillas centradas se equilibran ambos laterales y se conserva el espacio de la principal, incluso después de recolocar ventanas.
+- Redimensionado de divisiones compartidas en las ocho plantillas. Las centradas ajustan ambos lados de la principal simétricamente; los tamaños pertenecen a los huecos y se conservan al intercambiar ventanas.
+- Más separación entre tarjetas y controles; ajustes adaptados al tamaño de la pantalla.
+- Suspende tiling, foco bajo el cursor y borde durante Mostrar escritorio, también mediante esquina activa. Detecta la presentación de WindowManager además de las señales tradicionales de Dock.
+- Conserva los árboles y proporciones por pantalla y escritorio mientras las ventanas están apartadas. Al salir, espera a la restauración nativa y recupera la distribución anterior; las ventanas abiertas en ese modo permanecen flotantes con su geometría.
+- Excluye permanentemente del mosaico los modales, Obtener información/Inspector de Finder y las ventanas de la Utilidad de Compresión.
+- Respeta el seguimiento de teclado de los menús contextuales y otros menús desplegados, incluso cuando el cursor sale de ellos.
+- Espiral adapta sus divisiones a los mínimos de las aplicaciones sin convertirse en columnas. Las plantillas que no caben se indican como no disponibles.
+- Usa AX también para asignar cada ventana a su monitor, evitando redistribuciones por coordenadas transitorias del compositor durante un cambio de Space.
 - Incluye las mejoras de consumo, tamaño y protección del foco de la 0.6.10.
 
-Validación: 99 pruebas automáticas correctas, formato, Clippy y compilación universal verificados. Regresión con monitor principal horizontal y secundario vertical, dos ventanas en la plantilla de tres filas; también se comprueban Spaces compartidos y traslados reales entre monitores. La reproducción es automatizada en el modelo; pendiente de confirmación física en el Mac afectado.
+Validación automatizada de geometría y árboles con varios escritorios, pantallas horizontal y vertical, todas las plantillas y rejilla activada/desactivada. Captura local de la señal de WindowManager de la esquina activa. Los resultados de uso y el alcance de la validación se detallan en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
