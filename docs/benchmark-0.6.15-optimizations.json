@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-08",
+  "mode": "release; benchmarks run serially (--test-threads=1)",
+  "scope": "isolated CPU/allocation costs; not end-to-end window latency",
+  "results": {
+    "attribute_keys": {
+      "samples": 350000,
+      "baseline_ns": 155.0,
+      "optimized_ns": 18.8,
+      "ratio": 8.25
+    },
+    "floating_membership": {
+      "samples": 2000,
+      "baseline_ns": 31276.0,
+      "optimized_ns": 424.9,
+      "ratio": 73.61,
+      "rule_count": 64
+    }
+  },
+  "installed_0_6_14_baseline": {
+    "pid": 15031,
+    "seconds": 20.33,
+    "cpu_percent_one_core": 0.689,
+    "rss_mib_min": 36.83,
+    "rss_mib_max": 37.06
+  },
+  "native_readonly_comparison": {
+    "windows": 2,
+    "accessibility": true,
+    "geometry_and_eligibility_identical": true
+  },
+  "universal_executable_bytes": {
+    "installed_0_6_14": 1472592,
+    "candidate_0_6_15": 1472608
+  },
+  "limits": [
+    "64-rule benchmark is an artificial fixture",
+    "AX key benchmark excludes cross-process IPC",
+    "No whole-app before/after CPU or memory claim; installed version remains 0.6.14"
+  ]
+}

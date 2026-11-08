@@ -639,6 +639,14 @@ impl Desktop {
     pub fn reconcile(&mut self, ids: &[u32], area: NSRect, gap: f64) {
         self.reconcile_at(ids, area, gap, None);
     }
+    /// Focus only affects insertion into a customized, non-centered template.
+    /// Avoid synchronous AX focus reads when reconciling an unchanged desktop.
+    pub fn needs_insertion_focus(&self, ids: &[u32]) -> bool {
+        self.layout != Layout::Spiral
+            && self.layout.primary_center_axis().is_none()
+            && self.resized.is_some()
+            && ids.iter().any(|id| !self.order.contains(id))
+    }
     pub fn reconcile_at(&mut self, ids: &[u32], area: NSRect, gap: f64, focused: Option<u32>) {
         for id in self.order.clone() {
             if !ids.contains(&id) {
@@ -1355,6 +1363,61 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lazy_focus_preserves_insertion_and_closure_behavior_in_every_template() {
+        for layout in Layout::ALL {
+            for area in [
+                rect(10., 41., 2560., 1440.),
+                rect(-1440., -500., 1440., 2560.),
+            ] {
+                for customized in [false, true] {
+                    let mut original = Desktop::configured(layout, Some((17, 9)));
+                    original.reconcile(&[1, 2, 3, 4], area, 10.);
+                    if customized {
+                        let from = original.frames(area, 10.)[0].1;
+                        original.resize(
+                            1,
+                            from,
+                            rect(
+                                from.origin.x,
+                                from.origin.y,
+                                from.size.width - 30.,
+                                from.size.height - 30.,
+                            ),
+                            area,
+                            10.,
+                        );
+                    }
+                    for ids in [
+                        vec![1, 2, 3, 4],
+                        vec![4, 3, 2, 1],
+                        vec![1, 2, 3, 4, 5],
+                        vec![2, 3, 4, 5],
+                        vec![2, 3],
+                        vec![],
+                        vec![5, 6],
+                    ] {
+                        for focused in [Some(1), Some(2), Some(4), Some(99), None] {
+                            let mut eager = original.clone();
+                            let mut lazy = original.clone();
+                            eager.reconcile_at(&ids, area, 10., focused);
+                            let needed = lazy.needs_insertion_focus(&ids);
+                            lazy.reconcile_at(&ids, area, 10., if needed { focused } else { None });
+                            assert_eq!(lazy.order, eager.order);
+                            assert_eq!(
+                                lazy.frames(area, 10.),
+                                eager.frames(area, 10.),
+                                "{layout:?}, {customized}, {ids:?}, {focused:?}"
+                            );
+                            if ids.iter().all(|id| original.order.contains(id)) {
+                                assert!(!needed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn centered_primary_has_two_thirds_and_two_slots_per_side() {
         for area in [

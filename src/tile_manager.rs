@@ -1802,12 +1802,12 @@ impl Manager {
         self.last_visible_windows =
             Some(candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect());
         self.last_scan = Some(Instant::now());
-        let focused = unsafe {
+        let focused = std::cell::LazyCell::new(|| unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
             let pid: i32 = msg_send![app, processIdentifier];
             ax::focused_id(pid)
-        };
+        });
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
         let all_ids = if self.windows.keys().any(|id| !visible_ids.contains(id)) {
             ws::all_window_ids()
@@ -2109,7 +2109,12 @@ impl Manager {
             }
             let ids = members.entry(space).or_default();
             ids.sort_unstable();
-            d.reconcile_at(ids, r, 10., focused);
+            let insertion_focus = if d.needs_insertion_focus(ids) {
+                *focused
+            } else {
+                None
+            };
+            d.reconcile_at(ids, r, 10., insertion_focus);
             d.set_minimum_sizes(&self.minimum_sizes);
             d.fit(r, 10.);
             let frames = d.frames(r, 10.);

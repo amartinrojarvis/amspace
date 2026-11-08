@@ -125,11 +125,37 @@ pub fn attr(element: Cf, key: &str) -> Option<Owned> {
     if element.is_null() {
         return None;
     }
-    let mut result = ptr::null();
-    let code = unsafe {
-        AXUIElementCopyAttributeValue(element, cf(&NSString::from_str(key)), &mut result)
+    let dynamic_key;
+    let name = if let Some(name) = common_attribute_key(key) {
+        name
+    } else {
+        dynamic_key = NSString::from_str(key);
+        &dynamic_key
     };
+    let mut result = ptr::null();
+    let code = unsafe { AXUIElementCopyAttributeValue(element, cf(name), &mut result) };
     if code == 0 { Owned::new(result) } else { None }
+}
+fn common_attribute_key(key: &str) -> Option<&'static NSString> {
+    Some(match key {
+        "AXChildren" => ns_string!("AXChildren"),
+        "AXEnhancedUserInterface" => ns_string!("AXEnhancedUserInterface"),
+        "AXFocusedUIElement" => ns_string!("AXFocusedUIElement"),
+        "AXFocusedWindow" => ns_string!("AXFocusedWindow"),
+        "AXFullScreen" => ns_string!("AXFullScreen"),
+        "AXIdentifier" => ns_string!("AXIdentifier"),
+        "AXMinimized" => ns_string!("AXMinimized"),
+        "AXModal" => ns_string!("AXModal"),
+        "AXParent" => ns_string!("AXParent"),
+        "AXPosition" => ns_string!("AXPosition"),
+        "AXRole" => ns_string!("AXRole"),
+        "AXSheets" => ns_string!("AXSheets"),
+        "AXSize" => ns_string!("AXSize"),
+        "AXSubrole" => ns_string!("AXSubrole"),
+        "AXWindow" => ns_string!("AXWindow"),
+        "AXWindows" => ns_string!("AXWindows"),
+        _ => return None,
+    })
 }
 pub fn equals_text(value: Cf, text: &str) -> bool {
     !value.is_null() && unsafe { CFEqual(value, cf(&NSString::from_str(text))) }
@@ -678,6 +704,70 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    #[ignore = "CPU-only AX key preparation benchmark; run with --release --ignored --nocapture"]
+    fn benchmark_attribute_keys() {
+        let keys = [
+            "AXPosition",
+            "AXSize",
+            "AXRole",
+            "AXSubrole",
+            "AXFullScreen",
+            "AXMinimized",
+            "AXEnhancedUserInterface",
+        ];
+        let iterations = 50_000;
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            for key in keys {
+                let value = NSString::from_str(std::hint::black_box(key));
+                assert!(unsafe { CFEqual(cf(&value), cf(common_attribute_key(key).unwrap())) });
+            }
+        }
+        let old = start.elapsed();
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            for key in keys {
+                let value = common_attribute_key(std::hint::black_box(key)).unwrap();
+                assert!(unsafe { CFEqual(cf(value), cf(common_attribute_key(key).unwrap())) });
+            }
+        }
+        let new = start.elapsed();
+        let count = iterations * keys.len();
+        println!(
+            "attribute_keys samples={count} before_ns={:.1} after_ns={:.1} speedup={:.2}",
+            old.as_nanos() as f64 / count as f64,
+            new.as_nanos() as f64 / count as f64,
+            old.as_secs_f64() / new.as_secs_f64()
+        );
+    }
+    #[test]
+    fn static_attribute_keys_preserve_names_and_unknown_attributes_use_the_fallback() {
+        for key in [
+            "AXChildren",
+            "AXEnhancedUserInterface",
+            "AXFocusedUIElement",
+            "AXFocusedWindow",
+            "AXFullScreen",
+            "AXIdentifier",
+            "AXMinimized",
+            "AXModal",
+            "AXParent",
+            "AXPosition",
+            "AXRole",
+            "AXSheets",
+            "AXSize",
+            "AXSubrole",
+            "AXWindow",
+            "AXWindows",
+        ] {
+            let expected = NSString::from_str(key);
+            assert!(unsafe { CFEqual(cf(common_attribute_key(key).unwrap()), cf(&expected)) });
+        }
+        for key in ["", "AXCustomAttribute", "AXRôle", "AXWindow "] {
+            assert!(common_attribute_key(key).is_none());
+        }
+    }
     #[test]
     #[ignore = "read-only focused AX roles diagnostic; requires an interactive desktop"]
     fn inspect_native_focus_roles() {
