@@ -111,16 +111,17 @@ struct App {
     status: Retained<AnyObject>,
     status_buttons: Vec<Retained<AnyObject>>,
     status_ids: Vec<u64>,
+    desktop_preview: crate::desktop_preview::Preview,
     switching: Option<space_switch::Switch>,
     hover_resume: Instant,
     border: Retained<AnyObject>,
     defaults: Retained<AnyObject>,
     settings: Option<Retained<AnyObject>>,
+    settings_timer: Option<Retained<AnyObject>>,
     about: Option<Retained<AnyObject>>,
     updater: Option<Updater>,
     updates_switch: Obj,
     tabs: Obj,
-    navigation: Vec<Obj>,
     page_title: Obj,
     bar_colors: Vec<Obj>,
     space_page: Obj,
@@ -251,16 +252,122 @@ unsafe fn card(parent: Obj, frame: NSRect) {
 }
 unsafe fn paint_swatch(button: Obj, name: &str, rgb: [f64; 3]) {
     unsafe {
-        let attrs: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
-        let _: () = msg_send![&attrs, setObject:color(rgb[0],rgb[1],rgb[2],1.), forKey:&*NSString::from_str("NSColor")];
-        let font: Obj = msg_send![class!(NSFont), systemFontOfSize:20f64];
-        let _: () = msg_send![&attrs, setObject:font, forKey:&*NSString::from_str("NSFont")];
-        let title: Allocated<AnyObject> = msg_send![class!(NSAttributedString), alloc];
-        let title: Retained<AnyObject> =
-            msg_send![title, initWithString:&*NSString::from_str("●"), attributes:&*attrs];
-        let _: () = msg_send![button, setAttributedTitle:&*title];
+        let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
+        let image: Retained<AnyObject> = msg_send![image, initWithSize:NSSize::new(24.,24.)];
+        let _: () = msg_send![&image, lockFocus];
+        let fill = color(rgb[0], rgb[1], rgb[2], 1.);
+        let _: () = msg_send![fill, setFill];
+        let circle: Obj =
+            msg_send![class!(NSBezierPath), bezierPathWithOvalInRect:rect(3.,3.,18.,18.)];
+        let _: () = msg_send![circle, fill];
+        let _: () = msg_send![&image, unlockFocus];
+        let _: () = msg_send![button, setTitle:&*NSString::from_str("")];
+        let _: () = msg_send![button, setImage:&*image];
+        let _: () = msg_send![button, setImagePosition:1usize];
         let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(name)];
         let _: () = msg_send![button, setToolTip:&*NSString::from_str(name)];
+    }
+}
+const SETTINGS_SECTIONS: [(&str, &str); 6] = [
+    ("Ventanas", "macwindow"),
+    ("Barra de menús", "menubar.rectangle"),
+    ("Mosaico", "rectangle.split.2x2"),
+    ("General", "gearshape"),
+    ("Acerca de", "info.circle"),
+    ("Salir", "power"),
+];
+unsafe fn build_navigation(parent: Obj, frame: NSRect, target: Obj, footer: bool) -> Obj {
+    unsafe {
+        let table = alloc_view(
+            class!(NSTableView),
+            rect(0., 0., frame.size.width, frame.size.height),
+        );
+        let column: Allocated<AnyObject> = msg_send![class!(NSTableColumn), alloc];
+        let column: Retained<AnyObject> =
+            msg_send![column, initWithIdentifier:&*NSString::from_str("section")];
+        let _: () = msg_send![&column, setWidth:frame.size.width];
+        let _: () = msg_send![&table, addTableColumn:&*column];
+        let _: () = msg_send![&table, setHeaderView:ptr::null::<AnyObject>()];
+        let _: () = msg_send![&table, setStyle:3isize]; // NSTableViewStyleSourceList
+        let _: () = msg_send![&table, setRowHeight:36f64];
+        let _: () = msg_send![&table, setIntercellSpacing:NSSize::new(0., 4.)];
+        let clear: Obj = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![&table, setBackgroundColor:clear];
+        let _: () = msg_send![&table, setTag:if footer {1isize} else {0isize}];
+        let _: () = msg_send![&table, setAllowsEmptySelection:footer];
+        let _: () = msg_send![&table, setDataSource:target];
+        let _: () = msg_send![&table, setDelegate:target];
+        let _: () = msg_send![&table, setAccessibilityLabel:&*NSString::from_str(if footer {"Aplicación"} else {"Secciones de ajustes"})];
+        let scroll = alloc_view(class!(NSScrollView), frame);
+        let _: () = msg_send![&scroll, setDrawsBackground:false];
+        let _: () = msg_send![&scroll, setHasVerticalScroller:false];
+        let _: () = msg_send![&scroll, setHasHorizontalScroller:false];
+        let _: () = msg_send![&scroll, setDocumentView:&*table];
+        let _: () = msg_send![parent, addSubview:&*scroll];
+        if !footer {
+            let indices: Obj = msg_send![class!(NSIndexSet), indexSetWithIndex:0usize];
+            let _: () = msg_send![&table, selectRowIndexes:indices, byExtendingSelection:false];
+        }
+        Retained::as_ptr(&table) as Obj
+    }
+}
+extern "C-unwind" fn navigation_rows(_: Obj, _: Sel, table: Obj) -> isize {
+    unsafe {
+        let footer: isize = msg_send![table, tag];
+        if footer == 1 { 2 } else { 4 }
+    }
+}
+extern "C-unwind" fn navigation_view(_: Obj, _: Sel, table: Obj, _: Obj, row: isize) -> Obj {
+    unsafe {
+        let footer: isize = msg_send![table, tag];
+        let (title, symbol) = SETTINGS_SECTIONS[row as usize + if footer == 1 { 4 } else { 0 }];
+        let cell = alloc_view(class!(NSTableCellView), rect(0., 0., 160., 36.));
+        let field = label(
+            Retained::as_ptr(&cell) as Obj,
+            rect(34., 8., 124., 20.),
+            title,
+            12.,
+            0.,
+            false,
+        );
+        let _: () = msg_send![&cell, setTextField:field];
+        let image = alloc_view(class!(NSImageView), rect(7., 9., 18., 18.));
+        let icon: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(symbol), accessibilityDescription:&*NSString::from_str(title)];
+        let _: () = msg_send![&image, setImage:icon];
+        let tint: Obj = msg_send![class!(NSColor), secondaryLabelColor];
+        let _: () = msg_send![&image, setContentTintColor:tint];
+        let _: () = msg_send![&cell, addSubview:&*image];
+        let _: () = msg_send![&cell, setImageView:&*image];
+        msg_send![Retained::into_raw(cell), autorelease]
+    }
+}
+extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
+    unsafe {
+        let table: Obj = msg_send![notification, object];
+        let row: isize = msg_send![table, selectedRow];
+        if row < 0 {
+            return;
+        }
+        let footer: isize = msg_send![table, tag];
+        if footer == 1 {
+            let _: () = msg_send![table, deselectAll:ptr::null::<AnyObject>()];
+            if row == 0 {
+                with_app(|a| a.show_about());
+            } else {
+                quit(ptr::null_mut(), sel!(quit:), ptr::null_mut());
+            }
+        } else {
+            with_app(|a| {
+                if a.tabs.is_null() {
+                    return;
+                }
+                let _: () = msg_send![a.tabs, selectTabViewItemAtIndex:row];
+                text(a.page_title, SETTINGS_SECTIONS[row as usize].0);
+                if row == 1 {
+                    a.rebuild_space_rows();
+                }
+            });
+        }
     }
 }
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
@@ -376,15 +483,16 @@ impl App {
                 status,
                 status_buttons: vec![],
                 status_ids: vec![],
+                desktop_preview: Default::default(),
                 switching: None,
                 hover_resume: Instant::now(),
                 border,
                 settings: None,
+                settings_timer: None,
                 about: None,
                 updater: Updater::new(),
                 updates_switch: ptr::null_mut(),
                 tabs: ptr::null_mut(),
-                navigation: vec![],
                 page_title: ptr::null_mut(),
                 bar_colors: vec![],
                 space_page: ptr::null_mut(),
@@ -493,7 +601,16 @@ impl App {
             self.refresh_status_buttons(&s);
             self.last_title = s.title;
             if self.status_detail != s.detail {
-                let _: () = msg_send![b, setToolTip:&*NSString::from_str(&s.detail)];
+                let detail = NSString::from_str(&s.detail);
+                let tip: Obj = if value(
+                    Retained::as_ptr(&self.defaults) as Obj,
+                    "desktopPreview.disabled",
+                ) {
+                    (&*detail as *const NSString).cast_mut().cast()
+                } else {
+                    ptr::null_mut()
+                };
+                let _: () = msg_send![b, setToolTip:tip];
                 let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · clic derecho para ajustes", s.detail))];
                 self.status_detail = s.detail;
             }
@@ -504,7 +621,13 @@ impl App {
                     let _: () = msg_send![self.preview, setAttributedStringValue:&*title];
                 }
             }
-            if !self.space_scroll.is_null() && self.space_ids != s.desktops {
+            if !self.space_scroll.is_null()
+                && self.space_ids
+                    != spaces::settings_desktops()
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .collect::<Vec<_>>()
+            {
                 self.rebuild_space_rows();
             }
         }
@@ -517,6 +640,7 @@ impl App {
             let width = if compact { 70. } else { 24. };
             let frame: NSRect = msg_send![parent, bounds];
             if self.status_ids != snapshot.desktops || self.status_buttons.len() != count {
+                self.desktop_preview.hide();
                 for button in self.status_buttons.drain(..) {
                     let _: () = msg_send![&button, removeFromSuperview];
                 }
@@ -536,6 +660,11 @@ impl App {
                     let _: () = msg_send![&button, setAction:if compact {sel!(desktopMenu:)} else {sel!(selectDesktop:)}];
                     let _: () = msg_send![&button, setTag:if compact {0isize} else {snapshot.desktops[index] as isize}];
                     let _: () = msg_send![parent, addSubview:&*button];
+                    let bounds: NSRect = msg_send![&button, bounds];
+                    let info: Obj = msg_send![class!(NSNumber), numberWithUnsignedLongLong:if compact {0u64} else {snapshot.desktops[index]}];
+                    let tracking: Allocated<AnyObject> = msg_send![class!(NSTrackingArea), alloc];
+                    let tracking: Retained<AnyObject> = msg_send![tracking, initWithRect:bounds, options:(1usize|128usize|512usize), owner:&*self.target, userInfo:info];
+                    let _: () = msg_send![&button, addTrackingArea:&*tracking];
                     self.status_buttons.push(button);
                 }
             }
@@ -551,10 +680,9 @@ impl App {
                 };
                 let current: Obj = msg_send![button, attributedTitle];
                 let equal: bool = msg_send![current, isEqualToAttributedString:&*title];
-                if equal {
-                    continue;
+                if !equal {
+                    let _: () = msg_send![button, setAttributedTitle:&*title];
                 }
-                let _: () = msg_send![button, setAttributedTitle:&*title];
                 let label = if compact {
                     "Elegir escritorio".into()
                 } else {
@@ -569,7 +697,16 @@ impl App {
                     )
                 };
                 let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(&label)];
-                let _: () = msg_send![button, setToolTip:&*NSString::from_str(&format!("{label} · clic derecho para ajustes"))];
+                let tip = NSString::from_str(&format!("{label} · clic derecho para ajustes"));
+                let tip: Obj = if value(
+                    Retained::as_ptr(&self.defaults) as Obj,
+                    "desktopPreview.disabled",
+                ) {
+                    (&*tip as *const NSString).cast_mut().cast()
+                } else {
+                    ptr::null_mut()
+                };
+                let _: () = msg_send![button, setToolTip:tip];
             }
         }
     }
@@ -1081,6 +1218,7 @@ impl App {
         }
     }
     fn show_settings(&mut self) {
+        self.desktop_preview.hide();
         unsafe {
             if self.settings.is_none() {
                 self.build_settings();
@@ -1088,9 +1226,22 @@ impl App {
             self.refresh_permission();
             self.refresh_login();
             self.refresh_spaces();
+            self.start_settings_refresh();
             let app: Obj = msg_send![class!(NSApplication), sharedApplication];
             let _: () = msg_send![app, activateIgnoringOtherApps:true];
             let _: () = msg_send![self.settings.as_ref().unwrap(), makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn start_settings_refresh(&mut self) {
+        if self.settings_timer.is_some() {
+            return;
+        }
+        unsafe {
+            let timer: Retained<AnyObject> = msg_send![class!(NSTimer), timerWithTimeInterval:1f64, target:&*self.target, selector:sel!(settingsRefresh:), userInfo:ptr::null::<AnyObject>(), repeats:true];
+            let _: () = msg_send![&timer, setTolerance:0.2f64];
+            let run: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+            add_common_timer(run, &timer);
+            self.settings_timer = Some(timer);
         }
     }
     unsafe fn build_settings(&mut self) {
@@ -1101,10 +1252,11 @@ impl App {
             } else {
                 msg_send![screen, visibleFrame]
             };
-            let width = (visible.size.width - 48.).clamp(700., 836.);
-            let height = (visible.size.height - 32.).clamp(560., 740.);
+            let width = (visible.size.width - 48.).clamp(700., 960.);
             let content_width = width - 268.;
-            let tab_height = height - 210.;
+            let height = (settings_tile_geometry(content_width.max(560.)).0 + 156.)
+                .min(visible.size.height - 52.);
+            let tab_height = height - 156.;
             let w = window(rect(0., 0., width, height), 1 | 2 | 4 | 32768);
             let _: () = msg_send![&w, setTitle:&*NSString::from_str("Ajustes de AMSpace")];
             let _: () = msg_send![&w, setTitleVisibility:1isize];
@@ -1126,23 +1278,7 @@ impl App {
                 0.5,
                 false,
             );
-            for (i, title) in ["Ventanas", "Barra de menús", "Mosaico", "General"]
-                .iter()
-                .enumerate()
-            {
-                let b = button(
-                    side,
-                    rect(12., height - 149. - i as f64 * 44., 160., 36.),
-                    title,
-                    target,
-                    14 + i as isize,
-                );
-                let _: () = msg_send![b, setButtonType:1usize];
-                let _: () = msg_send![b, setBezelStyle:13usize];
-                let _: () = msg_send![b, setAlignment:0isize];
-                let _: () = msg_send![b, setState:if i == 0 {1isize} else {0isize}];
-                self.navigation.push(b);
-            }
+            build_navigation(side, rect(12., height - 284., 160., 184.), target, false);
             self.preview = label(
                 side,
                 rect(20., 144., 145., 28.),
@@ -1151,14 +1287,7 @@ impl App {
                 0.3,
                 false,
             );
-            button(
-                side,
-                rect(12., 65., 160., 28.),
-                "Acerca de AMSpace",
-                target,
-                10,
-            );
-            button(side, rect(12., 29., 160., 28.), "Salir", target, 7);
+            build_navigation(side, rect(12., 25., 160., 80.), target, true);
             self.page_title = label(
                 root,
                 rect(220., height - 82., 432., 32.),
@@ -1169,38 +1298,43 @@ impl App {
             );
             let tabs = alloc_view(
                 class!(NSTabView),
-                rect(220., 108., content_width, tab_height),
+                rect(220., 78., content_width, tab_height),
             );
             let _: () = msg_send![&tabs, setTabViewType:6usize];
             for i in 0..4 {
                 let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
+                // Keep all Mosaic controls visible, including on smaller displays.
+                // Matching frame and bounds aspect ratios scales the whole page uniformly.
+                let tile_height = settings_tile_geometry(content_width.max(560.)).0;
+                let scale = (tab_height / tile_height).min(content_width / 560.).min(1.);
+                let page_width = if i == 2 { content_width / scale } else { 432. };
                 let page_height = if i == 2 {
-                    settings_tile_geometry(content_width).0
+                    tile_height
+                } else if i == 1 {
+                    430.
                 } else {
                     360.
                 };
                 let inner = alloc_view(
                     class!(NSView),
                     if i == 2 {
-                        rect(0., 0., content_width, page_height)
+                        rect(
+                            0.,
+                            tab_height - page_height * scale,
+                            content_width,
+                            page_height * scale,
+                        )
                     } else {
-                        rect((content_width - 432.) / 2., tab_height - 360., 432., 360.)
+                        rect(
+                            (content_width - 432.) / 2.,
+                            tab_height - page_height,
+                            432.,
+                            page_height,
+                        )
                     },
                 );
-                if i == 2 {
-                    let scroll = alloc_view(
-                        class!(NSScrollView),
-                        rect(0., 0., content_width, tab_height),
-                    );
-                    let _: () = msg_send![&scroll,setHasVerticalScroller:true];
-                    let _: () = msg_send![&scroll,setAutohidesScrollers:true];
-                    let _: () = msg_send![&scroll,setDrawsBackground:false];
-                    let _: () = msg_send![&scroll,setDocumentView:&*inner];
-                    let _: () = msg_send![&view,addSubview:&*scroll];
-                    let _: () = msg_send![&inner,scrollPoint:NSPoint::new(0.,(page_height-tab_height).max(0.))];
-                } else {
-                    let _: () = msg_send![&view,addSubview:&*inner];
-                }
+                let _: () = msg_send![&inner, setBoundsSize:NSSize::new(page_width, page_height)];
+                let _: () = msg_send![&view, addSubview:&*inner];
                 let page = Retained::as_ptr(&inner) as Obj;
                 match i {
                     0 => self.build_window_page(page, target),
@@ -1216,7 +1350,7 @@ impl App {
             self.tabs = Retained::as_ptr(&tabs) as Obj;
             self.permission = label(
                 root,
-                rect(238., 69., content_width - 165., 18.),
+                rect(238., 46., content_width - 165., 18.),
                 "",
                 11.,
                 0.,
@@ -1224,14 +1358,14 @@ impl App {
             );
             button(
                 root,
-                rect(width - 180., 61., 134., 30.),
+                rect(width - 180., 38., 134., 30.),
                 "Accesibilidad…",
                 target,
                 6,
             );
             self.feedback = label(
                 root,
-                rect(238., 16., content_width - 18., 40.),
+                rect(238., 5., content_width - 18., 30.),
                 "",
                 11.,
                 0.,
@@ -2150,6 +2284,22 @@ Otras apps pueden tener atajos propios no detectables.",
             crate::bar_background::apply(parent, index);
             for (i, button) in self.bar_colors.iter().enumerate() {
                 let _: () = msg_send![*button, setState:if i == index {1isize} else {0isize}];
+                let layer: Obj = msg_send![*button, layer];
+                let accent: Obj = msg_send![class!(NSColor), controlAccentColor];
+                let background: Obj = if i == index {
+                    msg_send![accent, colorWithAlphaComponent:0.12f64]
+                } else {
+                    msg_send![class!(NSColor), controlBackgroundColor]
+                };
+                let border: Obj = if i == index {
+                    accent
+                } else {
+                    msg_send![class!(NSColor), separatorColor]
+                };
+                let bg: *const std::ffi::c_void = msg_send![background, CGColor];
+                let stroke: *const std::ffi::c_void = msg_send![border, CGColor];
+                let _: () = msg_send![layer, setBackgroundColor:bg];
+                let _: () = msg_send![layer, setBorderColor:stroke];
                 let _: () = msg_send![*button, setAccessibilityValue:&*NSString::from_str(if i == index {"Seleccionado"} else {""})];
             }
         }
@@ -2176,11 +2326,19 @@ Otras apps pueden tener atajos propios no detectables.",
                     70 + i as isize,
                 );
                 let _: () = msg_send![b, setButtonType:1usize];
-                let _: () = msg_send![b, setBezelStyle:13usize];
+                let _: () = msg_send![b, setBordered:false];
+                let _: () = msg_send![b, setWantsLayer:true];
+                let layer: Obj = msg_send![b, layer];
+                let _: () = msg_send![layer, setCornerRadius:10f64];
+                let _: () = msg_send![layer, setBorderWidth:1f64];
                 let accessibility = format!("Fondo del widget: {name}");
                 if let Some(rgb) = rgb {
                     paint_swatch(b, &accessibility, rgb.map(|n| n as f64 / 255.));
                 } else {
+                    let _: () = msg_send![b, setTitle:&*NSString::from_str("")];
+                    let image: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str("nosign"), accessibilityDescription:&*NSString::from_str(&accessibility)];
+                    let _: () = msg_send![b, setImage:image];
+                    let _: () = msg_send![b, setImagePosition:1usize];
                     let _: () =
                         msg_send![b, setAccessibilityLabel:&*NSString::from_str(&accessibility)];
                 }
@@ -2205,12 +2363,41 @@ Otras apps pueden tener atajos propios no detectables.",
                 12,
             );
             let _: () = msg_send![menu, selectItemAtIndex:space_style::mode(Retained::as_ptr(&self.defaults) as Obj)];
-            let scroll = alloc_view(class!(NSScrollView), rect(0., 0., 432., 150.));
+            let children: Obj = msg_send![root, subviews];
+            let count: usize = msg_send![children, count];
+            for i in 0..count {
+                let child: Obj = msg_send![children, objectAtIndex:i];
+                let mut frame: NSRect = msg_send![child, frame];
+                frame.origin.y += 70.;
+                let _: () = msg_send![child, setFrame:frame];
+            }
+            let scroll = alloc_view(class!(NSScrollView), rect(0., 52., 432., 168.));
             let _: () = msg_send![&scroll, setHasVerticalScroller:true];
             let _: () = msg_send![&scroll, setAutohidesScrollers:true];
             let _: () = msg_send![&scroll, setDrawsBackground:false];
             let _: () = msg_send![root, addSubview:&*scroll];
             self.space_scroll = Retained::as_ptr(&scroll) as Obj;
+            label(
+                root,
+                rect(18., 15., 330., 22.),
+                "Preview al pasar por un escritorio",
+                12.,
+                0.,
+                false,
+            );
+            let disabled = value(
+                Retained::as_ptr(&self.defaults) as Obj,
+                "desktopPreview.disabled",
+            );
+            toggle(
+                root,
+                374.,
+                15.,
+                "Preview al pasar por un escritorio",
+                target,
+                62,
+                !disabled,
+            );
             self.rebuild_space_rows();
         }
     }
@@ -2219,26 +2406,19 @@ Otras apps pueden tener atajos propios no detectables.",
             return;
         }
         unsafe {
-            let snapshot = spaces::snapshot();
-            self.space_ids = snapshot.desktops.clone();
+            let desktops = spaces::settings_desktops();
+            self.space_ids = desktops.iter().map(|(id, _)| *id).collect();
             self.space_controls.clear();
             let viewport: NSRect = msg_send![self.space_scroll, bounds];
-            let height = (snapshot.desktops.len() as f64 * 52.).max(viewport.size.height);
+            let height = (desktops.len() as f64 * 52.).max(viewport.size.height);
             let document = alloc_view(class!(NSView), rect(0., 0., 415., height));
             let root = Retained::as_ptr(&document) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             let names: Vec<_> = space_style::ICONS.iter().map(|(name, _)| *name).collect();
-            for (index, id) in snapshot.desktops.iter().enumerate() {
+            for (index, (id, title)) in desktops.iter().enumerate() {
                 let y = height - (index + 1) as f64 * 52.;
-                label(
-                    root,
-                    rect(18., y + 18., 180., 22.),
-                    &format!("Escritorio {}", index + 1),
-                    13.,
-                    0.,
-                    false,
-                );
+                label(root, rect(18., y + 18., 180., 22.), title, 13., 0., false);
                 let menu = popup(
                     root,
                     rect(211., y + 13., 190., 30.),
@@ -2257,7 +2437,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 let _: () = msg_send![menu, setEnabled:space_style::mode(defaults) == 2];
                 self.space_controls.push(menu);
             }
-            if snapshot.desktops.is_empty() {
+            if desktops.is_empty() {
                 label(
                     root,
                     rect(18., height - 48., 390., 24.),
@@ -2447,20 +2627,6 @@ Otras apps pueden tener atajos propios no detectables.",
                     }
                     self.refresh_spaces();
                 }
-                14..=17 => {
-                    let selected = tag - 14;
-                    let _: () = msg_send![self.tabs, selectTabViewItemAtIndex:selected];
-                    for (i, button) in self.navigation.iter().enumerate() {
-                        let _: () = msg_send![*button, setState:if i == selected as usize {1isize} else {0isize}];
-                    }
-                    text(
-                        self.page_title,
-                        ["Ventanas", "Barra de menús", "Mosaico", "General"][selected as usize],
-                    );
-                    if selected == 1 {
-                        self.rebuild_space_rows();
-                    }
-                }
                 70..=76 => {
                     crate::tile_manager::save(
                         Retained::as_ptr(&self.defaults) as Obj,
@@ -2523,6 +2689,13 @@ Otras apps pueden tener atajos propios no detectables.",
                     self.refresh_tile_controls();
                 }
                 54 => self.show_picker_settings(),
+                62 => {
+                    let state: isize = msg_send![sender, state];
+                    let _: () = msg_send![&self.defaults, setBool:state == 0, forKey:&*NSString::from_str("desktopPreview.disabled")];
+                    self.desktop_preview.hide();
+                    self.status_detail.clear();
+                    self.refresh_spaces();
+                }
                 61 => {
                     let selected: isize = msg_send![sender, state];
                     crate::tile_manager::save(
@@ -2757,6 +2930,71 @@ fn desktop_button_class() -> &'static AnyClass {
         builder.register()
     }
 }
+extern "C-unwind" fn settings_refresh(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| unsafe {
+        if !a.settings.as_ref().is_some_and(|w| msg_send![w, isVisible]) {
+            if let Some(timer) = a.settings_timer.take() {
+                let _: () = msg_send![&timer, invalidate];
+            }
+            return;
+        }
+        let page: Obj = msg_send![a.tabs, selectedTabViewItem];
+        let index: isize = msg_send![a.tabs, indexOfTabViewItem:page];
+        if index == 1 {
+            a.refresh_spaces();
+        }
+    });
+}
+extern "C-unwind" fn preview_enter(_: Obj, _: Sel, event: Obj) {
+    with_app(|a| unsafe {
+        a.desktop_preview.hide();
+        let target = Retained::as_ptr(&a.target) as Obj;
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:sel!(showDesktopPreview:), object:ptr::null::<AnyObject>()];
+        if a.sleeping
+            || a.switching.is_some()
+            || value(
+                Retained::as_ptr(&a.defaults) as Obj,
+                "desktopPreview.disabled",
+            )
+        {
+            return;
+        }
+        let area: Obj = msg_send![event, trackingArea];
+        let info: Obj = msg_send![area, userInfo];
+        let id: u64 = msg_send![info, unsignedLongLongValue];
+        let Some(index) = a.status_ids.iter().position(|s| *s == id) else {
+            return;
+        };
+        let Some(button) = a.status_buttons.get(index) else {
+            return;
+        };
+        let bounds: NSRect = msg_send![button, bounds];
+        let local: NSRect = msg_send![button, convertRect:bounds, toView:ptr::null::<AnyObject>()];
+        let window: Obj = msg_send![button, window];
+        let anchor: NSRect = msg_send![window, convertRectToScreen:local];
+        a.desktop_preview.pending = Some((id, index, anchor));
+        let _: () = msg_send![target, performSelector:sel!(showDesktopPreview:), withObject:ptr::null::<AnyObject>(), afterDelay:0.3f64];
+    });
+}
+extern "C-unwind" fn preview_exit(_: Obj, _: Sel, event: Obj) {
+    with_app(|a| unsafe {
+        let area: Obj = msg_send![event, trackingArea];
+        let info: Obj = msg_send![area, userInfo];
+        let id: u64 = msg_send![info, unsignedLongLongValue];
+        if a.desktop_preview.pending.is_some_and(|p| p.0 == id) {
+            a.desktop_preview.hide();
+        }
+    });
+}
+extern "C-unwind" fn preview_show(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| {
+        if a.sleeping || a.switching.is_some() || crate::desktop_mode::active() {
+            a.desktop_preview.hide();
+        } else {
+            a.desktop_preview.show();
+        }
+    });
+}
 extern "C-unwind" fn desktop_hit_test(_: Obj, _: Sel, _: NSPoint) -> Obj {
     ptr::null_mut()
 }
@@ -2773,6 +3011,7 @@ extern "C-unwind" fn desktop_draw(button: Obj, _: Sel, _: NSRect) {
     }
 }
 extern "C-unwind" fn status_click(target: Obj, _: Sel, sender: Obj) {
+    with_app(|a| a.desktop_preview.hide());
     unsafe {
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
         let event: Obj = msg_send![app, currentEvent];
@@ -3087,6 +3326,7 @@ extern "C-unwind" fn resume_space_border(_: Obj, _: Sel, _: Obj) {
 }
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
     with_app(|a| {
+        a.desktop_preview.hide();
         a.pause_border_for_space();
         a.focus_target = None;
         a.pending_focus = None;
@@ -3149,6 +3389,7 @@ extern "C-unwind" fn became_active(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn sleep(_: Obj, _: Sel, _: Obj) {
     with_app(|a| {
         a.sleeping = true;
+        a.desktop_preview.hide();
         a.update_presentation_timer();
         a.configure_hover();
         a.configure_tiling();
@@ -3254,9 +3495,25 @@ pub fn run() {
             (sel!(sleep:), sleep),
             (sel!(wake:), wake),
             (sel!(quit:), quit),
+            (sel!(settingsRefresh:), settings_refresh),
+            (sel!(mouseEntered:), preview_enter),
+            (sel!(mouseExited:), preview_exit),
+            (sel!(showDesktopPreview:), preview_show),
         ] {
             builder.add_method(s, f);
         }
+        builder.add_method(
+            sel!(numberOfRowsInTableView:),
+            navigation_rows as extern "C-unwind" fn(Obj, Sel, Obj) -> isize,
+        );
+        builder.add_method(
+            sel!(tableView:viewForTableColumn:row:),
+            navigation_view as extern "C-unwind" fn(Obj, Sel, Obj, Obj, isize) -> Obj,
+        );
+        builder.add_method(
+            sel!(tableViewSelectionDidChange:),
+            navigation_selected as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
         builder.add_method(
             sel!(applicationShouldHandleReopen:hasVisibleWindows:),
             reopen as extern "C-unwind" fn(Obj, Sel, Obj, Bool) -> Bool,

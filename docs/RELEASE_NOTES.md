@@ -1,12 +1,14 @@
-AMSpace 0.6.16 — estabilidad al entrar en otro escritorio.
+AMSpace 0.6.17 — ajustes sin desplazamiento y navegación renovada.
 
-- Espera a disponer de las ventanas del escritorio de destino y de geometría estable antes de reanudar el mosaico. Una llegada incompleta ya no se trata como el cierre de una ventana.
-- Conserva los huecos, proporciones y distribución existentes durante la transición, incluso si macOS tarda más que el plazo anterior.
-- Descarta movimientos y verificaciones pendientes anteriores al cambio para no reutilizar posiciones transitorias.
-- Distingue ventanas que aún están llegando de ventanas ocultas, minimizadas y pestañas nativas inactivas. Recupera referencias de Accesibilidad caducadas por identidad de ventana.
+- Mosaico muestra todas las plantillas y opciones sin scroll vertical.
+- Ventana de ajustes más amplia, con adaptación al espacio disponible de la pantalla.
+- Barra lateral con listas nativas, iconos y selección de sección, sin botones.
+- Acerca de y Salir integrados como filas de la barra lateral.
+- Muestras de color centradas, con selección discreta y contorno redondeado.
+- Lista de iconos basada en los escritorios reales de todas las pantallas, actualizada mientras se consulta.
+- Preview compacta al detener el cursor sobre un indicador de escritorio: distribución de sus ventanas con los iconos de sus aplicaciones, sin capturar su contenido.
+- Popup compacto sin textos auxiliares, con divisiones azules translúcidas basadas en la geometría real de las ventanas y los monitores.
+- Aparición suave, esquinas redondeadas y opción de desactivarlo en Barra de menús. El clic izquierdo sigue cambiando de escritorio; el derecho abre ajustes.
 
-- Oculta inmediatamente el contorno de la ventana anterior al cambiar de escritorio y lo reconstruye al terminar la transición, también con el mosaico desactivado.
-
-145 pruebas automáticas correctas. Regresiones de las ocho plantillas en ambas orientaciones, con y sin rejilla, cambios rápidos de escritorio y varias pantallas. Los diagnósticos nativos y los límites de la comprobación se detallan en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

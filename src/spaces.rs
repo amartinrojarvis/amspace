@@ -215,6 +215,14 @@ fn read() -> Option<Snapshot> {
 
 /// Fail closed for sticky/all-desktop windows and unavailable private API.
 pub fn window_space(id: u32) -> Option<u64> {
+    let spaces = window_spaces(id)?;
+    match spaces.as_slice() {
+        [id] => Some(*id),
+        _ => None,
+    }
+}
+/// Read all memberships for previews, including windows pinned to several Spaces.
+pub fn window_spaces(id: u32) -> Option<Vec<u64>> {
     type CopySpaces = unsafe extern "C" fn(i32, u32, Cf) -> Cf;
     static COPY: OnceLock<Option<CopySpaces>> = OnceLock::new();
     let api = api()?;
@@ -238,11 +246,9 @@ pub fn window_space(id: u32) -> Option<u64> {
             7,
             objc2::rc::Retained::as_ptr(&ids).cast(),
         ))?;
-        let mut values = array(values.0);
-        if values.len() != 1 {
-            return None;
-        }
-        crate::accessibility::number(values.next()?).map(|n| n as u64)
+        array(values.0)
+            .map(|value| crate::accessibility::number(value).map(|n| n as u64))
+            .collect()
     }
 }
 /// Each display's currently visible, non-fullscreen Space.
@@ -283,4 +289,41 @@ pub fn visible_desktops() -> Vec<(u32, u64)> {
     visible.sort_unstable();
     visible.dedup();
     visible
+}
+
+/// Every real normal desktop, including displays other than the active one.
+pub fn settings_desktops() -> Vec<(u64, String)> {
+    let Some(api) = api() else {
+        return vec![];
+    };
+    let Some(displays) = Owned::new(unsafe { (api.displays)((api.connection)()) }) else {
+        return vec![];
+    };
+    let groups: Vec<Vec<u64>> = array(displays.0)
+        .map(|display| {
+            array(get(display, ns_string!("Spaces")))
+                .filter(|s| number(get(*s, ns_string!("type"))) == Some(0))
+                .filter_map(|s| number(get(s, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
+                .collect()
+        })
+        .collect();
+    let multiple = groups.len() > 1;
+    let mut seen = std::collections::HashSet::new();
+    groups
+        .into_iter()
+        .enumerate()
+        .flat_map(|(display, ids)| {
+            ids.into_iter().enumerate().map(move |(i, id)| {
+                (
+                    id,
+                    if multiple {
+                        format!("Escritorio {} · Pantalla {}", i + 1, display + 1)
+                    } else {
+                        format!("Escritorio {}", i + 1)
+                    },
+                )
+            })
+        })
+        .filter(|(id, _)| seen.insert(*id))
+        .collect()
 }

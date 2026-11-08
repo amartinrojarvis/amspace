@@ -8,6 +8,7 @@ AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escr
 
 - **Escritorio actual.** Tres modos: Puntos, Números e Iconos. 30 iconos nativos (trabajo, código, vídeo, fotografía, comunicaciones, audio, tareas, etc.) y la opción de mantener un número en cada escritorio. El activo destaca en blanco en modo oscuro; el color se adapta al aspecto del sistema. A partir de diez escritorios se compacta a `3 / 12`.
 - **Cambio de escritorio desde la barra.** Cada número, punto o icono es un botón. El clic izquierdo selecciona ese escritorio y el derecho abre ajustes. Con más de nueve escritorios, el indicador compacto abre una lista de selección.
+- **Preview de escritorios.** Al mantener el cursor sobre un indicador aparece una miniatura de la distribución de ventanas, con los iconos de sus aplicaciones. Popup compacto y translúcido, sin capturar contenido ni pedir Grabación de pantalla. Se desactiva en Barra de menús. Disponible con los indicadores individuales (hasta nueve escritorios).
 - **Borde de la ventana activa.** Contorno interior sin separación, con radio de esquina leído del sistema, transparente al ratón, color libre o cuatro paletas y grosor de 1 a 6 puntos, en pasos de 0,5.
 - **Foco bajo el cursor.** Activa el teclado de la ventana tras detener el ratón unos 240–390 ms, incluso entre ventanas de una misma aplicación, sin cambiar su orden. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
 - **Traer al primer plano.** Ajuste independiente y desactivado inicialmente: además de enfocar, eleva la ventana sobre las demás.
@@ -23,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.6.15](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.15/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.6.17](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.17/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 

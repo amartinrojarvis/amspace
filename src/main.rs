@@ -5,6 +5,7 @@ mod accessibility;
 mod bar_background;
 mod border;
 mod desktop_mode;
+mod desktop_preview;
 mod focus;
 mod instance;
 mod layout_thumbnail;
@@ -24,7 +25,9 @@ mod updater;
 mod window_server;
 
 fn main() {
-    if std::env::args().any(|a| a == "--diagnose") {
+    if std::env::args().any(|a| a == "--render-desktop-previews") {
+        objc2::rc::autoreleasepool(|_| desktop_preview::render_diagnostics());
+    } else if std::env::args().any(|a| a == "--diagnose") {
         objc2::rc::autoreleasepool(|_| {
             println!("AMSpace {}", env!("CARGO_PKG_VERSION"));
             println!("Accessibility: {}", accessibility::trusted());
