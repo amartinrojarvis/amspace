@@ -1,3 +1,8 @@
+## Reparación de la descarga de 0.6.11
+
+- Tras el informe de error al descargar la actualización, se publica una copia inmutable del ZIP existente en la rama `updates`, ruta `0.6.11/AMSpace-universal.zip`. Descarga HTTPS pública normal, sin autenticación ni cabeceras especiales: correcta e idéntica byte a byte al ZIP firmado (SHA-256 `92cd8a00c50a6ef6b86c06f3dfdedc62e4fb83afb542df28786fddf035e2343e`). No se cambia el ejecutable, la versión, el tag ni la firma Ed25519 del ZIP.
+- Se regenera y firma el catálogo con la nueva URL mediante `prepare-release.py --feed-only`, que verifica que el archivo existente coincide con el paquete compilado y no vuelve a empaquetarlo. Se verifican las firmas del ZIP y del catálogo. Se actualizan los metadatos de descarga y checksums de la release; el asset ZIP permanece intacto.
+
 ## Publicación 0.6.11, build 27
 
 - Release: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.11 sobre `ee13b0dcc5c5d650a059bbbc3851b719361acc5a`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42468912904.

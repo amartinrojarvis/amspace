@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.11</title><pubDate>Sun, 08 Nov 2026 09:45:07 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.11 — escritorio libre, mosaicos estables y ventanas auxiliares.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.11</title><pubDate>Sun, 08 Nov 2026 10:03:22 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.11 — escritorio libre, mosaicos estables y ventanas auxiliares.
 
 - Ajustes reorganizados con navegación lateral, miniaturas seleccionables de las ocho plantillas y menos texto de relleno. Fondo opcional del widget con la paleta suave de Kairos Monitor.
 - Espiral pasa a ser la plantilla predeterminada. Se retira Dwindle y se añade Principal centrada: principal de dos tercios del ancho con ventanas secundarias a ambos lados. Se añaden Centrada XL (tres por lado) y Principal vertical (dos arriba y dos abajo).
@@ -19,7 +19,7 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 Validación automatizada de geometría y árboles con varios escritorios, pantallas horizontal y vertical, todas las plantillas y rejilla activada/desactivada. Captura local de la señal de WindowManager de la esquina activa. Los resultados de uso y el alcance de la validación se detallan en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.11/AMSpace-universal.zip" length="2402699" type="application/octet-stream" sparkle:version="27" sparkle:shortVersionString="0.6.11" sparkle:edSignature="G8vqHRjJFc3H0fGNGN5a9jccEknER0QEz9BCGBBs2djDoOX53puybLA3ERKb+yJMP7BfrUNzM8XxHR+PMfqkDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: jWW6SHXH495/lqHa0Y2S7q6c3Ztaxe+YFUhyS7akz70hL8j2Zt/R28lk05CAV09CM/qbpMKf0ermY6nQ8gMwAw==
-length: 3851
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.11/AMSpace-universal.zip" length="2402699" type="application/octet-stream" sparkle:version="27" sparkle:shortVersionString="0.6.11" sparkle:edSignature="G8vqHRjJFc3H0fGNGN5a9jccEknER0QEz9BCGBBs2djDoOX53puybLA3ERKb+yJMP7BfrUNzM8XxHR+PMfqkDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: R1frCKIF/iSnf0ZlCc78wmFuSOnxdTn4aMC+czaEGmVLypO4m2lwjZa8AW86pPy2Op0UWGzMS0UJUkfXlautAw==
+length: 3855
 -->

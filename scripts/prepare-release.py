@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Package a built bundle and sign the archive and feed. Never exports private keys."""
+import argparse
 import datetime
 import hashlib
 from pathlib import Path
@@ -7,6 +8,7 @@ import plistlib
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
@@ -20,7 +22,7 @@ def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True).strip()
 
 
-def prepare():
+def prepare(*, feed_only=False):
     built = plistlib.loads((APP / "Contents/Info.plist").read_bytes())
     expected = plistlib.loads((ROOT / "assets/Info.plist").read_bytes())
     version = built["CFBundleShortVersionString"]
@@ -29,7 +31,16 @@ def prepare():
         raise SystemExit("Versiones desincronizadas: vuelve a compilar el paquete.")
     run("codesign", "--verify", "--deep", "--strict", APP)
     archive = DIST / "AMSpace-universal.zip"
-    run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, archive)
+    if feed_only:
+        with zipfile.ZipFile(archive) as existing:
+            if (
+                plistlib.loads(existing.read("AMSpace.app/Contents/Info.plist")) != built
+                or existing.read("AMSpace.app/Contents/MacOS/amspace")
+                != (APP / "Contents/MacOS/amspace").read_bytes()
+            ):
+                raise SystemExit("El ZIP existente no corresponde al paquete compilado.")
+    else:
+        run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, archive)
     signature = run(SIGNER, "--account", ACCOUNT, "-p", archive)
     run(SIGNER, "--account", ACCOUNT, "--verify", archive, signature)
     ET.register_namespace("sparkle", SPARKLE)
@@ -44,7 +55,7 @@ def prepare():
     ET.SubElement(item, "description", {f"{{{SPARKLE}}}format": "plain-text"}).text = (ROOT / "docs/RELEASE_NOTES.md").read_text()
     ET.SubElement(item, f"{{{SPARKLE}}}minimumSystemVersion").text = built["LSMinimumSystemVersion"]
     ET.SubElement(item, "enclosure", {
-        "url": f"https://github.com/amartinrojarvis/amspace/releases/download/v{version}/AMSpace-universal.zip",
+        "url": f"https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/{version}/AMSpace-universal.zip",
         "length": str(archive.stat().st_size),
         "type": "application/octet-stream",
         f"{{{SPARKLE}}}version": built["CFBundleVersion"],
@@ -62,4 +73,6 @@ def prepare():
 
 
 if __name__ == "__main__":
-    prepare()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--feed-only", action="store_true", help="Regenerar el catálogo firmado conservando el ZIP existente.")
+    prepare(feed_only=parser.parse_args().feed_only)
