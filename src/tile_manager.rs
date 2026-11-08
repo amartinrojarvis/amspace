@@ -1253,6 +1253,10 @@ impl Manager {
         let Some(space) = self.current_workspace() else {
             return false;
         };
+        let Some((_, area)) = self.active_areas.iter().find(|(key, _)| *key == space) else {
+            return false;
+        };
+        let area = *area;
         let text = unsafe {
             let mut text: *mut NSString = msg_send![defaults,stringForKey:&*NSString::from_str(&format!("tile.saved.{}.{}",space.1,space.0))];
             if text.is_null() {
@@ -1260,10 +1264,53 @@ impl Manager {
             }
             text.as_ref().map(|s| s.to_string())
         };
-        let (Some(text), Some(desktop)) = (text, self.desktops.get_mut(&space)) else {
+        let Some(text) = text else {
             return false;
         };
-        if !desktop.restore_distribution(&text) {
+        self.restore_distribution_at(defaults, space, &text, area)
+    }
+    fn restore_distribution_at(
+        &mut self,
+        defaults: Obj,
+        space: Workspace,
+        text: &str,
+        area: NSRect,
+    ) -> bool {
+        if ![
+            area.origin.x,
+            area.origin.y,
+            area.size.width,
+            area.size.height,
+        ]
+        .iter()
+        .all(|n| n.is_finite())
+            || area.size.width <= 0.
+            || area.size.height <= 0.
+        {
+            return false;
+        }
+        let Some(current) = self.desktops.get(&space) else {
+            return false;
+        };
+        let mut desktop = current.clone();
+        if !desktop.restore_distribution(text) {
+            return false;
+        }
+        let frames = desktop.frames(area, 10.);
+        if frames.is_empty()
+            || frames.len() != desktop.order.len()
+            || frames.iter().any(|(_, r)| {
+                ![r.origin.x, r.origin.y, r.size.width, r.size.height]
+                    .iter()
+                    .all(|n| n.is_finite())
+                    || r.size.width < 80.
+                    || r.size.height < 60.
+                    || r.origin.x < area.origin.x - 0.001
+                    || r.origin.y < area.origin.y - 0.001
+                    || r.origin.x + r.size.width > area.origin.x + area.size.width + 0.001
+                    || r.origin.y + r.size.height > area.origin.y + area.size.height + 0.001
+            })
+        {
             return false;
         }
         let ids = desktop.order.clone();
@@ -1277,6 +1324,7 @@ impl Manager {
             save(defaults, "tile.grid.rows", rows as isize);
         }
         save(defaults, &layout_key(space), desktop.layout.index());
+        self.desktops.insert(space, desktop);
         for id in ids {
             self.cancel_window_placement(id);
         }
@@ -2366,6 +2414,105 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_restore_keeps_the_model_preferences_and_pending_work_unchanged() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite =
+                NSString::from_str(&format!("amspace.tests.restore.qa.{}", std::process::id()));
+            let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+            let raw = Retained::as_ptr(&defaults) as Obj;
+            let portrait = rect(-1000., -300., 1000., 1600.);
+            let landscape = rect(20., 41., 2000., 1000.);
+            let key = (1, 7);
+            let mut current = Desktop::configured(Layout::Spiral, None);
+            current.reconcile(&[1, 2], portrait, 10.);
+            current.set_minimum_sizes(
+                &[
+                    (1, objc2_foundation::NSSize::new(700., 200.)),
+                    (2, objc2_foundation::NSSize::new(700., 200.)),
+                ]
+                .into(),
+            );
+            assert_eq!(current.frames(portrait, 10.).len(), 2);
+            let mut saved = Desktop::configured(Layout::Grid, Some((17, 9)));
+            saved.reconcile(&[1, 2], landscape, 10.);
+            let text = saved.save_distribution(landscape).unwrap();
+            let mut manager = Manager::default();
+            manager.desktops.insert(key, current.clone());
+            manager
+                .applied
+                .insert(1, current.frames(portrait, 10.)[0].1);
+            manager
+                .verifications
+                .insert(1, Verification::new(current.frames(portrait, 10.)[0].1));
+            save(raw, "tile.grid.enabled", 0);
+            save(raw, &layout_key(key), Layout::Spiral.index());
+            assert!(!manager.restore_distribution_at(raw, key, &text, portrait));
+            assert!(manager.desktops[&key] == current);
+            assert_eq!(manager.applied.len(), 1);
+            assert_eq!(manager.verifications.len(), 1);
+            assert_eq!(pref(raw, "tile.grid.enabled"), 0);
+            assert_eq!(layout_pref(raw, key), Layout::Spiral);
+            for area in [
+                rect(0., 0., 0., 1000.),
+                rect(f64::NAN, 0., 1000., 1000.),
+                rect(0., 0., f64::INFINITY, 1000.),
+            ] {
+                assert!(!manager.restore_distribution_at(raw, key, &text, area));
+                assert!(manager.desktops[&key] == current);
+                assert_eq!(pref(raw, "tile.grid.enabled"), 0);
+            }
+            let mut seed = 0x1d40_be16_528a_11cdu64;
+            let alphabet = [
+                '0', '1', '2', '8', '9', 'v', 'h', 'w', 'e', '-', '.', ' ', '∞', '\n',
+            ];
+            for _ in 0..512 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let mut chars: Vec<_> = text.chars().collect();
+                for turn in 0..=seed % 3 {
+                    let index = (seed.rotate_left(turn as u32 * 7) as usize) % chars.len();
+                    chars[index] =
+                        alphabet[(seed.rotate_right(turn as u32 * 5) as usize) % alphabet.len()];
+                }
+                let corrupted: String = chars.into_iter().collect();
+                manager.desktops.insert(key, current.clone());
+                save(raw, "tile.grid.enabled", 0);
+                save(raw, &layout_key(key), Layout::Spiral.index());
+                if manager.restore_distribution_at(raw, key, &corrupted, portrait) {
+                    let frames = manager.desktops[&key].frames(portrait, 10.);
+                    assert_eq!(frames.len(), 2);
+                    for (_, r) in frames {
+                        assert!(r.size.width + 0.001 >= 700. && r.size.height + 0.001 >= 200.);
+                        assert!(
+                            r.origin.x >= portrait.origin.x - 0.001
+                                && r.origin.y >= portrait.origin.y - 0.001
+                        );
+                        assert!(
+                            r.origin.x + r.size.width
+                                <= portrait.origin.x + portrait.size.width + 0.001
+                        );
+                        assert!(
+                            r.origin.y + r.size.height
+                                <= portrait.origin.y + portrait.size.height + 0.001
+                        );
+                    }
+                } else {
+                    assert!(manager.desktops[&key] == current);
+                    assert_eq!(pref(raw, "tile.grid.enabled"), 0);
+                    assert_eq!(layout_pref(raw, key), Layout::Spiral);
+                }
+            }
+            manager.desktops.insert(key, current);
+            assert!(manager.restore_distribution_at(raw, key, &text, landscape));
+            assert_eq!(manager.desktops[&key].frames(landscape, 10.).len(), 2);
+            assert_eq!(pref(raw, "tile.grid.enabled"), 1);
+            assert_eq!(layout_pref(raw, key), Layout::Grid);
+            assert!(manager.verifications.is_empty());
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
+    }
     #[test]
     fn picker_disables_a_template_that_cannot_fit_app_minima_instead_of_previewing_columns_as_spiral()
      {

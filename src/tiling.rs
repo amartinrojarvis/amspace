@@ -238,6 +238,13 @@ enum Node {
     },
 }
 impl Node {
+    fn empty_count(&self) -> usize {
+        match self {
+            Self::Empty => 1,
+            Self::Leaf(_) => 0,
+            Self::Split { first, second, .. } => first.empty_count() + second.empty_count(),
+        }
+    }
     fn centered_ratios(&self, axis: bool, primary: u32) -> Option<(f64, f64)> {
         let Self::Split {
             vertical,
@@ -414,6 +421,17 @@ impl Node {
             };
             let min = first.minimum_with(*vertical, gap, minimum);
             let max = span - gap - second.minimum_with(*vertical, gap, minimum);
+            // An ancestor may have snapped to a different span. Re-fit this
+            // division in its new container before looking for a grid line;
+            // if no line fits, retaining the old ratio can undersize a leaf.
+            let available = span - gap;
+            if available > 0. && min <= max + 0.001 {
+                let current = *ratio * available;
+                let fitted = current.clamp(min, max.max(min));
+                if (current - fitted).abs() > 0.001 {
+                    *ratio = fitted / available;
+                }
+            }
             if min <= max && step > 0. {
                 let center = origin + (span - gap) * *ratio + gap / 2.;
                 let low = ((origin + min + gap / 2. - base) / step).ceil();
@@ -1281,8 +1299,16 @@ impl Desktop {
         if ids != expected {
             return false;
         }
+        let layout = Layout::from_index(index);
+        if layout.primary_center_axis().is_some_and(|axis| {
+            self.order.len() >= 2 && tree.centered_ratios(axis, self.order[0]).is_none()
+        }) || tree.empty_count()
+            != usize::from(layout.primary_center_axis().is_some() && self.order.len() == 2)
+        {
+            return false;
+        }
         self.grid = grid;
-        self.layout = Layout::from_index(index);
+        self.layout = layout;
         self.resized = Some((self.layout, self.order.clone(), tree));
         true
     }
@@ -1363,6 +1389,190 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn snapping_a_parent_refits_children_when_no_inner_grid_line_is_available() {
+        let area = rect(0., 0., 1000., 1000.);
+        for minimum in [90., 250.] {
+            let mut desktop = Desktop::configured(Layout::ThreeBands, Some((2, 2)));
+            desktop.order = vec![1, 2, 3];
+            desktop.resized = Some((
+                desktop.layout,
+                desktop.order.clone(),
+                Node::branch(
+                    false,
+                    0.2,
+                    Node::Leaf(1),
+                    Node::branch(false, minimum / 782., Node::Leaf(2), Node::Leaf(3)),
+                ),
+            ));
+            desktop.set_minimum_sizes(&[(2, objc2_foundation::NSSize::new(120., minimum))].into());
+            desktop.fit(area, 10.);
+            let frames = desktop.frames(area, 10.);
+            assert_eq!(frames.len(), 3);
+            assert!(
+                (frames
+                    .iter()
+                    .find(|(id, _)| *id == 2)
+                    .unwrap()
+                    .1
+                    .size
+                    .height
+                    - minimum)
+                    .abs()
+                    < 0.001
+            );
+            assert_layout_invariants(&desktop, area);
+        }
+    }
+    #[test]
+    fn malformed_saved_shapes_do_not_replace_the_current_distribution() {
+        let area = rect(0., 41., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, Some((17, 9)));
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let before = desktop.clone();
+        for text in [
+            "2 6 3 0 0 v0.5 w0 h0.5 w1 w2", // main is not in the centered core
+            "2 1 3 0 0 v0.5 e h0.5 w0 h0.5 w1 w2", // unoccupied half-screen
+            "2 1 3 0 0 vNaN w0 h0.5 w1 w2",
+            "2 1 3 0 0 v0.5 w0 h0.5 w1 w1", // duplicate/missing identity
+        ] {
+            assert!(
+                !desktop.restore_distribution(text),
+                "accepted malformed shape: {text}"
+            );
+            assert!(desktop == before);
+        }
+    }
+    #[test]
+    fn a_legitimate_extreme_resize_can_be_saved_and_restored() {
+        let area = rect(-10000., 41., 16000., 2000.);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let from = desktop.frames(area, 10.)[0].1;
+        desktop.resize(
+            1,
+            from,
+            rect(from.origin.x, from.origin.y, 120., from.size.height),
+            area,
+            10.,
+        );
+        let before = desktop.frames(area, 10.);
+        let saved = desktop.save_distribution(area).unwrap();
+        assert!(
+            desktop.restore_distribution(&saved),
+            "cannot restore generated distribution: {saved}"
+        );
+        assert_eq!(desktop.frames(area, 10.), before);
+    }
+    #[test]
+    fn randomized_lifecycle_keeps_complete_valid_geometry_and_round_trips() {
+        for mut seed in [
+            0x7dbd_5042_10ac_11efu64,
+            0x81ca_6cf0_779a_42b1,
+            0xab0e_7149_3085_7e0a,
+            0x9bdf_56ca_17ad_b871,
+        ] {
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            for initial in Layout::ALL {
+                let mut desktop = Desktop::configured(initial, None);
+                let mut area = rect(-1440., -300., 1440., 2560.);
+                let mut ids = vec![1, 2, 3, 4, 5];
+                let mut serial = 6;
+                desktop.reconcile(&ids, area, 10.);
+                for step in 0..1200 {
+                    match next() % 7 {
+                        0 if ids.len() < 10 => {
+                            ids.push(serial);
+                            serial += 1;
+                            desktop.reconcile(&ids, area, 10.);
+                        }
+                        1 if ids.len() > 1 => {
+                            ids.remove(next() as usize % ids.len());
+                            desktop.reconcile(&ids, area, 10.);
+                        }
+                        2 => {
+                            let frames = desktop.frames(area, 10.);
+                            if !frames.is_empty() {
+                                let (id, from) = frames[next() as usize % frames.len()];
+                                let dx = next() as f64 / u64::MAX as f64 * 1200. - 600.;
+                                let dy = next() as f64 / u64::MAX as f64 * 1200. - 600.;
+                                desktop.resize(
+                                    id,
+                                    from,
+                                    rect(
+                                        from.origin.x + dx,
+                                        from.origin.y + dy,
+                                        from.size.width - dx,
+                                        from.size.height - dy,
+                                    ),
+                                    area,
+                                    10.,
+                                );
+                            }
+                        }
+                        3 => {
+                            let source = ids[next() as usize % ids.len()];
+                            let target = ids[next() as usize % ids.len()];
+                            if let Some(d) = desktop.proposed_drop(
+                                source,
+                                DropIntent::Window(target, Zone::Center),
+                                area,
+                                10.,
+                            ) {
+                                desktop = d;
+                            }
+                        }
+                        4 => {
+                            desktop.grid = [None, Some((2, 2)), Some((17, 9)), Some((240, 60))]
+                                [next() as usize % 4];
+                        }
+                        5 => {
+                            area = if area.size.width > area.size.height {
+                                rect(-1440., -300., 1440., 2560.)
+                            } else {
+                                rect(30.5, 41.5, 2560., 1440.)
+                            };
+                        }
+                        _ => {
+                            desktop.reset_template(Layout::ALL[next() as usize % 8], area);
+                        }
+                    }
+                    desktop.fit(area, 10.);
+                    let frames = desktop.frames(area, 10.);
+                    assert_eq!(
+                        frames.len(),
+                        ids.len(),
+                        "incomplete: {initial:?}, step={step}"
+                    );
+                    assert_layout_invariants(&desktop, area);
+                    for (id, r) in &frames {
+                        assert!(
+                            r.size.width + 0.001 >= 80.,
+                            "width: {initial:?} step={step} {id} {r:?} current={:?} grid={:?} saved={:?}",
+                            desktop.layout,
+                            desktop.grid,
+                            desktop.save_distribution(area)
+                        );
+                        assert!(
+                            r.size.height + 0.001 >= 60.,
+                            "height: {initial:?} step={step} {id} {r:?}"
+                        );
+                    }
+                    let saved = desktop.save_distribution(area).unwrap();
+                    assert!(
+                        desktop.restore_distribution(&saved),
+                        "round trip: {initial:?} step={step} {saved}"
+                    );
+                    assert_eq!(desktop.frames(area, 10.), frames);
+                }
+            }
+        }
+    }
     #[test]
     fn lazy_focus_preserves_insertion_and_closure_behavior_in_every_template() {
         for layout in Layout::ALL {

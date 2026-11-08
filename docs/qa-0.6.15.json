@@ -1,0 +1,33 @@
+{
+  "version": "0.6.15",
+  "build": 32,
+  "automated_tests": 139,
+  "release_tests": 139,
+  "manual_diagnostics_passed": 2,
+  "manual_cpu_benchmarks_passed": 4,
+  "randomized_lifecycle": {
+    "seeds": 4,
+    "initial_templates": 8,
+    "steps_per_run": 1200,
+    "operations": 38400
+  },
+  "corrupted_saved_distribution_variants": 512,
+  "fixed_regressions": [
+    "Grid snapping a parent could leave a child below its minimum when no inner grid line fit.",
+    "Incoherent centered trees or unoccupied non-centered branches could be accepted as saved distributions.",
+    "Restoring a distribution that did not fit could change model/preferences and report success."
+  ],
+  "verified_invariants": [
+    "finite complete non-overlapping rectangles",
+    "window identity and membership",
+    "hard minimum geometry",
+    "valid shared divisions and bounds",
+    "save/restore round trips",
+    "failed restore leaves model/preferences/pending work unchanged"
+  ],
+  "scope_limits": [
+    "multi-monitor and multi-Space combinations are modeled, not tested on the remote physical Mac",
+    "native diagnostics only read Accessibility/WindowServer state",
+    "installed/public version remains 0.6.14"
+  ]
+}

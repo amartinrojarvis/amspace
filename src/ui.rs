@@ -2608,7 +2608,7 @@ Otras apps pueden tener atajos propios no detectables.",
                         if ok {
                             "Distribución restaurada."
                         } else {
-                            "No hay una distribución compatible con este número de tiles."
+                            "No hay una distribución compatible con estas ventanas y pantalla."
                         },
                     );
                 }
