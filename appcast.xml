@@ -1,19 +1,18 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.15</title><pubDate>Sun, 08 Nov 2026 16:18:12 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.15 — consultas más ligeras y menos asignaciones.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.16</title><pubDate>Sun, 08 Nov 2026 17:30:29 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.16 — estabilidad al entrar en otro escritorio.
 
-- Consulta por Accesibilidad la ventana enfocada únicamente cuando sirve para insertar nuevas ventanas en una distribución personalizada. Los escritorios sin cambios y las plantillas que no usan ese dato evitan esa consulta.
-- Comprueba las reglas de aplicaciones flotantes mediante una búsqueda directa, sin reconstruir ni ordenar la lista completa. Conserva las preferencias y su edición.
-- Reutiliza las cadenas constantes de los atributos habituales de Accesibilidad, manteniendo la ruta normal para atributos desconocidos.
+- Espera a disponer de las ventanas del escritorio de destino y de geometría estable antes de reanudar el mosaico. Una llegada incompleta ya no se trata como el cierre de una ventana.
+- Conserva los huecos, proporciones y distribución existentes durante la transición, incluso si macOS tarda más que el plazo anterior.
+- Descarta movimientos y verificaciones pendientes anteriores al cambio para no reutilizar posiciones transitorias.
+- Distingue ventanas que aún están llegando de ventanas ocultas, minimizadas y pestañas nativas inactivas. Recupera referencias de Accesibilidad caducadas por identidad de ventana.
 
-- Corrige el ajuste de una división de rejilla después de que su contenedor cambie de tamaño, evitando ventanas por debajo de su mínimo cuando no hay una línea interna disponible.
-- Rechaza distribuciones guardadas con estructuras incoherentes o huecos no permitidos.
-- Valida la restauración sobre la pantalla actual antes de cambiar la distribución y las preferencias. Si no cabe, conserva el estado anterior.
+- Oculta inmediatamente el contorno de la ventana anterior al cambiar de escritorio y lo reconstruye al terminar la transición, también con el mosaico desactivado.
 
-139 pruebas automáticas correctas, incluidas equivalencias de inserción/cierre en las ocho plantillas, reglas flotantes y las regresiones previas de pantallas, escritorios, menús y diálogos. Los benchmarks y su alcance se detallan en docs/VALIDATION.md.
+145 pruebas automáticas correctas. Regresiones de las ocho plantillas en ambas orientaciones, con y sin rejilla, cambios rápidos de escritorio y varias pantallas. Los diagnósticos nativos y los límites de la comprobación se detallan en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.15/AMSpace-universal.zip" length="2418486" type="application/octet-stream" sparkle:version="32" sparkle:shortVersionString="0.6.15" sparkle:edSignature="Up92uF50IhhfhPreu3ojEQAfFNjP7476+8SsDm+x3NNGQIGHcx7pFl+gQmV7VeZZdPcgLC6bqyKKHIlodflCCw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: NQDKjlO7cNFkY0irsHq61bHhnsGMK39af965nMVH4ekNeu7TNWGX+q7hzMflIzNiUaKIXABqq5z4pn6Zgl90Dg==
-length: 2479
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.16/AMSpace-universal.zip" length="2446043" type="application/octet-stream" sparkle:version="34" sparkle:shortVersionString="0.6.16" sparkle:edSignature="QKtxIVu1Y8qU5y4uJs8+3VleDr/5qYU6y1EV8AmYWYIdpmOwiyCLQMOqyRW8t/fvlslPzsDj89pGiaRWT9shCw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: WCunfJbAMSSW/tSssvJBmd+3CdHuZ6SaYeubBKFzlXCCHWwtTTS1X3O5Xc0KHwDYhgT6AHBr6HwmNZJr52HGBg==
+length: 2317
 -->

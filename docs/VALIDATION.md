@@ -1,3 +1,10 @@
+## Publicación 0.6.16, build 34
+
+- Actualización solicitada por el usuario: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.16 sobre `4a4c6a16fadd44dcc1572fc6b72b87ef5a448839`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42505309460.
+- Incluye conservación de la distribución al entrar en un Space y la corrección del contorno residual. 145 pruebas correctas en debug/release, formato, Clippy, plist y paquete universal arm64/x86_64 con firma estricta.
+- ZIP, catálogo firmado y SHA256SUMS publicados. Copia inmutable en `updates/0.6.16/AMSpace-universal.zip`, descargada sin autenticación y comparada byte a byte con el ZIP firmado. SHA-256: `09af7bb3ad3232c9b50e71a9df98f16b9ec52c2caad080b1b1f9e695a3b7bb2a`; tamaño: 2446043 bytes. Firmas de ZIP y feed verificadas con Sparkle antes de anunciar build 34.
+- Se conserva la instalación local de prueba en build 33. Los doce cambios físicos de escritorio verificaron la estabilidad de la geometría en esa build; el arreglo adicional del contorno en build 34 tiene prueba automática y CI, pendiente de comprobación física en el otro Mac. No se atribuye una instalación por Sparkle ni una prueba del hardware remoto a esta publicación.
+
 ## Corrección de reentrada en Spaces 0.6.16, build 34
 
 - Caso comunicado: saltan de tamaño las ventanas del escritorio de destino. La ruta anterior podía conciliar una lista parcial tras 600 ms y agotar otros 600 ms de conservación; quitar una ventana viva y reinsertarla altera temporalmente la distribución.
