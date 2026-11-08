@@ -265,7 +265,7 @@ unsafe fn paint_swatch(button: Obj, name: &str, rgb: [f64; 3]) {
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = 530. + rows.saturating_sub(2) as f64 * 108.;
+    let height = 570. + rows.saturating_sub(2) as f64 * 108.;
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
@@ -1547,7 +1547,7 @@ impl App {
             }
             label(
                 root,
-                rect(18., 154., width - 90., 22.),
+                rect(18., 194., width - 90., 22.),
                 "Colocación inteligente",
                 13.,
                 0.,
@@ -1556,11 +1556,28 @@ impl App {
             toggle(
                 root,
                 width - 58.,
-                154.,
+                194.,
                 "Colocación inteligente",
                 target,
                 43,
                 crate::tile_manager::pref(defaults, "tile.simple") == 0,
+            );
+            label(
+                root,
+                rect(18., 154., width - 90., 22.),
+                "Previsualizar al redimensionar",
+                13.,
+                0.,
+                false,
+            );
+            toggle(
+                root,
+                width - 58.,
+                154.,
+                "Previsualizar al redimensionar",
+                target,
+                61,
+                crate::tile_manager::pref(defaults, "tile.resize.preview") != 0,
             );
             button(
                 root,
@@ -2484,6 +2501,14 @@ Otras apps pueden tener atajos propios no detectables.",
                     self.refresh_tile_controls();
                 }
                 54 => self.show_picker_settings(),
+                61 => {
+                    let selected: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "tile.resize.preview",
+                        selected,
+                    );
+                }
                 55 | 56 => {
                     let selected: isize = msg_send![sender, indexOfSelectedItem];
                     crate::tile_manager::save(

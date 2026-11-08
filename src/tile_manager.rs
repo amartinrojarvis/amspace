@@ -1026,7 +1026,14 @@ impl Manager {
         final_sample: bool,
         point: NSPoint,
         pointer_workspace: Option<Workspace>,
+        preview: bool,
     ) {
+        if !final_sample && !preview {
+            // No overlay means no per-frame layout/AX work during a native
+            // resize. The gesture is still observed by the shared input path.
+            self.hide_preview();
+            return;
+        }
         let Some(drag) = &mut self.drag else {
             return;
         };
@@ -1585,11 +1592,16 @@ impl Manager {
                 self.hide_preview()
             }
             if down {
-                self.resize_drag(false, p, pointer_workspace);
+                self.resize_drag(
+                    false,
+                    p,
+                    pointer_workspace,
+                    pref(defaults, "tile.resize.preview") != 0,
+                );
                 return; // Only previews change while macOS owns the native gesture.
             }
         }
-        self.resize_drag(true, p, pointer_workspace);
+        self.resize_drag(true, p, pointer_workspace, false);
         self.gesture_candidates.clear();
         if let Some(drag) = self.drag.take() {
             if trace_tiling() {
