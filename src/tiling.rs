@@ -780,45 +780,15 @@ impl Desktop {
             result.resized = Some((result.layout, result.order.clone(), tree));
             return Some(result);
         }
-        let old_tree = self.effective_tree(area, gap);
-        if !self.order.is_empty() && old_tree.is_none() {
+        if !self.order.is_empty() && self.effective_tree(area, gap).is_none() {
             return None;
         }
-        let remaining = old_tree.and_then(|tree| tree.remove(id));
-        let tree = match (remaining, intent) {
-            (None, _) => Node::Leaf(id),
-            (Some(tree), DropIntent::Screen(side)) => {
-                let before = matches!(side, Zone::Left | Zone::Top);
-                let vertical = matches!(side, Zone::Left | Zone::Right);
-                if before {
-                    Node::branch(vertical, 0.5, Node::Leaf(id), tree)
-                } else {
-                    Node::branch(vertical, 0.5, tree, Node::Leaf(id))
-                }
-            }
-            (Some(mut tree), DropIntent::Window(target, side)) => {
-                if !tree.insert(target, id, side) {
-                    return None;
-                }
-                tree
-            }
-        };
-        result.order.retain(|w| *w != id);
-        match intent {
-            DropIntent::Window(target, side) => {
-                let index = result.order.iter().position(|w| *w == target)?
-                    + usize::from(matches!(side, Zone::Right | Zone::Bottom | Zone::Center));
-                result.order.insert(index, id);
-            }
-            DropIntent::Screen(side) => {
-                if matches!(side, Zone::Left | Zone::Top) {
-                    result.order.insert(0, id)
-                } else {
-                    result.order.push(id)
-                }
-            }
-        }
-        result.resized = Some((result.layout, result.order.clone(), tree));
+        // A cross-display arrival uses the destination's membership policy,
+        // then occupies a template slot. Free-form edge insertion could turn
+        // a centered/vertical template into an unrelated split tree.
+        let mut ids = result.order.clone();
+        ids.push(id);
+        result.reconcile_at(&ids, area, gap, None);
         let frames = result.frames(area, gap);
         if frames.len() != result.order.len()
             || frames
@@ -827,7 +797,11 @@ impl Desktop {
         {
             return None;
         }
-        Some(result)
+        if self.order.is_empty() {
+            Some(result)
+        } else {
+            result.proposed_drop(id, intent, area, gap)
+        }
     }
     fn equal_chain(nodes: &[Node], vertical: bool, span: f64, gap: f64) -> Node {
         if nodes.len() == 1 {
@@ -2113,7 +2087,7 @@ mod tests {
         );
     }
     #[test]
-    fn dropping_on_another_monitor_preserves_source_and_destination_splits() {
+    fn dropping_on_another_monitor_uses_destination_template_slots() {
         let landscape = rect(0., 30., 1600., 900.);
         let portrait = rect(-900., -400., 900., 1600.);
         let mut source = Desktop::configured(Layout::Spiral, None);
@@ -2131,9 +2105,15 @@ mod tests {
         assert_eq!(source.frames(landscape, 10.), vec![(2, landscape)]);
         let frames = destination.frames(portrait, 10.);
         assert_eq!(frames.len(), 3);
+        let mut expected = Desktop::configured(Layout::Spiral, None);
+        expected.reconcile(&[3, 4, 1], portrait, 10.);
         assert_eq!(
-            frames.iter().find(|(id, _)| *id == 1).unwrap().1.size.width,
-            portrait.size.width
+            frames.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+            expected
+                .frames(portrait, 10.)
+                .iter()
+                .map(|(_, r)| *r)
+                .collect::<Vec<_>>()
         );
         let empty = Desktop::configured(Layout::Grid, Some((120, 6)));
         assert_eq!(
@@ -2143,6 +2123,76 @@ mod tests {
                 .frames(portrait, 10.),
             vec![(1, portrait)]
         );
+    }
+    #[test]
+    fn monitor_arrivals_keep_every_destination_template_and_resize_ratios() {
+        for layout in Layout::ALL {
+            for grid in [None, Some((17, 9))] {
+                for area in [
+                    rect(0., 30., 2560., 1440.),
+                    rect(-1440., -600., 1440., 2560.),
+                ] {
+                    for count in 0..7 {
+                        let ids: Vec<_> = (1..=count).collect();
+                        let mut destination = Desktop::configured(layout, grid);
+                        destination.reconcile(&ids, area, 10.);
+                        if let Some((id, from)) = destination.frames(area, 10.).first().copied() {
+                            destination.resize(
+                                id,
+                                from,
+                                rect(
+                                    from.origin.x,
+                                    from.origin.y,
+                                    from.size.width - 50.,
+                                    from.size.height - 50.,
+                                ),
+                                area,
+                                10.,
+                            );
+                        }
+                        let unchanged = destination.save_distribution(area);
+                        let mut expected = destination.clone();
+                        let mut arriving = ids.clone();
+                        arriving.push(99);
+                        expected.reconcile(&arriving, area, 10.);
+                        let mut slots: Vec<_> = expected
+                            .frames(area, 10.)
+                            .into_iter()
+                            .map(|(_, r)| format!("{r:?}"))
+                            .collect();
+                        slots.sort();
+                        for side in [
+                            Zone::Left,
+                            Zone::Right,
+                            Zone::Top,
+                            Zone::Bottom,
+                            Zone::Center,
+                        ] {
+                            let intents = [DropIntent::Screen(side), DropIntent::Window(1, side)];
+                            for intent in intents.into_iter().take(if count == 0 { 1 } else { 2 }) {
+                                let mut proposed =
+                                    destination.proposed_drop(99, intent, area, 10.).unwrap();
+                                assert_layout_invariants(&proposed, area);
+                                let mut actual: Vec<_> = proposed
+                                    .frames(area, 10.)
+                                    .into_iter()
+                                    .map(|(_, r)| format!("{r:?}"))
+                                    .collect();
+                                actual.sort();
+                                assert_eq!(
+                                    actual, slots,
+                                    "{layout:?}, {grid:?}, {count}, {intent:?}"
+                                );
+                                let before = proposed.frames(area, 10.);
+                                proposed.reconcile(&arriving, area, 10.);
+                                assert_eq!(proposed.frames(area, 10.), before);
+                                assert_eq!(destination.save_distribution(area), unchanged);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn portrait_defaults_stack_and_coordinate_conversion_preserves_global_points() {

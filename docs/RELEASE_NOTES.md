@@ -1,19 +1,12 @@
-AMSpace 0.6.11 — escritorio libre, mosaicos estables y ventanas auxiliares.
+AMSpace 0.6.12 — arrastre y redimensionamiento más estables.
 
-- Ajustes reorganizados con navegación lateral, miniaturas seleccionables de las ocho plantillas y menos texto de relleno. Fondo opcional del widget con la paleta suave de Kairos Monitor.
-- Espiral pasa a ser la plantilla predeterminada. Se retira Dwindle y se añade Principal centrada: principal de dos tercios del ancho con ventanas secundarias a ambos lados. Se añaden Centrada XL (tres por lado) y Principal vertical (dos arriba y dos abajo).
-- Recolocar ventanas dentro del escritorio mantiene la rejilla y las proporciones de la plantilla, también después de seleccionarla con el atajo. Se rechazan intercambios incompatibles con los mínimos de las apps.
-- Al abrir o cerrar ventanas en las plantillas centradas se equilibran ambos laterales y se conserva el espacio de la principal, incluso después de recolocar ventanas.
-- Redimensionado de divisiones compartidas en las ocho plantillas. Las centradas ajustan ambos lados de la principal simétricamente; los tamaños pertenecen a los huecos y se conservan al intercambiar ventanas.
-- Más separación entre tarjetas y controles; ajustes adaptados al tamaño de la pantalla.
-- Suspende tiling, foco bajo el cursor y borde durante Mostrar escritorio, también mediante esquina activa. Detecta la presentación de WindowManager además de las señales tradicionales de Dock.
-- Conserva los árboles y proporciones por pantalla y escritorio mientras las ventanas están apartadas. Al salir, espera a la restauración nativa y recupera la distribución anterior; las ventanas abiertas en ese modo permanecen flotantes con su geometría.
-- Excluye permanentemente del mosaico los modales, Obtener información/Inspector de Finder y las ventanas de la Utilidad de Compresión.
-- Respeta el seguimiento de teclado de los menús contextuales y otros menús desplegados, incluso cuando el cursor sale de ellos.
-- Espiral adapta sus divisiones a los mínimos de las aplicaciones sin convertirse en columnas. Las plantillas que no caben se indican como no disponibles.
-- Usa AX también para asignar cada ventana a su monitor, evitando redistribuciones por coordenadas transitorias del compositor durante un cambio de Space.
-- Incluye las mejoras de consumo, tamaño y protección del foco de la 0.6.10.
+- Evita que el mosaico compita con el redimensionamiento nativo de macOS. Durante el gesto muestra los huecos previstos; al soltar aplica y verifica la distribución.
+- Conserva las proporciones ajustadas y los tamaños de los huecos al intercambiar ventanas. Las variantes con principal centrada mantienen su simetría.
+- Identifica la ventana que realmente se está moviendo o redimensionando aunque el foco siga en una vecina.
+- Captura el inicio y el final del gesto y vuelve a calcular el destino al soltar, evitando conservar una posición anterior de la previsualización en arrastres rápidos.
+- Al trasladar una ventana entre pantallas respeta la plantilla de destino, incluida Principal vertical, y comprueba los tamaños mínimos conocidos antes de confirmar el traslado.
+- Correcciones comunes a todas las aplicaciones y a las ocho plantillas, sin excepciones por app.
 
-Validación automatizada de geometría y árboles con varios escritorios, pantallas horizontal y vertical, todas las plantillas y rejilla activada/desactivada. Captura local de la señal de WindowManager de la esquina activa. Los resultados de uso y el alcance de la validación se detallan en docs/VALIDATION.md.
+125 pruebas automáticas correctas, incluidas matrices con ambas orientaciones, rejilla opcional, intercambios, tamaños ajustados y llegadas entre pantallas. El alcance de la validación se detalla en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.

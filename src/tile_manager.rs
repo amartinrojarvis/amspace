@@ -108,9 +108,17 @@ fn layout_pref(defaults: Obj, space: Workspace) -> Layout {
     ))
 }
 fn pointer_display() -> Option<u32> {
+    point_display(pointer()?)
+}
+fn point_display(point: NSPoint) -> Option<u32> {
     unsafe {
-        let p: NSPoint = msg_send![class!(NSEvent), mouseLocation];
         let screens: Obj = msg_send![class!(NSScreen), screens];
+        let first: Obj = msg_send![screens, firstObject];
+        if first.is_null() {
+            return None;
+        }
+        let primary: NSRect = msg_send![first, frame];
+        let p = NSPoint::new(point.x, primary.size.height - point.y);
         let count: usize = msg_send![screens, count];
         for i in 0..count {
             let screen: Obj = msg_send![screens,objectAtIndex:i];
@@ -201,6 +209,7 @@ struct Managed {
     original_area: NSRect,
     element: ax::Owned,
 }
+#[derive(Clone)]
 struct Drag {
     id: u32,
     space: Workspace,
@@ -232,16 +241,22 @@ fn arrival_proposal(
     id: u32,
     intent: Option<DropIntent>,
     area: NSRect,
+    minimums: Option<&HashMap<u32, objc2_foundation::NSSize>>,
 ) -> Option<Desktop> {
-    if let Some(intent) = intent {
-        return desktop.proposed_drop(id, intent, area, 10.);
+    let mut proposed = if let Some(intent) = intent {
+        desktop.proposed_drop(id, intent, area, 10.)?
+    } else {
+        let mut proposed = desktop.clone();
+        let mut ids = proposed.order.clone();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+        proposed.reconcile_at(&ids, area, 10., None);
+        proposed
+    };
+    if let Some(minimums) = minimums {
+        proposed.set_minimum_sizes(minimums);
     }
-    let mut proposed = desktop.clone();
-    let mut ids = proposed.order.clone();
-    if !ids.contains(&id) {
-        ids.push(id);
-    }
-    proposed.reconcile_at(&ids, area, 10., None);
     proposed.fit(area, 10.);
     let frames = proposed.frames(area, 10.);
     (frames.len() == proposed.order.len()
@@ -251,6 +266,53 @@ fn arrival_proposal(
     .then_some(proposed)
 }
 impl Drag {
+    fn update_drop(
+        &mut self,
+        candidate: Option<(Workspace, DropIntent)>,
+        now: Instant,
+        released: bool,
+    ) {
+        if candidate != self.candidate {
+            self.candidate = candidate;
+            self.candidate_since = now;
+        }
+        if released
+            || candidate.is_none()
+            || self.drop.is_none()
+            || now.duration_since(self.candidate_since) >= Duration::from_millis(70)
+        {
+            self.drop = candidate;
+        }
+    }
+    fn resize_proposal(
+        &mut self,
+        frame: NSRect,
+        point: NSPoint,
+        pointer_workspace: Option<Workspace>,
+    ) -> Option<Desktop> {
+        self.observe(frame, point, pointer_workspace);
+        if !self.resized || pointer_workspace != Some(self.space) {
+            return None;
+        }
+        // Every sample is a proposal against the immutable gesture baseline.
+        // Native resizing owns the real windows until mouse-up: writing AX
+        // geometry during that gesture can change the next native delta.
+        let mut layout = self.baseline.clone();
+        let from = layout
+            .frames(self.area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == self.id)?
+            .1;
+        let requested = if layout.order.first() == Some(&self.id) {
+            layout.layout.primary_center_axis().map_or(frame, |axis| {
+                centered_resize_request(from, self.start, self.point, point, frame, axis)
+            })
+        } else {
+            frame
+        };
+        layout.resize(self.id, from, requested, self.area, 10.);
+        (layout.frames(self.area, 10.).len() == layout.order.len()).then_some(layout)
+    }
     fn observe(&mut self, frame: NSRect, point: NSPoint, pointer_workspace: Option<Workspace>) {
         // Once a move is underway, a native size change on another screen is
         // still a move. Never reinterpret it as resizing the source layout.
@@ -284,6 +346,30 @@ impl Drag {
             && anchored_x
             && anchored_y;
         self.moved = !self.resized && moved;
+    }
+}
+fn resolve_gesture(
+    selected: &mut Option<Drag>,
+    candidates: &mut [Drag],
+    point: NSPoint,
+    workspace: Option<Workspace>,
+    bounds: impl Fn(u32) -> Option<NSRect>,
+) {
+    if let Some(drag) = selected.as_mut() {
+        if let Some(frame) = bounds(drag.id) {
+            drag.observe(frame, point, workspace);
+        }
+    }
+    if selected.as_ref().is_some_and(|d| d.moved || d.resized) {
+        return;
+    }
+    for candidate in candidates.iter_mut() {
+        if let Some(frame) = bounds(candidate.id) {
+            candidate.observe(frame, point, workspace);
+        }
+    }
+    if let Some(candidate) = candidates.iter().find(|d| d.moved || d.resized) {
+        *selected = Some(candidate.clone());
     }
 }
 #[derive(Clone, Copy)]
@@ -391,10 +477,11 @@ pub struct Manager {
     restore_after_presentation: bool,
     restore_spaces_after_presentation: HashSet<u64>,
     drag: Option<Drag>,
+    gesture_candidates: Vec<Drag>,
     pending_drop: Option<PendingDrop>,
     handoffs: HashMap<u32, MonitorHandoff>,
     pressed: bool,
-    preview: Option<Retained<AnyObject>>,
+    preview: Vec<Retained<AnyObject>>,
     last_scan: Option<Instant>,
     last_area_update: Option<Instant>,
     active_areas: Vec<(Workspace, NSRect)>,
@@ -595,6 +682,7 @@ impl Manager {
             self.invalidate();
         }
         self.drag = None;
+        self.gesture_candidates.clear();
         self.pending_drop = None;
         self.pressed = false;
         self.hide_preview();
@@ -628,17 +716,20 @@ impl Manager {
         self.invalidate();
     }
     fn hide_preview(&self) {
-        if let Some(w) = &self.preview {
+        for w in &self.preview {
             unsafe {
                 let _: () = msg_send![&**w,orderOut:ptr::null::<AnyObject>()];
             }
         }
     }
     fn show_preview(&mut self, r: NSRect) {
+        self.show_previews(&[r]);
+    }
+    fn show_previews(&mut self, frames: &[NSRect]) {
         unsafe {
-            if self.preview.is_none() {
+            while self.preview.len() < frames.len() {
                 let p: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
-                let p: Retained<AnyObject> = msg_send![p,initWithContentRect:r,styleMask:128usize,backing:2usize,defer:false];
+                let p: Retained<AnyObject> = msg_send![p,initWithContentRect:rect(0.,0.,1.,1.),styleMask:128usize,backing:2usize,defer:false];
                 let _: () = msg_send![&p,setReleasedWhenClosed:false];
                 let _: () = msg_send![&p,setOpaque:false];
                 let _: () = msg_send![&p,setBackgroundColor:color(0.42,0.48,0.95,0.3)];
@@ -646,7 +737,7 @@ impl Manager {
                 let _: () = msg_send![&p,setHasShadow:false];
                 let _: () = msg_send![&p,setLevel:3isize];
                 let _: () = msg_send![&p,setCollectionBehavior:((1usize<<0)|(1<<3)|(1<<6)|(1<<8))];
-                self.preview = Some(p);
+                self.preview.push(p);
             }
             let screens: Obj = msg_send![class!(NSScreen), screens];
             let first: Obj = msg_send![screens, firstObject];
@@ -655,9 +746,26 @@ impl Manager {
                 return;
             }
             let primary: NSRect = msg_send![first, frame];
-            let p = self.preview.as_ref().unwrap();
-            let _: () = msg_send![&**p,setFrame:rect(r.origin.x,primary.size.height-r.origin.y-r.size.height,r.size.width,r.size.height),display:true];
-            let _: () = msg_send![&**p, orderFrontRegardless];
+            for (index, p) in self.preview.iter().enumerate() {
+                if let Some(r) = frames.get(index) {
+                    let target = rect(
+                        r.origin.x,
+                        primary.size.height - r.origin.y - r.size.height,
+                        r.size.width,
+                        r.size.height,
+                    );
+                    let current: NSRect = msg_send![&**p, frame];
+                    if current != target {
+                        let _: () = msg_send![&**p,setFrame:target,display:true];
+                    }
+                    let visible: bool = msg_send![&**p, isVisible];
+                    if !visible {
+                        let _: () = msg_send![&**p, orderFrontRegardless];
+                    }
+                } else {
+                    let _: () = msg_send![&**p,orderOut:ptr::null::<AnyObject>()];
+                }
+            }
         }
     }
     pub fn toggle_float(&mut self, defaults: Obj) {
@@ -913,51 +1021,41 @@ impl Manager {
             }
         }
     }
-    fn resize_drag(&mut self, final_sample: bool) {
+    fn resize_drag(
+        &mut self,
+        final_sample: bool,
+        point: NSPoint,
+        pointer_workspace: Option<Workspace>,
+    ) {
         let Some(drag) = &mut self.drag else {
             return;
         };
         let Some(frame) = ws::bounds(drag.id) else {
             return;
         };
-        let pointer_workspace = (pointer_display() == Some(drag.space.0)).then_some(drag.space);
-        let Some(point) = pointer() else { return };
-        drag.observe(frame, point, pointer_workspace);
-        if !drag.resized
-            || self.floating.contains(&drag.id)
-            || spaces::window_space(drag.id) != Some(drag.space.1)
-        {
+        if self.floating.contains(&drag.id) || spaces::window_space(drag.id) != Some(drag.space.1) {
             return;
         }
-        let mut layout = drag.baseline.clone();
-        let from = layout
-            .frames(drag.area, 10.)
-            .iter()
-            .find(|(id, _)| *id == drag.id)
-            .map(|(_, r)| *r)
-            .unwrap_or(drag.start);
-        let centered_axis = (layout.order.first() == Some(&drag.id))
-            .then(|| layout.layout.primary_center_axis())
-            .flatten();
-        let requested = centered_axis.map_or(frame, |axis| {
-            centered_resize_request(from, drag.start, drag.point, point, frame, axis)
-        });
-        layout.resize(drag.id, from, requested, drag.area, 10.);
-        for (id, target) in layout.frames(drag.area, 10.) {
-            // The centered primary is driven from pointer displacement so its
-            // mirrored AX frame cannot feed back into the next native sample.
-            if id == drag.id && !final_sample && centered_axis.is_none() {
-                continue;
-            }
-            if ws::bounds(id).is_some_and(|actual| near(actual, target)) {
-                continue;
-            }
-            if let Some(w) = self.windows.get(&id) {
-                ax::set_frame(w.element.0, target);
-                self.applied.insert(id, target);
-            }
+        let Some(layout) = drag.resize_proposal(frame, point, pointer_workspace) else {
+            return;
+        };
+        if !final_sample {
+            let frames = layout
+                .frames(drag.area, 10.)
+                .into_iter()
+                .map(|(_, r)| r)
+                .collect::<Vec<_>>();
+            self.show_previews(&frames);
+            return;
         }
-        self.desktops.insert(drag.space, layout);
+        let space = drag.space;
+        for id in &layout.order {
+            self.cancel_window_placement(*id);
+        }
+        // Use the normal bounded placement/verification path after release;
+        // never mark an unverified AX request as an applied native frame.
+        self.desktops.insert(space, layout);
+        self.invalidate();
     }
     pub fn current_workspace(&self) -> Option<Workspace> {
         if self.space_quiet_until.is_some()
@@ -1094,7 +1192,10 @@ impl Manager {
             .is_some_and(|until| Instant::now() < until)
         {
             0.08
-        } else if !self.transitions.is_empty() || self.drag.is_some() || self.pending_drop.is_some()
+        } else if !self.transitions.is_empty()
+            || self.drag.is_some()
+            || !self.gesture_candidates.is_empty()
+            || self.pending_drop.is_some()
         {
             1. / 60.
         } else {
@@ -1125,6 +1226,20 @@ impl Manager {
         }
     }
     fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
+        self.tick_mode_input(defaults, place_windows, None);
+    }
+    pub fn mouse_event(&mut self, defaults: Obj, down: bool, point: NSPoint) {
+        if self.presentation_blocks_input() || !ax::trusted() {
+            return;
+        }
+        self.tick_mode_input(defaults, true, Some((down, point)));
+    }
+    fn tick_mode_input(
+        &mut self,
+        defaults: Obj,
+        place_windows: bool,
+        input: Option<(bool, NSPoint)>,
+    ) {
         if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
             return;
         }
@@ -1132,7 +1247,10 @@ impl Manager {
         if self.waiting_for_space(Instant::now()) {
             return;
         }
-        let down: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        let down: usize = input.map_or_else(
+            || unsafe { msg_send![class!(NSEvent), pressedMouseButtons] },
+            |(down, _)| usize::from(down),
+        );
         let scan_interval = if self.settling_space() { 100 } else { 500 };
         if down & 1 != 0
             || self.pressed
@@ -1228,20 +1346,21 @@ impl Manager {
             });
         }
         let down = place_windows && down & 1 != 0;
-        let Some(p) = pointer() else {
+        let Some(p) = input.map(|(_, p)| p).or_else(pointer) else {
             self.cancel_drag();
             return;
         };
         // Display hit-testing matters only while capturing/releasing a gesture.
-        let pointer_workspace = (down || self.drag.is_some())
-            .then(pointer_display)
-            .flatten()
-            .and_then(|display| {
-                active
-                    .iter()
-                    .find(|(key, _)| key.0 == display)
-                    .map(|(key, _)| *key)
-            });
+        let pointer_workspace =
+            (down || self.drag.is_some() || !self.gesture_candidates.is_empty())
+                .then(|| point_display(p))
+                .flatten()
+                .and_then(|display| {
+                    active
+                        .iter()
+                        .find(|(key, _)| key.0 == display)
+                        .map(|(key, _)| *key)
+                });
         self.handoffs.retain(|_, handoff| {
             handoff.expires > Instant::now()
                 && active.iter().any(|(key, _)| *key == handoff.destination)
@@ -1270,8 +1389,8 @@ impl Manager {
                     (contains(outer, p) && !contains(inner, p)).then_some((pid, id))
                 })
             };
-            self.drag = handle
-                .or_else(|| ws::window_at(p))
+            self.drag = ws::window_at(p)
+                .or(handle)
                 .or_else(|| {
                     // Native resize handles extend a few points outside AX bounds.
                     self.windows
@@ -1313,12 +1432,58 @@ impl Manager {
                             candidate_since: Instant::now(),
                             moved: false,
                             resized: false,
-                            resize_gesture: edge <= 8.,
+                            resize_gesture: edge <= 12.,
                             baseline: self.desktops.get(&w.space)?.clone(),
                             area: active.iter().find(|(s, _)| *s == w.space)?.1,
                         })
                     })
                 });
+            // Focus can still name the previous window at mouse-down, and
+            // resize handles extend into the gap between neighboring tiles.
+            // Keep nearby candidates until native geometry identifies the owner.
+            self.gesture_candidates = self
+                .windows
+                .iter()
+                .filter_map(|(id, w)| {
+                    if self.drag.as_ref().is_some_and(|drag| drag.id == *id)
+                        || !self.can_tile_drag(*id, w.space)
+                    {
+                        return None;
+                    }
+                    let frame = ws::bounds(*id)?;
+                    if !contains(
+                        rect(
+                            frame.origin.x - 12.,
+                            frame.origin.y - 12.,
+                            frame.size.width + 24.,
+                            frame.size.height + 24.,
+                        ),
+                        p,
+                    ) {
+                        return None;
+                    }
+                    let area = active.iter().find(|(key, _)| *key == w.space)?.1;
+                    let edge = (p.x - frame.origin.x)
+                        .abs()
+                        .min((p.x - frame.origin.x - frame.size.width).abs())
+                        .min((p.y - frame.origin.y).abs())
+                        .min((p.y - frame.origin.y - frame.size.height).abs());
+                    Some(Drag {
+                        id: *id,
+                        space: w.space,
+                        start: frame,
+                        point: p,
+                        drop: None,
+                        candidate: None,
+                        candidate_since: Instant::now(),
+                        moved: false,
+                        resized: false,
+                        resize_gesture: edge <= 12.,
+                        baseline: self.desktops.get(&w.space)?.clone(),
+                        area,
+                    })
+                })
+                .collect();
         }
         if down && !self.pressed {
             if let Some(drag) = &self.drag {
@@ -1334,7 +1499,15 @@ impl Manager {
             );
         }
         self.pressed = down;
-        if down {
+        // Resolve on release too: a short gesture may have no held sample.
+        resolve_gesture(
+            &mut self.drag,
+            &mut self.gesture_candidates,
+            p,
+            pointer_workspace,
+            ws::bounds,
+        );
+        if down || self.drag.is_some() {
             let mut preview = None;
             if let Some(drag) = &mut self.drag {
                 if !active
@@ -1374,23 +1547,27 @@ impl Manager {
                                 (frames.is_empty() && contains(*area, p))
                                     .then_some(DropIntent::Screen(Zone::Left))
                             })?;
-                            destination.proposed_drop(drag.id, intent, *area, 10.)?;
+                            arrival_proposal(
+                                &destination,
+                                drag.id,
+                                Some(intent),
+                                *area,
+                                Some(&self.minimum_sizes),
+                            )?;
                             Some((*key, intent))
                         });
-                    if candidate != drag.candidate {
-                        drag.candidate = candidate;
-                        drag.candidate_since = Instant::now();
-                    }
-                    if candidate.is_none()
-                        || drag.drop.is_none()
-                        || drag.candidate_since.elapsed() >= Duration::from_millis(70)
-                    {
-                        drag.drop = candidate;
-                    }
+                    drag.update_drop(candidate, Instant::now(), !down);
                     if let Some((key, intent)) = drag.drop {
                         if let Some((_, area)) = active.iter().find(|(k, _)| *k == key) {
                             let d = self.desktops.get(&key).cloned().unwrap_or_default();
-                            preview = d.proposed_drop(drag.id, intent, *area, 10.).and_then(|d| {
+                            preview = arrival_proposal(
+                                &d,
+                                drag.id,
+                                Some(intent),
+                                *area,
+                                Some(&self.minimum_sizes),
+                            )
+                            .and_then(|d| {
                                 d.frames(*area, 10.)
                                     .into_iter()
                                     .find(|(id, _)| *id == drag.id)
@@ -1404,13 +1581,16 @@ impl Manager {
             }
             if let Some(r) = preview {
                 self.show_preview(r)
-            } else {
+            } else if !self.drag.as_ref().is_some_and(|drag| drag.resized) {
                 self.hide_preview()
             }
-            self.resize_drag(false);
-            return; // The source stays under native mouse control; neighbors follow its shared edges.
+            if down {
+                self.resize_drag(false, p, pointer_workspace);
+                return; // Only previews change while macOS owns the native gesture.
+            }
         }
-        self.resize_drag(true);
+        self.resize_drag(true, p, pointer_workspace);
+        self.gesture_candidates.clear();
         if let Some(drag) = self.drag.take() {
             if trace_tiling() {
                 eprintln!(
@@ -1454,7 +1634,13 @@ impl Manager {
                             .get(&drop.destination)
                             .cloned()
                             .unwrap_or_default();
-                        if let Some(proposed) = arrival_proposal(&d, drop.id, drop.intent, *area) {
+                        if let Some(proposed) = arrival_proposal(
+                            &d,
+                            drop.id,
+                            drop.intent,
+                            *area,
+                            Some(&self.minimum_sizes),
+                        ) {
                             if drop.source != drop.destination {
                                 if let Some(source) = self.desktops.get_mut(&drop.source) {
                                     source.remove(drop.id);
@@ -2993,6 +3179,202 @@ mod tests {
         }
     }
     #[test]
+    fn native_geometry_resolves_neighbor_handle_and_latches_actual_owner() {
+        let mut previous_focus = test_drag();
+        previous_focus.start = rect(0., 30., 790., 900.);
+        previous_focus.point = NSPoint::new(795., 400.);
+        let mut actual = previous_focus.clone();
+        actual.id = 2;
+        actual.start = rect(800., 30., 800., 900.);
+        let mut selected = Some(previous_focus.clone());
+        let mut candidates = vec![actual.clone()];
+        let point = NSPoint::new(840., 400.);
+        resolve_gesture(
+            &mut selected,
+            &mut candidates,
+            point,
+            Some(actual.space),
+            |id| {
+                Some(if id == 1 {
+                    previous_focus.start
+                } else {
+                    rect(845., 30., 755., 900.)
+                })
+            },
+        );
+        assert_eq!(selected.as_ref().unwrap().id, 2);
+        assert!(selected.as_ref().unwrap().resized);
+        resolve_gesture(
+            &mut selected,
+            &mut candidates,
+            point,
+            Some(actual.space),
+            |_| None,
+        );
+        assert_eq!(selected.unwrap().id, 2);
+        // The same resolution works when mouse-up is the first geometry sample.
+        let mut selected = None;
+        resolve_gesture(
+            &mut selected,
+            &mut [actual.clone()],
+            point,
+            Some(actual.space),
+            |_| Some(rect(845., 30., 755., 900.)),
+        );
+        assert_eq!(selected.unwrap().id, 2);
+    }
+    #[test]
+    fn release_uses_current_slot_even_before_preview_hysteresis_expires() {
+        let mut drag = test_drag();
+        let now = Instant::now();
+        let first = Some((drag.space, DropIntent::Window(2, Zone::Center)));
+        let last = Some((drag.space, DropIntent::Window(3, Zone::Center)));
+        drag.update_drop(first, now, false);
+        drag.update_drop(last, now + Duration::from_millis(10), false);
+        assert_eq!(drag.drop, first);
+        drag.update_drop(last, now + Duration::from_millis(11), true);
+        assert_eq!(drag.drop, last);
+        drag.update_drop(None, now + Duration::from_millis(12), true);
+        assert_eq!(drag.drop, None);
+    }
+    #[test]
+    fn arrival_checks_incoming_minimum_before_committing_a_monitor_handoff() {
+        let area = rect(-1080., -500., 1080., 1920.);
+        let mut destination = Desktop::configured(Layout::VerticalMaster, None);
+        destination.reconcile(&[1, 2, 3, 4], area, 10.);
+        let before = destination.frames(area, 10.);
+        let minimums = [(99, objc2_foundation::NSSize::new(1200., 200.))]
+            .into_iter()
+            .collect();
+        assert!(
+            arrival_proposal(
+                &destination,
+                99,
+                Some(DropIntent::Window(2, Zone::Center)),
+                area,
+                Some(&minimums)
+            )
+            .is_none()
+        );
+        assert_eq!(destination.frames(area, 10.), before);
+        let minimums = [(99, objc2_foundation::NSSize::new(500., 200.))]
+            .into_iter()
+            .collect();
+        let proposed = arrival_proposal(
+            &destination,
+            99,
+            Some(DropIntent::Window(2, Zone::Center)),
+            area,
+            Some(&minimums),
+        )
+        .unwrap();
+        assert_eq!(proposed.frames(area, 10.).len(), 5);
+        assert_eq!(destination.frames(area, 10.), before);
+    }
+    #[test]
+    fn native_resize_samples_are_transactional_and_do_not_accumulate_feedback() {
+        for layout in Layout::ALL {
+            for grid in [None, Some((17, 9))] {
+                for area in [
+                    rect(10., 41., 2560., 1440.),
+                    rect(-1440., -600., 1440., 2560.),
+                ] {
+                    let mut baseline = Desktop::configured(layout, grid);
+                    baseline.reconcile(&[1, 2, 3, 4, 5], area, 10.);
+                    let original = baseline.frames(area, 10.);
+                    for (id, from) in &original {
+                        for edge in [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom] {
+                            let mut drag = test_drag();
+                            drag.id = *id;
+                            drag.baseline = baseline.clone();
+                            drag.area = area;
+                            drag.start = *from;
+                            drag.point = match edge {
+                                Zone::Left => NSPoint::new(
+                                    from.origin.x,
+                                    from.origin.y + from.size.height / 2.,
+                                ),
+                                Zone::Right => NSPoint::new(
+                                    from.origin.x + from.size.width,
+                                    from.origin.y + from.size.height / 2.,
+                                ),
+                                Zone::Top => NSPoint::new(
+                                    from.origin.x + from.size.width / 2.,
+                                    from.origin.y,
+                                ),
+                                _ => NSPoint::new(
+                                    from.origin.x + from.size.width / 2.,
+                                    from.origin.y + from.size.height,
+                                ),
+                            };
+                            let mut fresh = drag.clone();
+                            for delta in [8., 20., 45., 20., 45.] {
+                                let mut frame = *from;
+                                let mut point = drag.point;
+                                match edge {
+                                    Zone::Left => {
+                                        frame.origin.x += delta;
+                                        frame.size.width -= delta;
+                                        point.x += delta;
+                                    }
+                                    Zone::Right => {
+                                        frame.size.width += delta;
+                                        point.x += delta;
+                                    }
+                                    Zone::Top => {
+                                        frame.origin.y += delta;
+                                        frame.size.height -= delta;
+                                        point.y += delta;
+                                    }
+                                    _ => {
+                                        frame.size.height += delta;
+                                        point.y += delta;
+                                    }
+                                }
+                                let proposed = drag
+                                    .resize_proposal(frame, point, Some(drag.space))
+                                    .unwrap();
+                                let direct = fresh
+                                    .resize_proposal(frame, point, Some(fresh.space))
+                                    .unwrap();
+                                let frames = proposed.frames(area, 10.);
+                                assert_eq!(
+                                    frames,
+                                    direct.frames(area, 10.),
+                                    "{layout:?}, {edge:?}"
+                                );
+                                assert_eq!(drag.baseline.frames(area, 10.), original);
+                                let mut committed = proposed.clone();
+                                committed.reconcile(&[5, 4, 3, 2, 1], area, 10.);
+                                assert_eq!(committed.frames(area, 10.), frames);
+                                let swapped = committed
+                                    .proposed_drop(
+                                        1,
+                                        DropIntent::Window(2, Zone::Center),
+                                        area,
+                                        10.,
+                                    )
+                                    .unwrap();
+                                assert_eq!(
+                                    frames.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+                                    swapped
+                                        .frames(area, 10.)
+                                        .iter()
+                                        .map(|(_, r)| *r)
+                                        .collect::<Vec<_>>()
+                                );
+                            }
+                            assert!(
+                                drag.resize_proposal(*from, drag.point, Some((99, 99)))
+                                    .is_none()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn crossing_to_portrait_does_not_resize_the_source_tree() {
         let mut drag = test_drag();
         let original = drag.baseline.frames(drag.area, 10.);
@@ -3067,7 +3449,7 @@ mod tests {
         let area = rect(-900., -400., 900., 1600.);
         let mut dest = Desktop::configured(Layout::ThreeBands, None);
         dest.reconcile(&[2, 3], area, 10.);
-        let proposed = arrival_proposal(&dest, 1, None, area).unwrap();
+        let proposed = arrival_proposal(&dest, 1, None, area, None).unwrap();
         assert_eq!(proposed.layout, Layout::ThreeBands);
         assert_eq!(proposed.order, vec![2, 3, 1]);
         for (_, r) in proposed.frames(area, 10.) {
@@ -3158,7 +3540,8 @@ mod tests {
                                 "{layout:?}: drag must use the target slot"
                             );
                             let mut released =
-                                arrival_proposal(&committed, source, Some(intent), area).unwrap();
+                                arrival_proposal(&committed, source, Some(intent), area, None)
+                                    .unwrap();
                             released.reconcile(&[5, 4, 3, 2, 1], area, 10.);
                             released.fit(area, 10.);
                             assert_eq!(released.frames(area, 10.), after);
@@ -3211,7 +3594,8 @@ mod tests {
                 let (target, slot) = frames.last().copied().unwrap();
                 let point = NSPoint::new(slot.origin.x + 2., slot.origin.y + 2.);
                 let intent = drop_intent(area, &frames, source, point, true).unwrap();
-                let proposed = arrival_proposal(&committed, source, Some(intent), area).unwrap();
+                let proposed =
+                    arrival_proposal(&committed, source, Some(intent), area, None).unwrap();
                 assert_eq!(
                     proposed
                         .frames(area, 10.)

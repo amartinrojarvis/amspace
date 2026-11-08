@@ -84,6 +84,7 @@ struct PendingFocus {
 struct App {
     tile_manager: crate::tile_manager::Manager,
     tile_timer: Option<Retained<AnyObject>>,
+    tile_mouse: Option<crate::tile_mouse::Monitor>,
     tile_interval: f64,
     tile_hotkey: Option<crate::tile_hotkey::HotKey>,
     picker_hotkey: Option<crate::tile_hotkey::HotKey>,
@@ -343,6 +344,7 @@ impl App {
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
                 tile_manager: Default::default(),
                 tile_timer: None,
+                tile_mouse: None,
                 tile_interval: 0.,
                 tile_hotkey: None,
                 picker_hotkey: None,
@@ -1339,6 +1341,7 @@ impl App {
             }
             self.tile_hotkey = None;
             self.picker_hotkey = None;
+            self.tile_mouse = None;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             if crate::tile_manager::pref(defaults, "tile.enabled") == 0
                 || self.sleeping
@@ -1349,6 +1352,21 @@ impl App {
                 self.tile_manager.cancel_drag();
                 return;
             }
+            self.tile_mouse = crate::tile_mouse::Monitor::new(|down, point| {
+                autoreleasepool(|_| {
+                    with_app(|a| {
+                        if a.layout_picker.is_some() || a.switching.is_some() || a.sleeping {
+                            return;
+                        }
+                        a.tile_manager.mouse_event(
+                            Retained::as_ptr(&a.defaults) as Obj,
+                            down,
+                            point,
+                        );
+                        a.update_tile_timer();
+                    })
+                });
+            });
             self.tile_hotkey = crate::tile_hotkey::HotKey::new(
                 crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults, "tile.key")),
                 crate::tile_hotkey::modifier_index(crate::tile_manager::pref(
@@ -2935,6 +2953,7 @@ pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
         a.tile_manager.set_presentation(mode);
         a.update_presentation_timer();
         if mode != crate::desktop_mode::Mode::Normal {
+            a.tile_mouse = None;
             unsafe {
                 if let Some(timer) = a.tile_timer.take() {
                     let _: () = msg_send![&timer, invalidate];
