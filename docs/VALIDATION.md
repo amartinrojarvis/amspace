@@ -1,5 +1,7 @@
 ## Preparación de publicación 0.6.11, build 27
 
+- CI inicial supera formato, Clippy y pruebas, pero dos intentos fallan al descargar Sparkle por HTTP 504. Se añade una ruta alternativa por la API oficial al mismo asset, con reintentos acotados y el mismo SHA-256 fijado. Prueba desde caché vacía: se reproduce el 504, la alternativa descarga el archivo correcto y se verifica antes de moverlo a caché y extraerlo. No cambia el ejecutable preparado ni las firmas del paquete de publicación.
+
 - Comprobaciones finales: 120 pruebas correctas, tres diagnósticos/microbenchmark ignorados, formato, Clippy y plist correctos. Paquete universal recompilado para arm64 y x86_64; firma estricta del bundle correcta. ZIP y catálogo Sparkle firmados con la clave existente del Llavero y ambas firmas verificadas. Las limitaciones de validación de uso real permanecen detalladas en las secciones siguientes.
 
 ## Redimensionado y tamaños por posición (build 27)
