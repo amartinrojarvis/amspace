@@ -1,16 +1,25 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.9</title><pubDate>Sat, 07 Nov 2026 16:29:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.9 — estabilidad al usar pestañas nativas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.6.11</title><pubDate>Sun, 08 Nov 2026 09:45:07 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.6.11 — escritorio libre, mosaicos estables y ventanas auxiliares.
 
-- Reconoce el grupo nativo de pestañas para conservar un único hueco del mosaico al crear o seleccionar pestañas en Finder, Ghostty y otras apps que publican ese grupo.
-- Sustituye el ID de la pestaña seleccionada conservando la posición en la distribución, sus proporciones, tamaños mínimos y estado flotante.
-- Evita que las pestañas inactivas se reincorporen como ventanas adicionales durante la reconciliación.
-- Incluye las correcciones multipantalla de 0.6.8.
+- Ajustes reorganizados con navegación lateral, miniaturas seleccionables de las ocho plantillas y menos texto de relleno. Fondo opcional del widget con la paleta suave de Kairos Monitor.
+- Espiral pasa a ser la plantilla predeterminada. Se retira Dwindle y se añade Principal centrada: principal de dos tercios del ancho con ventanas secundarias a ambos lados. Se añaden Centrada XL (tres por lado) y Principal vertical (dos arriba y dos abajo).
+- Recolocar ventanas dentro del escritorio mantiene la rejilla y las proporciones de la plantilla, también después de seleccionarla con el atajo. Se rechazan intercambios incompatibles con los mínimos de las apps.
+- Al abrir o cerrar ventanas en las plantillas centradas se equilibran ambos laterales y se conserva el espacio de la principal, incluso después de recolocar ventanas.
+- Redimensionado de divisiones compartidas en las ocho plantillas. Las centradas ajustan ambos lados de la principal simétricamente; los tamaños pertenecen a los huecos y se conservan al intercambiar ventanas.
+- Más separación entre tarjetas y controles; ajustes adaptados al tamaño de la pantalla.
+- Suspende tiling, foco bajo el cursor y borde durante Mostrar escritorio, también mediante esquina activa. Detecta la presentación de WindowManager además de las señales tradicionales de Dock.
+- Conserva los árboles y proporciones por pantalla y escritorio mientras las ventanas están apartadas. Al salir, espera a la restauración nativa y recupera la distribución anterior; las ventanas abiertas en ese modo permanecen flotantes con su geometría.
+- Excluye permanentemente del mosaico los modales, Obtener información/Inspector de Finder y las ventanas de la Utilidad de Compresión.
+- Respeta el seguimiento de teclado de los menús contextuales y otros menús desplegados, incluso cuando el cursor sale de ellos.
+- Espiral adapta sus divisiones a los mínimos de las aplicaciones sin convertirse en columnas. Las plantillas que no caben se indican como no disponibles.
+- Usa AX también para asignar cada ventana a su monitor, evitando redistribuciones por coordenadas transitorias del compositor durante un cambio de Space.
+- Incluye las mejoras de consumo, tamaño y protección del foco de la 0.6.10.
 
-Validación: 95 pruebas automáticas correctas, con alternancia entre pestañas en todas las plantillas y ambas orientaciones. Se ha comprobado en Finder que el ID de ventana cambia y la identidad AX del grupo permanece estable; pendiente de validación de uso de la corrección por el usuario.
+Validación automatizada de geometría y árboles con varios escritorios, pantallas horizontal y vertical, todas las plantillas y rejilla activada/desactivada. Captura local de la señal de WindowManager de la esquina activa. Los resultados de uso y el alcance de la validación se detallan en docs/VALIDATION.md.
 Requiere macOS 13 o posterior. Paquete universal para Apple Silicon e Intel.
 La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.9/AMSpace-universal.zip" length="2740225" type="application/octet-stream" sparkle:version="18" sparkle:shortVersionString="0.6.9" sparkle:edSignature="RQytiyuRdGNCTqLMQpLwDQ6ma68wREA0AWOSIWBaS8Yf63MIoMx3rdyD9GW/2EwPtF5WOjKkboax2zoRfC2zDA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 7gGpFdlR62pumy0lZBBii6qgPuTqzyQLx7aBpqesaHmDujGvGOsOgUCGOr1SsNnshKFYb2m8/D/+5iJzSQ/xAQ==
-length: 2026
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/amartinrojarvis/amspace/releases/download/v0.6.11/AMSpace-universal.zip" length="2402699" type="application/octet-stream" sparkle:version="27" sparkle:shortVersionString="0.6.11" sparkle:edSignature="G8vqHRjJFc3H0fGNGN5a9jccEknER0QEz9BCGBBs2djDoOX53puybLA3ERKb+yJMP7BfrUNzM8XxHR+PMfqkDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: jWW6SHXH495/lqHa0Y2S7q6c3Ztaxe+YFUhyS7akz70hL8j2Zt/R28lk05CAV09CM/qbpMKf0ermY6nQ8gMwAw==
+length: 3851
 -->

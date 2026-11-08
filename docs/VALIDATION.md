@@ -1,3 +1,9 @@
+## Publicación 0.6.11, build 27
+
+- Release: https://github.com/amartinrojarvis/amspace/releases/tag/v0.6.11 sobre `ee13b0dcc5c5d650a059bbbc3851b719361acc5a`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42468912904.
+- ZIP, catálogo firmado y SHA256SUMS publicados. El ZIP público se descarga sin autenticación mediante la API oficial y es idéntico byte a byte al ZIP firmado local. SHA-256: `92cd8a00c50a6ef6b86c06f3dfdedc62e4fb83afb542df28786fddf035e2343e`. La ruta de descarga directa devuelve 504 desde este entorno; queda registrada esa limitación de red, sin atribuirle una validación de instalación completa mediante Sparkle.
+- El ejecutable instalado localmente es idéntico al publicado. Las comprobaciones físicas pendientes de redimensionado e intercambio de la build 27 permanecen detalladas debajo. Se revisará aparte el nuevo informe de Espiral no redimensionable, recibido durante la publicación.
+
 ## Preparación de publicación 0.6.11, build 27
 
 - CI inicial supera formato, Clippy y pruebas, pero dos intentos fallan al descargar Sparkle por HTTP 504. Se añade una ruta alternativa por la API oficial al mismo asset, con reintentos acotados y el mismo SHA-256 fijado. Prueba desde caché vacía: se reproduce el 504, la alternativa descarga el archivo correcto y se verifica antes de moverlo a caché y extraerlo. No cambia el ejecutable preparado ni las firmas del paquete de publicación.
