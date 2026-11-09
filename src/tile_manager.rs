@@ -1497,7 +1497,17 @@ impl Manager {
             .transitions
             .get(&id)
             .map(|t| t.to)
-            .or_else(|| self.verifications.get(&id).map(|v| v.target));
+            .or_else(|| self.verifications.get(&id).map(|v| v.target))
+            // While a Space is still publishing its windows, the committed
+            // destination is the pending one too: the compositor can report the
+            // pre-slide frame twice, and re-writing an identical rect only adds
+            // a second visible step. The bounded settle window keeps the repair
+            // for real drift on the first scan after it expires.
+            .or_else(|| {
+                self.settling_space()
+                    .then(|| self.applied.get(&id).copied())
+                    .flatten()
+            });
         // A focus/application notification requests a scan, not a new placement.
         // Limits expire when the target or observed geometry changes, never just
         // because `dirty` was set by a workspace callback.
@@ -5849,5 +5859,58 @@ mod tests {
             retain_settled_ids(&mut ids, &other.order, true);
             assert_eq!(ids, vec![10, 99]);
         }
+    }
+    #[test]
+    fn a_committed_destination_is_not_rewritten_while_the_space_settles() {
+        let area = rect(10., 41., 1660., 947.);
+        let key: Workspace = (1, 4);
+        let mut desktop = Desktop::configured(Layout::Grid, None);
+        desktop.reconcile(&[7], area, 10.);
+        let target = desktop.frames(area, 10.)[0].1;
+        // The app's own frame, as the compositor reports it right after the slide.
+        let native = rect(200., 120., 900., 600.);
+        let mut manager = Manager {
+            active_areas: vec![(key, area)],
+            ..Default::default()
+        };
+        manager.desktops.insert(key, desktop.clone());
+        manager.windows.insert(
+            7,
+            Managed {
+                pid: 3,
+                space: key,
+                original: native,
+                original_area: area,
+                element: ax::application(std::process::id() as i32).unwrap(),
+            },
+        );
+        let base = Instant::now();
+        manager.space_changed_with_visible_at(base, &[key]);
+        manager.applied.insert(7, target);
+        assert!(
+            !manager.needs_placement(7, target, Some(native)),
+            "the committed destination is still pending during the settle window"
+        );
+        let other = rect(10., 41., 800., 947.);
+        assert!(
+            manager.needs_placement(7, other, Some(native)),
+            "a genuinely different template must still be written"
+        );
+        let sample = ReentrySample {
+            areas: vec![(key, area)],
+            windows: vec![(3, 7, key.1, target, Some(target))],
+            absent: vec![],
+        };
+        assert!(!manager.observe_reentry(Some(sample.clone()), base + Duration::from_millis(200)));
+        assert!(manager.observe_reentry(Some(sample), base + Duration::from_millis(400)));
+        assert!(
+            !manager.needs_placement(7, target, Some(native)),
+            "the bounded window keeps the single committed write"
+        );
+        std::thread::sleep(Duration::from_millis(1300));
+        assert!(
+            manager.needs_placement(7, target, Some(native)),
+            "after the settle window, real drift is repaired again"
+        );
     }
 }
