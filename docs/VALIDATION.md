@@ -1,3 +1,7 @@
+## Investigación pendiente: traslado en otro equipo
+
+Tras publicar 0.7.0 se recibió un informe de que el envío entre escritorios no funciona en otro Apple Silicon (M1 Max), con la misma versión de AMSpace y, según el usuario, la misma de macOS que el equipo de desarrollo. El usuario confirma que cambiar de escritorio y mover ventanas entre pantallas sí funcionan. La causa todavía no está identificada: se han solicitado el estado/footer de Atajos y las primeras líneas de `--diagnose` para distinguir disponibilidad del puente, registro de combinaciones y rechazo de una operación. No considerar este caso resuelto por las pruebas locales ni atribuirlo automáticamente a permisos o arquitectura.
+
 ## Publicación 0.7.0, build 43
 
 - Publicada en https://github.com/amartinrojarvis/amspace/releases/tag/v0.7.0 sobre `c2a6a0bca7beda63ad901a659832b9495412e2bf`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42567773148.

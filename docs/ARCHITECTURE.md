@@ -1,5 +1,7 @@
 # Arquitectura
 
+Para comenzar a contribuir: [guía de agentes](../AGENTS.md), [desarrollo y diagnóstico](DEVELOPMENT.md) y [contratos nativos y regresiones](NATIVE_INVARIANTS.md).
+
 ```text
 NSStatusItem ─── clic izquierdo ─── cambio de escritorio
              └─ clic derecho ───── NSPanel de ajustes
@@ -27,10 +29,16 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `native.rs` | Puente AppKit pequeño: vistas, texto y colores |
 | `updater.rs` | Puente Rust a Sparkle, ciclo de actualización y búsqueda opcional |
 | `ui.rs` | Ciclo de vida, ajustes, panel de borde, temporizador e ítems de inicio |
+| `tiling.rs`, `tile_manager.rs` | Modelo de ocho plantillas y coordinación por pantalla/Space, gestos, mínimos, animación y restauración |
+| `tile_mouse.rs`, `tile_picker.rs`, `layout_thumbnail.rs`, `tile_rules.rs` | Intención de arrastre, selector, miniaturas y reglas de flotantes |
+| `shortcuts.rs`, `tile_hotkey.rs` | Configuración transaccional, Carbon y tap prioritario |
+| `window_move.rs`, `sky_bridge.rs` | Preparación, envío y confirmación de traslados nativos opcionales |
+| `desktop_preview.rs`, `desktop_mode.rs` | Preview de geometría real y pausas por presentación del escritorio |
+| `border.rs`, `bar_background.rs`, `instance.rs` | Dibujo del panel/fondo y exclusión de instancias |
 
 ## Seguridad de memoria y ciclo de vida
 
-Todos los objetos de AppKit y las referencias AX se usan en el hilo principal. Los objetos Objective-C propietarios usan `Retained`; AppKit retiene sus subvistas. Los punteros no propietarios a controles solo se usan mientras existe su ventana. Los resultados `Create` y `Copy` de CoreFoundation usan `Owned` y liberan su referencia en `Drop`.
+Todos los objetos de AppKit y las referencias AX se usan en el hilo principal. El tap de atajos utiliza un hilo propio únicamente para eventos y su run loop CF; encola las acciones de ventanas al hilo principal. Los objetos Objective-C propietarios usan `Retained`; AppKit retiene sus subvistas. Los punteros no propietarios a controles solo se usan mientras existe su ventana. Los resultados `Create` y `Copy` de CoreFoundation usan `Owned` y liberan su referencia en `Drop`.
 
 El observador AX se elimina del run loop antes de liberarse o cambiar de ventana. Los temporizadores se invalidan al desactivar el foco o suspender la sesión. Los callbacks AX agrupan notificaciones en el siguiente turno del run loop, sin temporizador de 16 ms, para no modificar el observador mientras se ejecuta su callback. Los callbacks del compositor usan un ID atómico para mover el panel sin pasar por AppKit; los cambios de tamaño y foco se entregan al hilo principal mediante dispatch. La suscripción incluye todas las ventanas visibles de la app activa y eventos globales de creación/cierre, incluso cuando todavía no existe una ventana seleccionada. `try_borrow_mut` evita reentrancia de la UI durante llamadas a AppKit.
 
@@ -157,7 +165,7 @@ El gesto distingue el redimensionado iniciado en un borde del cambio de tamaño 
 
 ### Selector de plantillas y estabilidad al cruzar monitores
 
-`tile_picker.rs` presenta un NSPanel no activante con seis botones accesibles, miniaturas de orientación real y un único contenedor de previsualización. NSTrackingArea actualiza el hover por eventos, sin sondeo adicional. Teclado: números, flechas, Tab, Intro y Escape. El gestor de foco y la distribución quedan suspendidos mientras el selector está abierto. Cambiar de Space, desconectar/rotar pantalla, perder foco o suspender cancela. Solo confirmar modifica el modelo y valida de nuevo monitor, Space, área y conjunto de ventanas.
+`tile_picker.rs` presenta un NSPanel no activante con ocho botones accesibles, miniaturas de orientación real y un único contenedor de previsualización. NSTrackingArea actualiza el hover por eventos, sin sondeo adicional. Teclado: números, flechas, Tab, Intro y Escape. El gestor de foco y la distribución quedan suspendidos mientras el selector está abierto. Cambiar de Space, desconectar/rotar pantalla, perder foco o suspender cancela. Solo confirmar modifica el modelo y valida de nuevo monitor, Space, área y conjunto de ventanas.
 
 Los índices históricos 0–3 de Layout se conservan. Los índices 4 y 5 añaden tres/cuatro divisiones principales: columnas en horizontal, filas en vertical. Los excedentes se distribuyen en el eje secundario y las ventanas insuficientes llenan toda el área. `tile.layout.<SpaceID>.<DisplayID>` tiene prioridad sobre la preferencia histórica por Space. Carbon distingue ambos atajos por EventHotKeyID; un manejador devuelve eventNotHandled si el evento corresponde al otro.
 
@@ -192,7 +200,7 @@ El borde compara su geometría con WindowServer y conserva el último estilo pin
 
 ### Sugerencias de atajos
 
-Se conservan los cuatro índices originales de teclas/modificadores para mantener preferencias. El catálogo crece a 54 teclas y 11 modificadores, con límites derivados de la longitud de cada catálogo. `CopySymbolicHotKeys` excluye combinaciones habilitadas del sistema; después se prueba `RegisterEventHotKey` con `kEventHotKeyExclusive`, liberando cada candidato inmediatamente. Los registros definitivos también son exclusivos. Antes se usaba opción cero, que admite compartir una combinación entre procesos y no prueba disponibilidad global.
+Se conservan los cuatro índices originales de teclas/modificadores para mantener preferencias. El catálogo actual se define en `KEYS` y `MODIFIERS` de `tile_hotkey.rs`, con límites derivados de la longitud de cada catálogo. `CopySymbolicHotKeys` excluye combinaciones habilitadas del sistema; después se prueba `RegisterEventHotKey` con `kEventHotKeyExclusive`, liberando cada candidato inmediatamente. Los registros definitivos también son exclusivos. Antes se usaba opción cero, que admite compartir una combinación entre procesos y no prueba disponibilidad global.
 
 Buscar devuelve hasta seis candidatos y excluye el atajo flotante. Usar registra de nuevo para detectar carreras con otras apps. No se desregistran los atajos actuales durante la búsqueda ni se cambian preferencias hasta que el usuario aplica una sugerencia. Los menús internos de aplicaciones no son enumerables por esta API; esa limitación se comunica en ajustes. Fuente de constantes y contrato: CarbonEvents.h del SDK de macOS instalado.
 

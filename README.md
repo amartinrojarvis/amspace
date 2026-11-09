@@ -61,7 +61,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ./scripts/bundle.sh --universal
 ```
 
-La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` es únicamente una herramienta de desarrollo para rasterizar el icono vectorial; no forma parte del ejecutable. El empaquetado descarga Sparkle 2.10.1 desde su repositorio oficial y verifica un SHA-256 fijado antes de integrarlo. Solo hay tres dependencias directas de Rust: `objc2`, `objc2-foundation` y `libc`.
+La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` es únicamente una herramienta de desarrollo para rasterizar el icono vectorial; no forma parte del ejecutable. El empaquetado descarga Sparkle 2.10.1 desde su repositorio oficial y verifica un SHA-256 fijado antes de integrarlo. Las dependencias directas de Rust son `objc2`, `objc2-foundation`, `block2` y `libc`; las versiones están fijadas en Cargo.lock.
 
 Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certificado, define `SIGNING_IDENTITY` al ejecutar el empaquetador. La distribución notarizada requiere además configurar hardened runtime, firmar con Developer ID y enviar el paquete al servicio de notarización; este script no realiza esos pasos.
 
@@ -104,7 +104,7 @@ Consulta [VALIDATION.md](docs/VALIDATION.md) para las mediciones locales y el al
 
 ## Limitaciones conocidas
 
-macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spaces.rs` consulta metadatos mediante funciones privadas de SkyLight resueltas en ejecución. El envío de ventanas a otro escritorio usa, cuando está disponible, el puente de WindowManager; su entrada se localiza por el nombre exacto en la tabla Mach-O de la imagen cargada, sin escanear instrucciones ni modificar memoria. No inyecta código, no modifica Dock y no requiere desactivar SIP. Si Apple cambia esas funciones o sus datos, el indicador presenta `—` y el resto de ajustes continúa disponible. El borde también utiliza funciones privadas para recibir eventos de ventana, consultar radios y mover únicamente su propio panel. No modifica la geometría de las ventanas de otras apps. Por esas dependencias, esta versión está pensada para distribución directa, no para la Mac App Store.
+macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spaces.rs` consulta metadatos mediante funciones privadas de SkyLight resueltas en ejecución. El envío de ventanas a otro escritorio usa, cuando está disponible, el puente de WindowManager; su entrada se localiza por el nombre exacto en la tabla Mach-O de la imagen cargada, sin escanear instrucciones ni modificar memoria. No inyecta código, no modifica Dock y no requiere desactivar SIP. Si Apple cambia esas funciones o sus datos, el indicador presenta `—` y el resto de ajustes continúa disponible. El borde también utiliza funciones privadas para recibir eventos de ventana, consultar radios y mover únicamente su propio panel. El borde no modifica la geometría de las ventanas de otras apps; el mosaico y los traslados sí la ajustan mediante Accesibilidad. Por esas dependencias, esta versión está pensada para distribución directa, no para la Mac App Store.
 
 - Al añadir, eliminar o reordenar escritorios sin cambiar de Space, el indicador puede actualizarse en el siguiente cambio de aplicación/escritorio o al abrir sus ajustes.
 - La geometría y el orden del borde se leen de WindowServer, con notificaciones AX como respaldo si la API privada no está disponible. Algunas apps y versiones de macOS pueden exponer metadatos o notificaciones incompletos. El código limita los tiempos de espera AX.
@@ -124,7 +124,7 @@ swift scripts/benchmark-status.swift --baseline # reproducción aislada, siete s
 swift scripts/benchmark-status.swift            # dibujo optimizado, siete segundos
 ```
 
-[Arquitectura](docs/ARCHITECTURE.md) · [Validación y pruebas manuales](docs/VALIDATION.md) · [Licencia MIT](LICENSE)
+[Guía para agentes](AGENTS.md) · [Desarrollo y diagnóstico](docs/DEVELOPMENT.md) · [Contratos nativos y regresiones](docs/NATIVE_INVARIANTS.md) · [Arquitectura](docs/ARCHITECTURE.md) · [Validación y pruebas manuales](docs/VALIDATION.md) · [Licencia MIT](LICENSE)
 
 Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSUserDefaults`. Para desinstalar: desactiva inicio de sesión, sal de la app, elimina AMSpace de Aplicaciones y retira su permiso de Accesibilidad si lo deseas.
 
