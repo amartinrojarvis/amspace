@@ -1,3 +1,10 @@
+## Publicación 0.7.0, build 43
+
+- Publicada en https://github.com/amartinrojarvis/amspace/releases/tag/v0.7.0 sobre `c2a6a0bca7beda63ad901a659832b9495412e2bf`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42567773148.
+- ZIP universal, catálogo Ed25519 y SHA256SUMS publicados y firmas verificadas. Copia inmutable en `updates/0.7.0/AMSpace-universal.zip`. Descarga HTTPS sin autenticación desde la URL usada por Sparkle comparada byte a byte con el ZIP firmado. GitHub Releases informa el mismo SHA-256; la descarga directa del adjunto respondió temporalmente 504. SHA-256: `25d182cf0bc0b29681d14b6f4b5a65fd78bed0ba593a9ea3691e1fa445b21dee`; tamaño: 2603348 bytes.
+- Instalación de Aplicaciones actualizada, firma estricta verificada y ejecutable idéntico al paquete final. La app instalada está abierta y el diagnóstico confirma 0.7.0, Accesibilidad vigente y tres escritorios reales. Copia anterior en `.cache/AMSpace-before-0.7.0.zip`; preferencias conservadas.
+- Catálogo estable actualizado después de verificar la descarga pública. No se atribuye a esta publicación una instalación física mediante Sparkle desde 0.6.18; la sustitución local se verificó directamente. Permanecen los límites de validación física de varias pantallas e Intel descritos en la revisión.
+
 ## Revisión de escenarios 0.7.0, build 43
 
 Fecha: 2026-11-09. Revisión sobre la candidata local; sin publicación del catálogo.
