@@ -572,12 +572,21 @@ struct MembershipGrace {
     since: HashMap<u32, Instant>,
 }
 impl MembershipGrace {
-    fn retained(&mut self, uncertain: &HashSet<u32>, now: Instant) -> HashSet<u32> {
-        self.since.retain(|id, _| uncertain.contains(id));
+    fn retained(
+        &mut self,
+        uncertain: &HashSet<u32>,
+        native_confirmed: &HashSet<u32>,
+        now: Instant,
+    ) -> HashSet<u32> {
+        self.since
+            .retain(|id, _| uncertain.contains(id) && !native_confirmed.contains(id));
         uncertain
             .iter()
             .copied()
             .filter(|id| {
+                if native_confirmed.contains(id) {
+                    return true;
+                }
                 let since = self.since.entry(*id).or_insert(now);
                 now.duration_since(*since) < Duration::from_millis(650)
             })
@@ -616,6 +625,7 @@ pub struct Manager {
     space_settle: Option<Instant>,
     space_quiet_until: Option<Instant>,
     space_reentry: Option<SpaceReentry>,
+    reentry_preserved: Vec<(Workspace, NSRect)>,
     pub last_error: Option<String>,
 }
 pub struct KeyboardTransfer {
@@ -644,6 +654,38 @@ impl KeyboardTransfer {
     }
 }
 impl Manager {
+    pub fn diagnostic_report(&self) -> String {
+        let mut report = format!(
+            "\nMosaic paused={:?} reentry={} quiet={}\n",
+            self.presentation,
+            self.space_reentry.is_some(),
+            self.space_quiet_until.is_some()
+        );
+        let mut keys: Vec<_> = self.desktops.keys().copied().collect();
+        keys.sort_unstable();
+        for key in keys {
+            if !self.active_areas.iter().any(|(active, _)| *active == key) {
+                continue;
+            }
+            let desktop = &self.desktops[&key];
+            report.push_str(&format!(
+                "Workspace {key:?} layout={:?} grid={:?} order={:?}\n",
+                desktop.layout, desktop.grid, desktop.order
+            ));
+            if let Some((_, area)) = self.active_areas.iter().find(|(active, _)| *active == key) {
+                report.push_str(&format!(
+                    "Area {area:?} tree={:?}\n",
+                    desktop.save_distribution(*area)
+                ));
+            }
+            for id in &desktop.order {
+                if let Some(window) = self.windows.get(id) {
+                    report.push_str(&format!("Window {id} pid={} native={:?} AX={:?} applied={:?} constrained={:?} minimum={:?} transition={} verification={}\n",window.pid,spaces::window_space(*id),ax::geometry(window.element.0),self.applied.get(id),self.constrained.get(id),self.minimum_sizes.get(id),self.transitions.contains_key(id),self.verifications.contains_key(id)));
+                }
+            }
+        }
+        report
+    }
     pub fn keyboard_transfer_windows(&self, plan: &KeyboardTransfer) -> Vec<KeyboardPlacement> {
         let Some(identities) = ws::all_window_ids() else {
             return Vec::new();
@@ -776,6 +818,7 @@ impl Manager {
         let pressed = self.pressed;
         self.cancel_drag();
         self.space_reentry = Some(SpaceReentry::default());
+        self.reentry_preserved.clear();
         self.pressed = pressed; // Never recapture a gesture already in progress.
         self.handoffs.clear();
         self.applied.clear();
@@ -791,11 +834,19 @@ impl Manager {
         self.space_changed_with_visible_at(now, &[]);
     }
     fn space_changed_with_visible_at(&mut self, now: Instant, visible: &[Workspace]) {
+        self.reentry_preserved = self
+            .active_areas
+            .iter()
+            .copied()
+            .filter(|(key, _)| visible.contains(key))
+            .collect();
         self.space_reentry = Some(SpaceReentry::default());
         self.cancel_inactive_placements(visible);
-        if !self.pressed && self.pending_drop.is_none() {
-            self.drag = None;
-        }
+        // A gesture baseline predates the presentation change, even when it
+        // belongs to another monitor. Never finalize it from sliding bounds or
+        // a delayed mouse-up. Keep pressed latched until the physical release.
+        self.drag = None;
+        self.gesture_candidates.clear();
         self.hide_preview();
         self.invalidate();
         // During the native slide both visibility and global bounds are transient.
@@ -1003,6 +1054,16 @@ impl Manager {
         })
     }
     fn observe_reentry(&mut self, sample: Option<ReentrySample>, now: Instant) -> bool {
+        let preserved: Vec<_> = self
+            .reentry_preserved
+            .iter()
+            .filter(|area| {
+                sample
+                    .as_ref()
+                    .is_some_and(|sample| sample.areas.contains(area))
+            })
+            .map(|(key, _)| *key)
+            .collect();
         let Some(reentry) = self.space_reentry.as_mut() else {
             return true;
         };
@@ -1010,9 +1071,10 @@ impl Manager {
             return false;
         }
         self.space_reentry = None;
-        // Old animation origins/retry deadlines predate the native transition.
-        // Rebuild any needed placements from the now-stable AX observation.
-        self.cancel_placements();
+        // Rebuild writes for contexts that changed. An independent monitor
+        // retains valid targets and must finish (not restart) its bounded retry.
+        self.cancel_inactive_placements(&preserved);
+        self.reentry_preserved.clear();
         self.space_settle = Some(now + Duration::from_millis(600));
         self.invalidate();
         true
@@ -1727,6 +1789,75 @@ impl Manager {
         }
         true
     }
+    pub fn custom_context(
+        &mut self,
+        defaults: Obj,
+        display: Option<u32>,
+    ) -> Result<PickerContext, &'static str> {
+        if !ax::trusted() || pref(defaults, "tile.enabled") == 0 {
+            return Err("Activa Mosaico y Accesibilidad para guardar o aplicar plantillas.");
+        }
+        if self.presentation_blocks_input()
+            || self.waiting_for_space(Instant::now())
+            || self.space_reentry.is_some()
+        {
+            return Err("Espera a que termine el cambio de escritorio.");
+        }
+        self.refresh_for_picker(defaults);
+        if self.space_reentry.is_some() || self.waiting_for_space(Instant::now()) {
+            return Err("Espera a que termine el cambio de escritorio.");
+        }
+        let workspace = match display {
+            Some(display) => spaces::visible_desktops()
+                .into_iter()
+                .find(|(id, _)| *id == display),
+            None => self.current_workspace(),
+        }
+        .ok_or("La pantalla no está disponible.")?;
+        if pref(defaults, &format!("tile.off.{}", workspace.1)) != 0 {
+            return Err("Activa el mosaico en el escritorio de esta pantalla.");
+        }
+        let area = area(workspace.0).ok_or("La pantalla no está disponible.")?;
+        let desktop = self
+            .desktops
+            .get(&workspace)
+            .filter(|d| !d.order.is_empty())
+            .cloned()
+            .ok_or("Abre ventanas en mosaico en esta pantalla primero.")?;
+        Ok(PickerContext {
+            workspace,
+            area,
+            desktop,
+        })
+    }
+    pub fn apply_custom_distribution(
+        &mut self,
+        defaults: Obj,
+        context: &PickerContext,
+        distribution: &str,
+    ) -> bool {
+        if self.presentation_blocks_input()
+            || self.space_reentry.is_some()
+            || self.waiting_for_space(Instant::now())
+            || !spaces::visible_desktops().contains(&context.workspace)
+            || area(context.workspace.0) != Some(context.area)
+            || pref(defaults, "tile.enabled") == 0
+            || pref(defaults, &format!("tile.off.{}", context.workspace.1)) != 0
+            || !self
+                .desktops
+                .get(&context.workspace)
+                .is_some_and(|d| d.order == context.desktop.order)
+        {
+            return false;
+        }
+        self.restore_distribution_with_grid(
+            defaults,
+            context.workspace,
+            distribution,
+            context.area,
+            true,
+        )
+    }
     pub fn restore_distribution(&mut self, defaults: Obj) -> bool {
         let Some(space) = self.current_workspace() else {
             return false;
@@ -1754,6 +1885,16 @@ impl Manager {
         text: &str,
         area: NSRect,
     ) -> bool {
+        self.restore_distribution_with_grid(defaults, space, text, area, false)
+    }
+    fn restore_distribution_with_grid(
+        &mut self,
+        defaults: Obj,
+        space: Workspace,
+        text: &str,
+        area: NSRect,
+        preserve_grid: bool,
+    ) -> bool {
         if ![
             area.origin.x,
             area.origin.y,
@@ -1774,6 +1915,11 @@ impl Manager {
         if !desktop.restore_distribution(text) {
             return false;
         }
+        // Named templates describe divisions, not a change to the global grid
+        // setting used by other screens. The legacy quick copy keeps its grid.
+        if preserve_grid {
+            desktop.grid = current.grid;
+        }
         let frames = desktop.frames(area, 10.);
         if frames.is_empty()
             || frames.len() != desktop.order.len()
@@ -1792,14 +1938,16 @@ impl Manager {
             return false;
         }
         let ids = desktop.order.clone();
-        save(
-            defaults,
-            "tile.grid.enabled",
-            isize::from(desktop.grid.is_some()),
-        );
-        if let Some((columns, rows)) = desktop.grid {
-            save(defaults, "tile.grid.columns", columns as isize);
-            save(defaults, "tile.grid.rows", rows as isize);
+        if !preserve_grid {
+            save(
+                defaults,
+                "tile.grid.enabled",
+                isize::from(desktop.grid.is_some()),
+            );
+            if let Some((columns, rows)) = desktop.grid {
+                save(defaults, "tile.grid.columns", columns as isize);
+                save(defaults, "tile.grid.rows", rows as isize);
+            }
         }
         save(defaults, &layout_key(space), desktop.layout.index());
         self.desktops.insert(space, desktop);
@@ -1843,11 +1991,29 @@ impl Manager {
         if self.presentation_blocks_input() {
             return;
         }
-        self.cancel_drag();
+        self.prepare_read_only_refresh();
         self.invalidate();
         if ax::trusted() {
             self.tick_mode(defaults, false);
         }
+    }
+    fn prepare_read_only_refresh(&mut self) {
+        // Reading/saving a layout must not restart another monitor's pending
+        // placements. Only cancel windows participating in a pointer gesture.
+        let mut affected: Vec<_> = self
+            .drag
+            .iter()
+            .map(|d| d.id)
+            .chain(self.gesture_candidates.iter().map(|d| d.id))
+            .collect();
+        affected.extend(self.pending_drop.iter().map(|d| d.id));
+        for id in affected {
+            self.cancel_window_placement(id);
+        }
+        self.drag = None;
+        self.gesture_candidates.clear();
+        self.pending_drop = None;
+        self.hide_preview();
     }
     fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
         self.tick_mode_input(defaults, place_windows, None);
@@ -2354,7 +2520,8 @@ impl Manager {
         let mut members: HashMap<Workspace, Vec<u32>> = HashMap::new();
         let mut actual_frames = HashMap::new();
         let mut uncertain = HashSet::new();
-        for (pid, id, _compositor_frame) in candidates {
+        let mut native_confirmed = HashSet::new();
+        for (pid, id, compositor_frame) in candidates {
             if self.windows.get(&id).is_some_and(|w| w.pid != pid) {
                 self.forget_window(id);
                 transferred.remove(&id);
@@ -2375,6 +2542,21 @@ impl Manager {
             }
             if !active.iter().any(|(key, _)| key.1 == space) {
                 continue; // Never query AX for a confirmed non-visible Space.
+            }
+            if let Some(window) = self
+                .windows
+                .get(&id)
+                .filter(|w| w.pid == pid && w.space.1 == space)
+                && active.iter().any(|(key, area)| {
+                    *key == window.space
+                        && overlap(compositor_frame, *area)
+                            > compositor_frame.size.width * compositor_frame.size.height * 0.5
+                })
+            {
+                // Positive native identity, visible membership and physical
+                // ownership outlive an AX timeout in a busy app. Preserve the
+                // edited slot, but the uncertain guard still forbids writes.
+                native_confirmed.insert(id);
             }
             // The compositor can translate one window outside its display while
             // a Space slides. Read AX before deciding ownership, not after a
@@ -2586,7 +2768,10 @@ impl Manager {
         }
         // A transient AX/Space read must not remove and reinsert a visible tile
         // around the focused window. Genuine ineligibility still expires promptly.
-        for id in self.membership_grace.retained(&uncertain, Instant::now()) {
+        for id in self
+            .membership_grace
+            .retained(&uncertain, &native_confirmed, Instant::now())
+        {
             if let Some(w) = self.windows.get(&id) {
                 if !self.floating.contains(&id)
                     && !self.inactive_tabs.contains(&id)
@@ -2901,6 +3086,289 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reading_a_template_does_not_cancel_unrelated_screen_placements() {
+        let mut manager = Manager::default();
+        let drag = test_drag();
+        let affected = drag.id;
+        manager.drag = Some(drag);
+        manager.pressed = true;
+        for id in [affected, 99] {
+            let target = rect(10., 41., 1000., 900.);
+            manager.transition_from(id, rect(20., 50., 800., 600.), target);
+            manager.verifications.insert(id, Verification::new(target));
+            manager.applied.insert(id, target);
+        }
+        manager.prepare_read_only_refresh();
+        assert!(manager.drag.is_none());
+        assert!(manager.pressed);
+        assert!(!manager.transitions.contains_key(&affected));
+        assert!(!manager.verifications.contains_key(&affected));
+        assert!(manager.transitions.contains_key(&99));
+        assert!(manager.verifications.contains_key(&99));
+        assert!(manager.applied.contains_key(&99));
+    }
+    #[test]
+    fn busy_apps_cannot_lose_a_custom_master_slot_while_native_membership_is_confirmed() {
+        let area = rect(10., 41., 2540., 1327.);
+        let mut desktop = Desktop::configured(Layout::Master, None);
+        desktop.reconcile(&[1, 2], area, 10.);
+        let from = desktop.frames(area, 10.)[0].1;
+        let mut to = from;
+        to.size.width += 125.;
+        desktop.resize(1, from, to, area, 10.);
+        let saved = desktop.save_distribution(area);
+        let uncertain = HashSet::from([2]);
+        let native_confirmed = HashSet::from([2]);
+        assert!(native_confirmed.contains(&2));
+        let now = Instant::now();
+        let mut grace = MembershipGrace::default();
+        for millis in [0, 500, 1000, 2000, 5000] {
+            let kept = grace.retained(
+                &uncertain,
+                &native_confirmed,
+                now + Duration::from_millis(millis),
+            );
+            let mut members = vec![1];
+            members.extend(kept);
+            desktop.reconcile_at(&members, area, 10., Some(1));
+            assert_eq!(
+                desktop.save_distribution(area),
+                saved,
+                "A busy AX client must not be treated as a closed native window"
+            );
+        }
+    }
+    #[test]
+    fn edited_layouts_and_constraints_survive_repeated_independent_space_round_trips() {
+        let element = ax::application(std::process::id() as i32).unwrap();
+        for layout in Layout::ALL {
+            for grid in [None, Some((12, 8))] {
+                for area in [
+                    rect(2570., -187., 1060., 1870.),
+                    rect(-1420., -500., 1400., 2400.),
+                    rect(10., 41., 1660., 947.),
+                ] {
+                    for count in 2..=7 {
+                        let key = (5, 1515);
+                        let mut desktop = Desktop::configured(layout, grid);
+                        let ids: Vec<_> = (1..=count).collect();
+                        desktop.reconcile(&ids, area, 10.);
+                        let (id, from) = desktop.frames(area, 10.)[0];
+                        let mut to = from;
+                        to.size.width *= 0.9;
+                        to.size.height *= 0.92;
+                        desktop.resize(id, from, to, area, 10.);
+                        desktop.place(ids[0], ids[1], Zone::Center);
+                        let saved = desktop.save_distribution(area);
+                        let frames = desktop.frames(area, 10.);
+                        let mut manager = Manager {
+                            active_areas: vec![((2, 5), rect(10., 41., 2540., 1327.)), (key, area)],
+                            ..Default::default()
+                        };
+                        manager.desktops.insert(key, desktop);
+                        for (id, frame) in &frames {
+                            manager.windows.insert(
+                                *id,
+                                Managed {
+                                    pid: 42,
+                                    space: key,
+                                    original: *frame,
+                                    original_area: area,
+                                    element: element.clone(),
+                                },
+                            );
+                            manager.applied.insert(*id, *frame);
+                            manager.constrained.insert(*id, (*frame, *frame));
+                        }
+                        let now = Instant::now();
+                        for (index, space) in [1, 5, 6, 5, 1].into_iter().enumerate() {
+                            let start = now + Duration::from_secs(index as u64 * 2);
+                            manager.space_changed_with_visible_at(start, &[(2, space), key]);
+                            let sample = ReentrySample {
+                                areas: vec![
+                                    ((2, space), rect(10., 41., 2540., 1327.)),
+                                    (key, area),
+                                ],
+                                windows: frames
+                                    .iter()
+                                    .map(|(id, r)| (42, *id, key.1, *r, Some(*r)))
+                                    .collect(),
+                                absent: vec![],
+                            };
+                            manager.active_areas = sample.areas.clone();
+                            assert!(!manager.observe_reentry(
+                                Some(sample.clone()),
+                                start + Duration::from_millis(600)
+                            ));
+                            assert!(
+                                manager.observe_reentry(
+                                    Some(sample),
+                                    start + Duration::from_millis(800)
+                                )
+                            );
+                            assert_eq!(manager.desktops[&key].save_distribution(area), saved);
+                            assert_eq!(manager.desktops[&key].frames(area, 10.), frames);
+                            for (id, frame) in &frames {
+                                assert_eq!(manager.applied.get(id), Some(frame));
+                                assert_eq!(manager.constrained.get(id), Some(&(*frame, *frame)));
+                                assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn named_distribution_apply_is_atomic_and_cannot_change_another_screens_grid() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite =
+                NSString::from_str(&format!("amspace.named-apply-test.{}", std::process::id()));
+            let defaults: objc2::rc::Allocated<objc2::runtime::AnyObject> =
+                msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<objc2::runtime::AnyObject> =
+                msg_send![defaults,initWithSuiteName:&*suite];
+            let obj = Retained::as_ptr(&defaults) as Obj;
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+            save(obj, "tile.grid.enabled", 0);
+            save(obj, "tile.grid.columns", 19);
+            let area = rect(10., 41., 1600., 1000.);
+            let key = (1, 7);
+            let other = (2, 9);
+            for layout in Layout::ALL {
+                let mut source = Desktop::configured(layout, Some((12, 8)));
+                source.reconcile(&[1, 2, 3], area, 10.);
+                let data = source.save_distribution(area).unwrap();
+                let mut current = Desktop::configured(Layout::Grid, None);
+                current.reconcile(&[101, 102, 103], area, 10.);
+                let mut manager = Manager::default();
+                manager.desktops.insert(key, current);
+                manager.desktops.insert(other, source.clone());
+                assert!(manager.restore_distribution_with_grid(obj, key, &data, area, true));
+                assert!(manager.desktops[&key].grid.is_none());
+                assert_eq!(manager.desktops[&key].order, vec![101, 102, 103]);
+                assert!(manager.desktops[&other] == source);
+                assert_eq!(pref(obj, "tile.grid.enabled"), 0);
+                assert_eq!(pref(obj, "tile.grid.columns"), 19);
+                let before = manager.desktops[&key].clone();
+                source.reconcile(&[1, 2, 3, 4], area, 10.);
+                assert!(!manager.restore_distribution_with_grid(
+                    obj,
+                    key,
+                    &source.save_distribution(area).unwrap(),
+                    area,
+                    true
+                ));
+                assert!(manager.desktops[&key] == before);
+            }
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
+    }
+    #[test]
+    fn edited_portrait_rows_cannot_finalize_a_stale_resize_after_another_screen_switches() {
+        let key = (5, 1515);
+        let area = rect(2570., -187., 1060., 1870.);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, None);
+        desktop.reconcile(&[10, 20, 30], area, 10.);
+        let before = desktop.frames(area, 10.);
+        let mut resized = before[2].1;
+        resized.origin.y -= 65.;
+        resized.size.height += 65.;
+        desktop.resize(30, before[2].1, resized, area, 10.);
+        let expected = desktop.save_distribution(area);
+        let frame = desktop.frames(area, 10.)[2].1;
+        let drag = Drag {
+            id: 30,
+            space: key,
+            start: frame,
+            point: NSPoint::new(frame.origin.x + 50., frame.origin.y),
+            drop: None,
+            candidate: None,
+            candidate_since: Instant::now(),
+            moved: false,
+            resized: true,
+            resize_gesture: true,
+            baseline: desktop.clone(),
+            area,
+            previews: Default::default(),
+        };
+        let mut manager = Manager {
+            pressed: true,
+            drag: Some(drag.clone()),
+            gesture_candidates: vec![drag],
+            ..Default::default()
+        };
+        manager.desktops.insert(key, desktop);
+        manager.active_areas = vec![((2, 5), rect(10., 41., 2540., 1327.)), (key, area)];
+        for space in [1, 5, 6, 5, 1] {
+            manager.space_changed_with_visible_at(Instant::now(), &[(2, space), key]);
+            assert!(
+                manager.drag.is_none(),
+                "A Space transition must invalidate an old resize baseline even on the unchanged monitor"
+            );
+            assert!(manager.gesture_candidates.is_empty());
+            assert!(
+                manager.pressed,
+                "Do not recapture a held gesture until physical release"
+            );
+            assert_eq!(manager.desktops[&key].save_distribution(area), expected);
+        }
+    }
+    #[test]
+    fn space_reentry_does_not_restart_the_bottom_rows_constraint_retry_on_an_unchanged_monitor() {
+        let key = (5, 1515);
+        let area = rect(2570., -187., 1060., 1870.);
+        let primary = ((2, 5), rect(10., 41., 2540., 1327.));
+        let mut desktop = Desktop::configured(Layout::ThreeBands, None);
+        desktop.reconcile(&[10, 20, 30], area, 10.);
+        let target = desktop.frames(area, 10.)[2].1;
+        let mut resized = target;
+        resized.origin.y -= 40.;
+        resized.size.height += 40.;
+        desktop.resize(30, target, resized, area, 10.);
+        let saved = desktop.save_distribution(area);
+        let now = Instant::now();
+        let mut manager = Manager {
+            active_areas: vec![primary, (key, area)],
+            ..Default::default()
+        };
+        manager.desktops.insert(key, desktop.clone());
+        manager.windows.insert(
+            30,
+            Managed {
+                pid: 42,
+                space: key,
+                original: target,
+                original_area: area,
+                element: ax::application(std::process::id() as i32).unwrap(),
+            },
+        );
+        let mut verification = Verification::new(target);
+        verification.retried = true;
+        verification.accepted = true;
+        manager.verifications.insert(30, verification);
+        manager.applied.insert(30, target);
+        manager.space_changed_with_visible_at(now, &[(2, 6), key]);
+        let sample = ReentrySample {
+            areas: vec![((2, 6), primary.1), (key, area)],
+            windows: desktop
+                .frames(area, 10.)
+                .into_iter()
+                .map(|(id, r)| (42, id, key.1, r, Some(r)))
+                .collect(),
+            absent: vec![],
+        };
+        assert!(!manager.observe_reentry(Some(sample.clone()), now + Duration::from_millis(600)));
+        assert!(manager.observe_reentry(Some(sample), now + Duration::from_millis(800)));
+        assert!(
+            manager.verifications.contains_key(&30),
+            "An unchanged monitor must finish its bounded verification rather than restart placement on each unrelated Space switch"
+        );
+        assert!(manager.verifications[&30].retried);
+        assert_eq!(manager.applied.get(&30), Some(&target));
+        assert_eq!(manager.desktops[&key].save_distribution(area), saved);
+    }
     fn assert_keyboard_frames(desktop: &Desktop, area: NSRect) {
         let frames = desktop.frames(area, 10.);
         assert_eq!(frames.len(), desktop.order.len());
@@ -4071,7 +4539,7 @@ mod tests {
         assert!(manager.transitions.is_empty());
         assert!(manager.verifications.is_empty());
         assert!(manager.applied.is_empty());
-        assert!(manager.drag.is_some());
+        assert!(manager.drag.is_none());
         assert!(manager.pressed);
         assert_eq!(manager.tick_interval(), 0.08);
         assert!(manager.current_workspace().is_none());
@@ -4083,7 +4551,7 @@ mod tests {
         };
         assert!(!manager.apply_template(ptr::null_mut(), &context, Layout::Grid));
         assert!(manager.waiting_for_space(now + Duration::from_millis(100)));
-        assert!(manager.drag.is_some());
+        assert!(manager.drag.is_none());
         assert!(manager.pressed);
         assert_eq!(
             manager.desktops[&(1, 7)].frames(rect(0., 30., 1600., 900.), 10.),
@@ -4196,7 +4664,11 @@ mod tests {
         let before = desktop.frames(area, 10.);
         let uncertain = HashSet::from([1]);
         for millis in [0, 100, 500, 649] {
-            let retained = grace.retained(&uncertain, now + Duration::from_millis(millis));
+            let retained = grace.retained(
+                &uncertain,
+                &HashSet::new(),
+                now + Duration::from_millis(millis),
+            );
             let mut members = vec![2, 3];
             members.extend(retained);
             desktop.reconcile_at(&members, area, 10., Some(2));
@@ -4204,18 +4676,26 @@ mod tests {
         }
         assert!(
             grace
-                .retained(&uncertain, now + Duration::from_millis(650))
+                .retained(
+                    &uncertain,
+                    &HashSet::new(),
+                    now + Duration::from_millis(650)
+                )
                 .is_empty()
         );
         assert!(
             grace
-                .retained(&uncertain, now + Duration::from_secs(5))
+                .retained(&uncertain, &HashSet::new(), now + Duration::from_secs(5))
                 .is_empty()
         );
         // Recovery resets the grace period for a later, independent failure.
-        grace.retained(&HashSet::new(), now + Duration::from_secs(6));
+        grace.retained(
+            &HashSet::new(),
+            &HashSet::new(),
+            now + Duration::from_secs(6),
+        );
         assert_eq!(
-            grace.retained(&uncertain, now + Duration::from_secs(7)),
+            grace.retained(&uncertain, &HashSet::new(), now + Duration::from_secs(7)),
             uncertain
         );
     }

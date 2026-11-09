@@ -43,3 +43,33 @@ pub fn image(layout: Layout, portrait: bool) -> Retained<AnyObject> {
         image
     }
 }
+
+pub fn custom_image(desktop: &Desktop, size: NSSize) -> Retained<AnyObject> {
+    let screen = rect(0., 0., size.width, size.height);
+    let scale = (208. / size.width).min(104. / size.height);
+    let x = (220. - size.width * scale) / 2.;
+    let y = (116. - size.height * scale) / 2.;
+    unsafe {
+        let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
+        let image: Retained<AnyObject> = msg_send![image,initWithSize:NSSize::new(220.,116.)];
+        let _: () = msg_send![&image, lockFocus];
+        let blue: *mut AnyObject = msg_send![class!(NSColor), systemBlueColor];
+        for (_, frame) in desktop.frames(screen, 10.) {
+            let fill: *mut AnyObject = msg_send![blue,colorWithAlphaComponent:0.24f64];
+            let _: () = msg_send![fill, setFill];
+            let _: () = msg_send![blue, setStroke];
+            let tile = rect(
+                x + frame.origin.x * scale,
+                y + (size.height - frame.origin.y - frame.size.height) * scale,
+                frame.size.width * scale,
+                frame.size.height * scale,
+            );
+            let path: *mut AnyObject = msg_send![class!(NSBezierPath),bezierPathWithRoundedRect:tile,xRadius:3f64,yRadius:3f64];
+            let _: () = msg_send![path, fill];
+            let _: () = msg_send![path,setLineWidth:0.7f64];
+            let _: () = msg_send![path, stroke];
+        }
+        let _: () = msg_send![&image, unlockFocus];
+        image
+    }
+}

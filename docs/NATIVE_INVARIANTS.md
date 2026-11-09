@@ -67,3 +67,11 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 Las pruebas de modelo verifican plantillas, mínimos, aislamiento y transacciones. Las pruebas nativas con fixtures comprueban un contrato del sistema en ese equipo. Solo una prueba física en varias pantallas puede validar su compositor, escalas y comportamiento de apps reales. Documenta cuál de esas evidencias existe; mantén explícitos Intel real, macOS anteriores o configuraciones no disponibles.
 
 No copies una implementación de un tercero sin revisar licencia y atribución. Las licencias ya incluidas para los protocolos de foco/gesto y Sparkle están enlazadas en [README.md](../README.md) y se copian al bundle mediante `scripts/bundle.sh`.
+
+## Casos añadidos durante 0.8 (candidata)
+
+Una consulta AX temporalmente vacía durante más de 650 ms no debe eliminar una ventana que continúa confirmada por PID, Space visible y geometría física. Mantener el hueco no permite escribir sobre una ventana incierta. Los casos sin confirmación conservan su plazo acotado y los cierres/traslados nativos siguen retirándose.
+
+Cambiar el escritorio de otro monitor invalida un baseline de gesto antiguo, pero no el presupuesto de verificación de una ventana en un contexto que conservó Space y área. Reiniciar ese retry puede producir ajustes repetidos de una fila inferior con límites de tamaño. Las regresiones cubren diseños modificados y no solo la plantilla inicial. La comprobación física del caso concreto sigue siendo necesaria.
+
+Las plantillas con nombre deben ser portables a IDs de ventana nuevos y no cambiar la rejilla global de otros monitores. Su aplicación requiere el mismo número de huecos y debe ser atómica ante datos inválidos, cambio de pantalla o mínimos incompatibles.

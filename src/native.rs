@@ -91,6 +91,20 @@ pub unsafe fn text(obj: Obj, value: &str) {
         }
     }
 }
+pub unsafe fn wrapping_label(parent: Obj, frame: NSRect, text: &str, size: f64) -> Obj {
+    unsafe {
+        let field: Retained<AnyObject> =
+            msg_send![class!(NSTextField),wrappingLabelWithString:&*NSString::from_str(text)];
+        let font: Obj = msg_send![class!(NSFont),systemFontOfSize:size];
+        let color: Obj = msg_send![class!(NSColor), secondaryLabelColor];
+        let _: () = msg_send![&field,setFont:font];
+        let _: () = msg_send![&field,setTextColor:color];
+        let _: () = msg_send![&field,setFrame:frame];
+        let _: () = msg_send![&field,setSelectable:true];
+        let _: () = msg_send![parent,addSubview:&*field];
+        Retained::as_ptr(&field) as Obj
+    }
+}
 
 #[cfg(test)]
 mod tests {

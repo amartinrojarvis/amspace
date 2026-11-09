@@ -27,3 +27,13 @@ Ed25519 autentica el canal de actualización; no sustituye Developer ID ni notar
 ## Desarrollo
 
 `fetch-sparkle.sh` fija versión y SHA-256 de la distribución oficial y la guarda en .cache (ignorada por Git). `bundle.sh` integra el framework y sus auxiliares, preserva symlinks, incluye licencias y verifica la firma del bundle. CI empaqueta pero no publica ni dispone de la clave privada.
+
+## Candidatas para pruebas físicas
+
+Cuando el arreglo necesite hardware que no está disponible localmente, publicar una prerelease claramente marcada y mantener el catálogo estable intacto. La candidata 0.8.0 usa build 44 y tag `v0.8.0-rc.1`; su comprobación local no se debe presentar como validación física de varias pantallas.
+
+1. Ejecutar comprobaciones, bundle universal y CI sobre el commit exacto.
+2. `python3 scripts/prepare-release.py` verifica y firma el ZIP. Para una candidata manual, no publicar ni copiar el `dist/appcast.xml` generado: su URL apunta a la futura versión estable.
+3. Extraer la firma del ZIP de su enclosure a `AMSpace-universal.zip.sig` y generar `SHA256SUMS.txt` para los archivos que se vayan a publicar (ZIP y firma separada). La firma es pública; la clave privada permanece en el Llavero.
+4. Crear GitHub Release con `--prerelease`, sin marcarla latest. Conservar una copia idéntica e inmutable del ZIP en `updates/<versión>-rc.<n>/` y comparar su descarga HTTPS sin autenticación con el ZIP firmado.
+5. No modificar `appcast.xml` de la raíz. Después de confirmar el hardware, preparar la estable con build estrictamente mayor que la candidata, incluso si conserva `CFBundleShortVersionString` (por ejemplo, 0.8.0 build 45 o superior). Seguir entonces el procedimiento estable completo.

@@ -2,7 +2,7 @@
 
 ## Estado de referencia
 
-Referencia al crear esta guía: **0.7.0, build 43, publicada el 9 de noviembre de 2026**. Hay una investigación abierta de traslado entre escritorios en otro equipo; consulta la primera sección de [VALIDATION.md](VALIDATION.md) antes de asumir que está resuelta. La revisión local aprobó 168 pruebas, con ocho diagnósticos/benchmarks excluidos, y una matriz de 512 idas y vueltas del modelo. Los números describen esa revisión; no son un requisito fijo para versiones futuras. El registro de publicación y los límites físicos están en [VALIDATION.md](VALIDATION.md).
+Referencia al crear esta guía: **0.7.0, build 43, publicada el 9 de noviembre de 2026**. El informe de traslado del otro equipo se aclaró como grupo de atajos desactivado. La candidata 0.8.0 añade plantillas con nombre y protecciones para distribuciones editadas; la verificación física en varias pantallas sigue pendiente en [VALIDATION.md](VALIDATION.md). La revisión local aprobó 168 pruebas, con ocho diagnósticos/benchmarks excluidos, y una matriz de 512 idas y vueltas del modelo. Los números describen esa revisión; no son un requisito fijo para versiones futuras. El registro de publicación y los límites físicos están en [VALIDATION.md](VALIDATION.md).
 
 La aplicación pasó de indicador de Spaces, borde y foco a un gestor opcional de mosaicos con arrastre, proporciones personalizadas, rejilla virtual, flotantes y selector de ocho plantillas. Posteriormente se simplificaron ajustes y previews; 0.7.0 añadió la sección Atajos, prioridad opcional y traslados verificados con colocación del destino en segundo plano. [ARCHITECTURE.md](ARCHITECTURE.md) detalla los mecanismos y [NATIVE_INVARIANTS.md](NATIVE_INVARIANTS.md) explica las decisiones que evitaron regresiones.
 
@@ -41,6 +41,7 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | `src/tiling.rs` | Modelo de árboles y plantillas, mínimos, proporciones y serialización |
 | `src/tile_manager.rs` | `Workspace`, ventanas gestionadas, reconciliación, animaciones, restauración y traslados |
 | `src/tile_mouse.rs`, `src/tile_picker.rs`, `src/layout_thumbnail.rs` | Intención del gesto, selector y simulación de plantillas |
+| `src/custom_templates.rs` | Biblioteca validada de plantillas con nombre, sin IDs de ventanas ni cambios de pantalla |
 | `src/tile_rules.rs` | Exclusiones por aplicación para mantener ventanas flotantes |
 | `src/desktop_mode.rs` | Pausa por Mostrar escritorio/Mission Control y recuperación |
 | `src/desktop_preview.rs` | Preview de geometría real con iconos, sin imágenes del contenido |
@@ -58,6 +59,7 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | PID + ID de ventana | Identidad de proceso/ventana; no es portable entre sesiones |
 | Número de escritorio mostrado | Posición de los escritorios normales en Mission Control; puede cambiar |
 | `tile.layout.<SpaceID>.<DisplayID>` | Plantilla por contexto; tiene prioridad sobre la clave histórica `tile.layout.<SpaceID>` |
+| `tile.templates.v1` | Diccionario UUID → nombre/distribución con huecos ordinales; biblioteca global, aplicación a una pantalla |
 | `tile.off.<SpaceID>` | Exclusión de mosaico por Space |
 | `tile.grid.*` | Activación y dimensiones de la rejilla virtual |
 | `tile.mods`, `tile.key`, `tile.picker.*` | Atajos históricos: conservar índices y compatibilidad |
@@ -133,3 +135,11 @@ Para documentación: comprobar enlaces/rutas, revisar el diff, hacer commit y pu
 Para una app nueva: [UPDATES.md](UPDATES.md) es el procedimiento de referencia. El artefacto de CI no sustituye al ZIP firmado con la clave del Llavero. Mantén alineados código, plist, notas y paquete; publica el ZIP inmutable y verifica su descarga antes de anunciar el feed. Registra el commit de código, CI, checksum, instalación comprobada y límites de validación. No conviertas datos locales ignorados en requisitos de publicación.
 
 `AXIsProcessTrusted` consulta el proceso actual, según la [documentación de Apple](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted). Los atajos de captura del sistema se describen en la [guía de Apple](https://support.apple.com/en-euro/guide/mac-help/mh26782/mac); un resultado diferente entre el diagnóstico y la app gráfica requiere contrastar sus estados, no asumir una causa de TCC sin comprobarla.
+
+## Cambios de estabilidad en la candidata 0.8
+
+La pausa por Space cancela baselines de gesto para que un mouse-up retrasado no confirme geometría anterior. La reentrada conserva las verificaciones de los contextos que realmente mantuvieron Space y área: su retry no debe empezar de nuevo tras cada cambio de otro monitor. `MembershipGrace` distingue una lectura incierta de una ventana positivamente confirmada en la instantánea nativa; esta última conserva su hueco aunque AX tarde más de 650 ms, sin recibir escrituras mientras sea incierta.
+
+Las plantillas con nombre reutilizan la serialización ordinal de `Desktop`, validan el mismo número de huecos y se aplican mediante una propuesta antes de confirmar. No cambiar las preferencias globales de rejilla al aplicar un diseño en una sola pantalla. El guardado rápido histórico conserva su contrato anterior.
+
+Para soporte de la instancia que está fallando, **General → Copiar diagnóstico** evita confundir su permiso con el de un proceso lanzado desde Terminal. Incluye un historial acotado de acciones resueltas, sin registrar teclas arbitrarias. El aviso genérico de tamaño no constituye un resultado de traslado.

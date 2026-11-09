@@ -6,8 +6,8 @@
 <key>CFBundleIdentifier</key><string>io.github.amartinrojarvis.amspace</string>
 <key>CFBundleExecutable</key><string>amspace</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.7.0</string>
-<key>CFBundleVersion</key><string>43</string>
+<key>CFBundleShortVersionString</key><string>0.8.0</string>
+<key>CFBundleVersion</key><string>44</string>
 <key>CFBundleDevelopmentRegion</key><string>es</string>
 <key>CFBundleLocalizations</key><array><string>es</string></array>
 <key>CFBundleAllowMixedLocalizations</key><true/>

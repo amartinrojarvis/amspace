@@ -30,6 +30,7 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `updater.rs` | Puente Rust a Sparkle, ciclo de actualización y búsqueda opcional |
 | `ui.rs` | Ciclo de vida, ajustes, panel de borde, temporizador e ítems de inicio |
 | `tiling.rs`, `tile_manager.rs` | Modelo de ocho plantillas y coordinación por pantalla/Space, gestos, mínimos, animación y restauración |
+| `custom_templates.rs` | Biblioteca de plantillas con nombre, validación y persistencia por UUID |
 | `tile_mouse.rs`, `tile_picker.rs`, `layout_thumbnail.rs`, `tile_rules.rs` | Intención de arrastre, selector, miniaturas y reglas de flotantes |
 | `shortcuts.rs`, `tile_hotkey.rs` | Configuración transaccional, Carbon y tap prioritario |
 | `window_move.rs`, `sky_bridge.rs` | Preparación, envío y confirmación de traslados nativos opcionales |
@@ -180,7 +181,7 @@ Iniciar una transición elimina la verificación del destino anterior. Cada veri
 
 Las notificaciones de activación invalidan el sondeo, sin descartar restricciones estables: solo un destino o una geometría observada diferentes, o la selección explícita de plantilla, permiten volver a intentarlo. La detección de gesto exige también movimiento del cursor superior a 3 pt, evitando interpretar ajustes de geometría durante un clic inmóvil como cambios de proporciones.
 
-`MembershipGrace` conserva durante 650 ms la hoja de una ventana gestionada con lecturas AX/Space inciertas o visibilidad transitoria, sin escribir su geometría mientras sea incierta. Recuperarse reinicia el plazo; un cierre o traslado nativo confirmados no se retienen en el origen. Una consulta fallida a WindowServer no se interpreta como escritorio vacío. Antes de animar o verificar se comprueban PID e ID visibles, y al reutilizarse un ID por otro proceso se elimina su estado anterior completo.
+`MembershipGrace` conserva durante 650 ms la hoja de una ventana gestionada sin confirmación nativa suficiente. Una ventana visible con PID, Space y solapamiento físico confirmados conserva su hoja durante un fallo AX más largo, sin escribir su geometría mientras sea incierta. Recuperarse reinicia el plazo; un cierre o traslado nativo confirmados no se retienen en el origen. Una consulta fallida a WindowServer no se interpreta como escritorio vacío. Antes de animar o verificar se comprueban PID e ID visibles, y al reutilizarse un ID por otro proceso se elimina su estado anterior completo.
 
 
 ### Escrituras AX durante las animaciones
@@ -219,3 +220,9 @@ Mientras se espera, se pausa el trabajo de tiling y foco del cursor. Se confirma
 Tras confirmar la llegada nativa se colocan las ventanas de la propuesta en el escritorio oculto mediante AX, sin activación ni animación. Se conservan referencias antes del traslado (AXWindows puede omitir ventanas ocultas) y se revalidan propietario, ID, Space, flags y capacidad de redimensionado antes de cada escritura. La colocación tiene dos intentos, separados al menos 180 ms, con límite de 600 ms; si el destino se hace visible, se detiene y lo reconcilia la ruta habitual. Las apps que rechacen la colocación oculta conservan la barrera de reentrada como alternativa. Con el ajuste de permanecer en origen desactivado, el cambio al destino se solicita después de confirmar el traslado. La ruta de selección de escritorio por gesto permanece intacta: la alternativa que solo cambiaba el Space reportado se descartó tras la comprobación física.
 
 El traslado conserva las geometrías de origen/destino del plan y una instantánea de las pantallas participantes. Antes de escribir o confirmar compara ID, frame, área útil y escala con la configuración real: una rotación, reordenación física, cambio de escala o desconexión cancela coordenadas antiguas. La comparación no depende del orden de NSScreen ni de cambios en un monitor ajeno.
+
+## Plantillas personales y reentrada (0.8, candidata)
+
+`custom_templates` guarda nombre y distribución serializada por índices ordinales de hueco, sin IDs nativos. La biblioteca se valida al leer, no reemplaza nombres duplicados y permite borrar una entrada sin cambiar el mosaico. `custom_context` refresca el modelo sin colocar ventanas y fija la pantalla de la ventana de gestión; el Space actual se resuelve antes de cada acción. Aplicar valida pertenencia, área, número de ventanas y mínimos, conserva la rejilla actual y confirma solo el contexto elegido.
+
+Al cambiar de Space se descartan el gesto y sus candidatos, sin desbloquear un botón físico todavía pulsado ni perder un handoff ya preparado. `reentry_preserved` identifica los contextos que conservaron Space y área; sus animaciones/verificaciones siguen con su presupuesto original en lugar de reiniciarse. La entrega de atajos con estado prestado se difiere 5 ms con límite de 350 ms y generación vigente. El diagnóstico de General lee la instancia real y separa el historial de traslados de los errores genéricos de tiling.

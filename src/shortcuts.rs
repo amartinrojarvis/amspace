@@ -55,7 +55,7 @@ fn configured(defaults: Obj, tiling: bool, navigation: bool) -> Vec<Binding> {
     if navigation {
         for (prefix, send, fallback) in [
             ("shortcuts.desktop", false, 11),
-            ("shortcuts.send", true, 3),
+            ("shortcuts.send", true, 4),
         ] {
             let mods = crate::tile_hotkey::modifier_index(pref_or(
                 defaults,
@@ -487,7 +487,7 @@ mod tests {
             assert_eq!(crate::tile_manager::pref_or(obj, "shortcuts.stay", 1), 1);
             assert!(!edit(
                 obj,
-                &[("shortcuts.desktop.mods", 3), ("shortcuts.right.key", 0)]
+                &[("shortcuts.desktop.mods", 4), ("shortcuts.right.key", 0)]
             ));
             let absent: Obj =
                 msg_send![&defaults,objectForKey:&*NSString::from_str("shortcuts.desktop.mods")];

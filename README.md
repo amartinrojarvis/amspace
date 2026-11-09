@@ -212,3 +212,9 @@ Las pantallas izquierda/derecha se eligen por su posición física, sin volver a
 El origen libera el hueco tras confirmar la llegada. El destino conserva su plantilla, rejilla, proporciones y ventanas existentes; se valida una copia antes de pedir el traslado. Si el destino está oculto, se coloca su mosaico en segundo plano antes de completar el traslado, sin activarlo. Las aplicaciones que rechacen esa colocación se reconcilian al entrar. Las flotantes siguen siendo flotantes. La función depende de que macOS acepte el puente nativo; si no está disponible, se indica en Atajos. No necesita desactivar SIP ni inyectar código.
 
 El cambio de escritorio conserva el mecanismo nativo por saltos, también para los atajos. Saltar de 1 a 3 puede recorrer el 2; no se utiliza una selección que solo cambie el número reportado sin cambiar la presentación real.
+
+## Candidata 0.8.0: plantillas personalizadas
+
+La versión estable enlazada arriba continúa en 0.7.0. El código de la candidata añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
+
+La candidata también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).

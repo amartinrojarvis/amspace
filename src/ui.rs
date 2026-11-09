@@ -13,6 +13,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use std::{
     cell::RefCell,
     ptr,
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 #[link(name = "AppKit", kind = "framework")]
@@ -22,6 +23,41 @@ unsafe extern "C" {}
 #[link(name = "ServiceManagement", kind = "framework")]
 unsafe extern "C" {}
 thread_local! { static APP: RefCell<Option<App>> = const { RefCell::new(None) }; }
+static SEND_QUEUED: AtomicU64 = AtomicU64::new(0);
+static SEND_DELIVERED: AtomicU64 = AtomicU64::new(0);
+static SEND_EXPIRED: AtomicU64 = AtomicU64::new(0);
+static SEND_RETRIED: AtomicU64 = AtomicU64::new(0);
+#[derive(Debug, PartialEq)]
+enum ShortcutDelivery {
+    Done,
+    Busy,
+    Expired,
+    Changed,
+    Inactive,
+}
+fn deliver_shortcut<T>(
+    state: &RefCell<Option<T>>,
+    queued: Instant,
+    generation: u64,
+    current: u64,
+    action: crate::tile_hotkey::Action,
+    run: impl FnOnce(&mut T, crate::tile_hotkey::Action),
+) -> ShortcutDelivery {
+    if generation != current {
+        return ShortcutDelivery::Changed;
+    }
+    if queued.elapsed() > Duration::from_millis(350) {
+        return ShortcutDelivery::Expired;
+    }
+    let Ok(mut state) = state.try_borrow_mut() else {
+        return ShortcutDelivery::Busy;
+    };
+    let Some(app) = state.as_mut() else {
+        return ShortcutDelivery::Inactive;
+    };
+    run(app, action);
+    ShortcutDelivery::Done
+}
 // NSWindowCollectionBehavior: transient panels are hidden by Mission Control.
 // Stationary panels remain visible like the desktop and must not be used here.
 const BORDER_COLLECTION_BEHAVIOR: usize = (1 << 0) | (1 << 3) | (1 << 6) | (1 << 8);
@@ -91,6 +127,9 @@ struct App {
     shortcut_status: Obj,
     shortcut_fields: Vec<(Obj, String, bool, isize)>,
     transfer: Option<crate::window_move::Pending>,
+    transfer_history: std::collections::VecDeque<String>,
+    transfer_feedback_at: Option<Instant>,
+    last_tiling_feedback: String,
     layout_picker: Option<crate::tile_picker::Picker>,
     picker_settings: Option<Retained<AnyObject>>,
     picker_hint: Obj,
@@ -107,6 +146,14 @@ struct App {
     tile_grid_fields: Vec<Obj>,
     tile_grid_status: Obj,
     tile_grid_toggle: Obj,
+    custom_name: Obj,
+    custom_menu: Obj,
+    custom_preview: Obj,
+    custom_info: Obj,
+    custom_apply: Obj,
+    custom_delete: Obj,
+    custom_display: Option<u32>,
+    custom_templates: Vec<crate::custom_templates::Template>,
     tile_rules_window: Option<Retained<AnyObject>>,
     tile_rules_scroll: Obj,
     tile_rule_ids: Vec<String>,
@@ -463,6 +510,9 @@ impl App {
                 shortcut_status: ptr::null_mut(),
                 shortcut_fields: vec![],
                 transfer: None,
+                transfer_history: Default::default(),
+                transfer_feedback_at: None,
+                last_tiling_feedback: String::new(),
                 layout_picker: None,
                 picker_settings: None,
                 picker_hint: ptr::null_mut(),
@@ -479,6 +529,14 @@ impl App {
                 tile_grid_fields: vec![],
                 tile_grid_status: ptr::null_mut(),
                 tile_grid_toggle: ptr::null_mut(),
+                custom_name: ptr::null_mut(),
+                custom_menu: ptr::null_mut(),
+                custom_preview: ptr::null_mut(),
+                custom_info: ptr::null_mut(),
+                custom_apply: ptr::null_mut(),
+                custom_delete: ptr::null_mut(),
+                custom_display: None,
+                custom_templates: vec![],
                 tile_rules_window: None,
                 tile_rules_scroll: ptr::null_mut(),
                 tile_rule_ids: vec![],
@@ -1386,6 +1444,7 @@ impl App {
                 true,
             );
             let _: () = msg_send![self.feedback, setMaximumNumberOfLines:2isize];
+            let _: () = msg_send![self.feedback,setSelectable:true];
             self.settings = Some(w);
         }
     }
@@ -1505,6 +1564,12 @@ impl App {
     }
     fn shortcut_action(&mut self, action: crate::tile_hotkey::Action) {
         use crate::tile_hotkey::Action;
+        if matches!(
+            action,
+            Action::SendSpace(_) | Action::MonitorLeft | Action::MonitorRight
+        ) {
+            self.record_transfer(&format!("Atajo {action:?}; disponible={} pausa={} traslado={} entrada_segura={} presentación={}",self.shortcuts.available(action),self.sleeping,self.transfer.is_some(),focus::secure_input(),crate::desktop_mode::active()),false);
+        }
         if !self.shortcuts.available(action)
             || self.sleeping
             || self.transfer.is_some()
@@ -1544,21 +1609,27 @@ impl App {
     }
     fn start_transfer(&mut self, destination: crate::window_move::Destination) {
         if self.switching.is_some() || self.layout_picker.is_some() || self.transfer.is_some() {
+            self.record_transfer(
+                "Espera a que termine el cambio de escritorio o el traslado anterior.",
+                true,
+            );
             return;
         }
+        self.record_transfer("Preparando traslado de ventana…", true);
         match crate::window_move::Pending::start(
             &mut self.tile_manager,
             Retained::as_ptr(&self.defaults) as Obj,
             destination,
         ) {
             Ok(pending) => {
+                self.record_transfer(&format!("Solicitud nativa: pid={} ventana={} origen={:?} destino={:?} objetivo={:?}",pending.pid,pending.id,pending.plan.source,pending.plan.destination,pending.plan.target),false);
                 self.pending_focus = None;
                 self.focus_target = None;
                 self.hide_border();
                 self.transfer = Some(pending);
                 self.schedule_transfer_tick();
             }
-            Err(message) => self.feedback(message),
+            Err(message) => self.record_transfer(message, true),
         }
     }
     fn schedule_transfer_tick(&self) {
@@ -1585,6 +1656,7 @@ impl App {
                     matches!(result, crate::window_move::Progress::Arrived) && pending.arrived();
                 let follow = pending.follow && arrived;
                 let destination = pending.plan.destination.1;
+                self.record_transfer(&format!("Confirmación {result:?}; llegada={arrived}; ventana={} native={:?} AX={:?}",pending.id,spaces::window_space(pending.id),ax::geometry(pending.element.0)),false);
                 if arrived {
                     self.tile_manager.commit_keyboard_transfer(
                         pending.plan,
@@ -1600,7 +1672,14 @@ impl App {
                 self.update_tile_timer();
                 self.update_window();
                 if let crate::window_move::Progress::Failed(message) = result {
-                    self.feedback(message);
+                    self.record_transfer(message, true);
+                } else if arrived {
+                    self.record_transfer("Ventana enviada al destino.", true);
+                } else {
+                    self.record_transfer(
+                        "La ventana cambió de ubicación antes de confirmar el traslado.",
+                        true,
+                    );
                 }
                 if follow {
                     self.select_desktop(destination);
@@ -1762,7 +1841,7 @@ impl App {
                 .collect();
             for (row, (title, prefix, mods_fallback, key_fallback)) in [
                 ("Cambiar a escritorio", "shortcuts.desktop", 11, None),
-                ("Enviar ventana a escritorio", "shortcuts.send", 3, None),
+                ("Enviar ventana a escritorio", "shortcuts.send", 4, None),
                 ("Enviar a pantalla izquierda", "shortcuts.left", 9, Some(50)),
                 ("Enviar a pantalla derecha", "shortcuts.right", 9, Some(51)),
                 ("Ventana flotante / mosaico", "tile", 0, Some(0)),
@@ -2054,7 +2133,7 @@ impl App {
             button(
                 root,
                 rect(15., 110., (width - 36.) / 2., 28.),
-                "Rejilla y distribución…",
+                "Rejilla y plantillas…",
                 target,
                 49,
             );
@@ -2279,26 +2358,39 @@ Otras apps pueden tener atajos propios no detectables.",
         self.refresh_tile_controls();
     }
     fn show_tile_grid(&mut self) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        self.custom_display = self
+            .tile_manager
+            .custom_context(defaults, None)
+            .ok()
+            .map(|c| c.workspace.0);
         unsafe {
             if self.tile_grid_window.is_none() {
-                let w = window(rect(0., 0., 480., 350.), 1 | 2 | 4);
-                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Rejilla y distribución")];
+                let w = window(rect(0., 0., 520., 620.), 1 | 2 | 4);
+                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Rejilla y plantillas")];
                 let _: () = msg_send![&w, center];
                 let root: Obj = msg_send![&w, contentView];
                 let target = Retained::as_ptr(&self.target) as Obj;
-                let defaults = Retained::as_ptr(&self.defaults) as Obj;
                 label(
                     root,
-                    rect(22., 302., 370., 24.),
-                    "Ajustar tamaños a una rejilla virtual",
-                    16.,
+                    rect(22., 574., 476., 26.),
+                    "Rejilla y plantillas",
+                    18.,
                     0.3,
+                    false,
+                );
+                label(
+                    root,
+                    rect(22., 533., 400., 22.),
+                    "Ajustar tamaños a una rejilla virtual",
+                    14.,
+                    0.,
                     false,
                 );
                 self.tile_grid_toggle = toggle(
                     root,
-                    419.,
-                    302.,
+                    455.,
+                    533.,
                     "Activar rejilla virtual",
                     target,
                     50,
@@ -2306,8 +2398,8 @@ Otras apps pueden tener atajos propios no detectables.",
                 );
                 label(
                     root,
-                    rect(22., 270., 435., 20.),
-                    "Las divisiones se alinean sin dejar huecos entre tiles.",
+                    rect(22., 504., 476., 20.),
+                    "Las divisiones se alinean sin dejar huecos entre ventanas.",
                     12.,
                     0.,
                     true,
@@ -2319,9 +2411,9 @@ Otras apps pueden tener atajos propios no detectables.",
                 .iter()
                 .enumerate()
                 {
-                    let x = 22. + i as f64 * 220.;
-                    label(root, rect(x, 231., 210., 20.), name, 12., 0., false);
-                    let field = alloc_view(class!(NSTextField), rect(x, 200., 190., 26.));
+                    let x = 22. + i as f64 * 256.;
+                    label(root, rect(x, 475., 220., 20.), name, 12., 0., false);
+                    let field = alloc_view(class!(NSTextField), rect(x, 443., 220., 26.));
                     let _: () = msg_send![&field,setStringValue:&*NSString::from_str(&crate::tile_manager::grid_count(defaults,key,*fallback,*max).to_string())];
                     let _: () = msg_send![&field,setAccessibilityLabel:&*NSString::from_str(name)];
                     let _: () = msg_send![root,addSubview:&*field];
@@ -2329,44 +2421,243 @@ Otras apps pueden tener atajos propios no detectables.",
                 }
                 button(
                     root,
-                    rect(326., 158., 132., 30.),
+                    rect(350., 400., 148., 30.),
                     "Aplicar rejilla",
                     target,
                     51,
                 );
+                card(root, rect(14., 104., 492., 280.));
                 label(
                     root,
-                    rect(22., 122., 435., 20.),
-                    "Una distribución por escritorio · mismo número de tiles.",
-                    12.,
+                    rect(28., 346., 460., 24.),
+                    "Plantillas personalizadas",
+                    15.,
+                    0.3,
+                    false,
+                );
+                let name = alloc_view(class!(NSTextField), rect(28., 303., 320., 27.));
+                let _: () = msg_send![&name,setPlaceholderString:&*NSString::from_str("Nombre de la plantilla")];
+                let _: () = msg_send![&name,setAccessibilityLabel:&*NSString::from_str("Nombre de la plantilla")];
+                let _: () = msg_send![root,addSubview:&*name];
+                self.custom_name = Retained::as_ptr(&name) as Obj;
+                button(
+                    root,
+                    rect(360., 301., 132., 30.),
+                    "Guardar actual",
+                    target,
+                    95,
+                );
+                self.custom_menu = popup(root, rect(26., 254., 324., 30.), &[], target, 96);
+                let _: () = msg_send![self.custom_menu,setAccessibilityLabel:&*NSString::from_str("Plantillas guardadas")];
+                self.custom_delete =
+                    button(root, rect(360., 254., 132., 30.), "Eliminar", target, 98);
+                let preview = alloc_view(class!(NSImageView), rect(26., 124., 220., 116.));
+                let _: () = msg_send![root,addSubview:&*preview];
+                self.custom_preview = Retained::as_ptr(&preview) as Obj;
+                self.custom_info = wrapping_label(root, rect(260., 175., 232., 64.), "", 12.);
+                self.custom_apply = button(
+                    root,
+                    rect(360., 128., 132., 30.),
+                    "Aplicar plantilla",
+                    target,
+                    97,
+                );
+                label(
+                    root,
+                    rect(22., 82., 476., 18.),
+                    "Copia rápida del escritorio actual",
+                    11.,
                     0.,
                     true,
                 );
                 button(
                     root,
-                    rect(18., 80., 210., 30.),
-                    "Guardar distribución",
+                    rect(18., 48., 230., 30.),
+                    "Guardar copia rápida",
                     target,
                     52,
                 );
                 button(
                     root,
-                    rect(242., 80., 216., 30.),
-                    "Restaurar distribución",
+                    rect(272., 48., 230., 30.),
+                    "Restaurar copia rápida",
                     target,
                     53,
                 );
-                self.tile_grid_status = label(
+                self.tile_grid_status = wrapping_label(
                     root,
-                    rect(22., 20., 435., 45.),
-                    "Se guardan proporciones y rejilla, no se abren aplicaciones.",
+                    rect(22., 3., 476., 42.),
+                    "Se guardan divisiones y proporciones; no se abren aplicaciones.",
                     11.,
-                    0.,
-                    true,
                 );
                 self.tile_grid_window = Some(w);
             }
+            self.refresh_custom_templates(None);
             let _: () = msg_send![self.tile_grid_window.as_ref().unwrap(),makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    fn refresh_custom_templates(&mut self, selected: Option<&str>) {
+        if self.custom_menu.is_null() {
+            return;
+        }
+        unsafe {
+            let index: isize = msg_send![self.custom_menu, indexOfSelectedItem];
+            let previous = self
+                .custom_templates
+                .get(index.max(0) as usize)
+                .map(|t| t.id.clone());
+            let selected = selected.map(str::to_owned).or(previous);
+            self.custom_templates =
+                crate::custom_templates::entries(Retained::as_ptr(&self.defaults) as Obj);
+            let _: () = msg_send![self.custom_menu, removeAllItems];
+            for template in &self.custom_templates {
+                let _: () = msg_send![self.custom_menu,addItemWithTitle:&*NSString::from_str(&template.name)];
+            }
+            if self.custom_templates.is_empty() {
+                let _: () = msg_send![self.custom_menu,addItemWithTitle:&*NSString::from_str("Ninguna plantilla guardada")];
+            } else if let Some(index) =
+                selected.and_then(|id| self.custom_templates.iter().position(|t| t.id == id))
+            {
+                let _: () = msg_send![self.custom_menu,selectItemAtIndex:index as isize];
+            }
+            self.refresh_custom_preview();
+        }
+    }
+    fn refresh_custom_preview(&self) {
+        if self.custom_menu.is_null() {
+            return;
+        }
+        unsafe {
+            let index: isize = msg_send![self.custom_menu, indexOfSelectedItem];
+            let template = usize::try_from(index)
+                .ok()
+                .and_then(|i| self.custom_templates.get(i));
+            let _: () = msg_send![self.custom_apply,setEnabled:template.is_some()];
+            let _: () = msg_send![self.custom_delete,setEnabled:template.is_some()];
+            let size = self
+                .custom_display
+                .and_then(crate::tile_manager::area)
+                .map_or(objc2_foundation::NSSize::new(1600., 1000.), |r| r.size);
+            if let Some(template) = template {
+                if let Some(desktop) = template.preview() {
+                    let image = crate::layout_thumbnail::custom_image(&desktop, size);
+                    let _: () = msg_send![self.custom_preview,setImage:&*image];
+                }
+                text(
+                    self.custom_info,
+                    &format!(
+                        "{} {}\nDivisiones y proporciones guardadas.\nSe conserva la rejilla actual.",
+                        template.count,
+                        if template.count == 1 {
+                            "ventana"
+                        } else {
+                            "ventanas"
+                        }
+                    ),
+                );
+            } else {
+                let _: () = msg_send![self.custom_preview,setImage:ptr::null::<AnyObject>()];
+                text(
+                    self.custom_info,
+                    "Guarda el mosaico actual.\nReutilízalo con otras ventanas.",
+                );
+            }
+        }
+    }
+    fn custom_action(&mut self, tag: isize) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        if tag == 96 {
+            self.refresh_custom_preview();
+            return;
+        }
+        if self.switching.is_some()
+            || self.transfer.is_some()
+            || self.layout_picker.is_some()
+            || self.sleeping
+        {
+            unsafe {
+                text(
+                    self.tile_grid_status,
+                    "Espera a que termine la operación actual antes de cambiar una plantilla.",
+                );
+            }
+            return;
+        }
+        unsafe {
+            let index: isize = msg_send![self.custom_menu, indexOfSelectedItem];
+            let selected = usize::try_from(index)
+                .ok()
+                .and_then(|i| self.custom_templates.get(i))
+                .cloned();
+            if tag == 98 {
+                if let Some(template) = selected {
+                    crate::custom_templates::remove(defaults, &template.id);
+                    self.refresh_custom_templates(None);
+                    text(
+                        self.tile_grid_status,
+                        "Plantilla eliminada. El mosaico actual se conserva.",
+                    );
+                }
+                return;
+            }
+            let context = match self
+                .tile_manager
+                .custom_context(defaults, self.custom_display)
+            {
+                Ok(context) => context,
+                Err(message) => {
+                    text(self.tile_grid_status, message);
+                    return;
+                }
+            };
+            self.custom_display = Some(context.workspace.0);
+            if tag == 95 {
+                let name: *mut NSString = msg_send![self.custom_name, stringValue];
+                let name = name.as_ref().map(ToString::to_string).unwrap_or_default();
+                let result = context
+                    .desktop
+                    .save_distribution(context.area)
+                    .ok_or("Esta distribución no se puede guardar.")
+                    .and_then(|data| crate::custom_templates::save(defaults, &name, data));
+                match result {
+                    Ok(id) => {
+                        self.refresh_custom_templates(Some(&id));
+                        text(
+                            self.tile_grid_status,
+                            "Plantilla guardada. Puedes aplicarla en otros escritorios con el mismo número de ventanas.",
+                        );
+                    }
+                    Err(message) => text(self.tile_grid_status, message),
+                }
+            } else if let Some(template) = selected {
+                if template.count != context.desktop.order.len() {
+                    text(
+                        self.tile_grid_status,
+                        &format!(
+                            "Esta plantilla tiene {} huecos. Necesitas {} ventanas en mosaico en esta pantalla; ahora hay {}.",
+                            template.count,
+                            template.count,
+                            context.desktop.order.len()
+                        ),
+                    );
+                } else if self.tile_manager.apply_custom_distribution(
+                    defaults,
+                    &context,
+                    &template.distribution,
+                ) {
+                    text(
+                        self.tile_grid_status,
+                        "Plantilla aplicada conservando sus divisiones y proporciones.",
+                    );
+                    self.refresh_tile_controls();
+                    self.update_tile_timer();
+                } else {
+                    text(
+                        self.tile_grid_status,
+                        "Las ventanas o la pantalla han cambiado, o sus tamaños mínimos no caben en esta distribución.",
+                    );
+                }
+            }
         }
     }
     fn show_tile_rules(&mut self) {
@@ -2555,11 +2846,18 @@ Otras apps pueden tener atajos propios no detectables.",
             );
             label(
                 root,
-                rect(18., 44., 380., 20.),
+                rect(18., 44., 200., 20.),
                 "Alberto Martín",
                 12.,
                 0.,
                 true,
+            );
+            button(
+                root,
+                rect(240., 28., 176., 30.),
+                "Copiar diagnóstico",
+                target,
+                99,
             );
         }
     }
@@ -2834,6 +3132,75 @@ Otras apps pueden tener atajos propios no detectables.",
             }
         }
     }
+    fn record_transfer(&mut self, message: &str, feedback: bool) {
+        if self.transfer_history.len() == 16 {
+            self.transfer_history.pop_front();
+        }
+        self.transfer_history.push_back(message.to_string());
+        if feedback {
+            self.transfer_feedback_at = Some(Instant::now());
+            self.feedback(message);
+        }
+    }
+    fn copy_diagnostic(&self) {
+        unsafe {
+            let process: Obj = msg_send![class!(NSProcessInfo), processInfo];
+            let os: *mut NSString = msg_send![process, operatingSystemVersionString];
+            let mut report = format!(
+                "AMSpace {} · {}\nmacOS: {}\nAccessibility (app): {}\nNative Space transfer: {}\nPriority requested={} active={} unavailable={:?}\nSend queued={} delivered={} expired={} busy_retries={}\nSpaces: {:?}\nVisible: {:?}\nScreens: {:?}\n",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::ARCH,
+                os.as_ref().map(ToString::to_string).unwrap_or_default(),
+                ax::trusted(),
+                crate::window_move::space_moves_available(),
+                crate::tile_manager::pref(
+                    Retained::as_ptr(&self.defaults) as Obj,
+                    "shortcuts.priority"
+                ) != 0,
+                self.shortcuts.priority_active(),
+                self.shortcuts.unavailable,
+                SEND_QUEUED.load(Ordering::Relaxed),
+                SEND_DELIVERED.load(Ordering::Relaxed),
+                SEND_EXPIRED.load(Ordering::Relaxed),
+                SEND_RETRIED.load(Ordering::Relaxed),
+                spaces::snapshot(),
+                spaces::visible_desktops(),
+                screen_configuration()
+            );
+            report.push_str(&format!(
+                "Navigation enabled={} Mosaic enabled={}\n",
+                crate::tile_manager::pref(
+                    Retained::as_ptr(&self.defaults) as Obj,
+                    "shortcuts.enabled"
+                ) != 0,
+                crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled")
+                    != 0
+            ));
+            for binding in crate::shortcuts::bindings(Retained::as_ptr(&self.defaults) as Obj, true)
+            {
+                report.push_str(&format!(
+                    "Binding {:?}: {} available={}\n",
+                    binding.action,
+                    crate::tile_hotkey::title(binding.key, binding.mods),
+                    self.shortcuts.available(binding.action)
+                ));
+            }
+            report.push_str("\nÚltimos traslados (sin teclas ajenas ni títulos):\n");
+            for event in &self.transfer_history {
+                report.push_str(event);
+                report.push('\n');
+            }
+            report.push_str(&format!(
+                "Último aviso de mosaico: {}\n",
+                self.last_tiling_feedback
+            ));
+            report.push_str(&self.tile_manager.diagnostic_report());
+            let pasteboard: Obj = msg_send![class!(NSPasteboard), generalPasteboard];
+            let _: isize = msg_send![pasteboard, clearContents];
+            let ok: bool = msg_send![pasteboard,setString:&*NSString::from_str(&report),forType:&*NSString::from_str("public.utf8-plain-text")];
+            self.feedback(if ok {"Diagnóstico copiado. Incluye estado y geometría, sin títulos ni contenido de ventanas."} else {"No se pudo copiar el diagnóstico."});
+        }
+    }
     fn refresh_login(&self) {
         unsafe {
             if self.login.is_null() {
@@ -2851,7 +3218,9 @@ Otras apps pueden tener atajos propios no detectables.",
     fn change(&mut self, sender: Obj) {
         unsafe {
             let tag: isize = msg_send![sender, tag];
-            if self.transfer.is_some() && ((40..=87).contains(&tag) || tag >= 2000) {
+            if self.transfer.is_some()
+                && ((40..=87).contains(&tag) || (95..=98).contains(&tag) || tag >= 2000)
+            {
                 self.feedback("Espera a que termine el traslado antes de cambiar Mosaico.");
                 return;
             }
@@ -2981,6 +3350,8 @@ Otras apps pueden tener atajos propios no detectables.",
                     self.tile_manager.invalidate();
                     self.refresh_tile_controls();
                 }
+                95..=98 => self.custom_action(tag),
+                99 => self.copy_diagnostic(),
                 90..=93 => {
                     let state: isize = msg_send![sender, state];
                     let key = match tag {
@@ -3248,16 +3619,58 @@ pub fn queue_shortcut_generation(action: crate::tile_hotkey::Action, generation:
             context: *mut std::ffi::c_void,
             callback: extern "C" fn(*mut std::ffi::c_void),
         );
+        fn dispatch_after_f(
+            when: u64,
+            queue: *const std::ffi::c_void,
+            context: *mut std::ffi::c_void,
+            callback: extern "C" fn(*mut std::ffi::c_void),
+        );
+        fn dispatch_time(when: u64, delta: i64) -> u64;
     }
+    type Delivery = (crate::tile_hotkey::Action, Instant, u64);
     extern "C" fn deliver(context: *mut std::ffi::c_void) {
-        let (action, queued, generation) =
-            unsafe { *Box::from_raw(context.cast::<(crate::tile_hotkey::Action, Instant, u64)>()) };
-        // Never execute an old window command after a modal loop or a blocked app.
-        if queued.elapsed() <= Duration::from_millis(350)
-            && generation == crate::shortcuts::generation()
-        {
-            autoreleasepool(|_| with_app(|a| a.shortcut_action(action)));
+        let delivery = unsafe { Box::from_raw(context.cast::<Delivery>()) };
+        let (action, queued, generation) = *delivery;
+        let send = matches!(action, crate::tile_hotkey::Action::SendSpace(_));
+        let result = autoreleasepool(|_| {
+            APP.with(|state| {
+                deliver_shortcut(
+                    state,
+                    queued,
+                    generation,
+                    crate::shortcuts::generation(),
+                    action,
+                    |app, action| {
+                        if send {
+                            SEND_DELIVERED.fetch_add(1, Ordering::Relaxed);
+                        }
+                        app.shortcut_action(action);
+                    },
+                )
+            })
+        });
+        match result {
+            ShortcutDelivery::Busy => unsafe {
+                if send {
+                    SEND_RETRIED.fetch_add(1, Ordering::Relaxed);
+                }
+                // AX can run a nested loop with App already borrowed. Defer
+                // rather than losing the action or spinning inside that loop.
+                dispatch_after_f(
+                    dispatch_time(0, 5_000_000),
+                    std::ptr::addr_of!(_dispatch_main_q),
+                    Box::into_raw(delivery).cast(),
+                    deliver,
+                );
+            },
+            ShortcutDelivery::Expired if send => {
+                SEND_EXPIRED.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
         }
+    }
+    if matches!(action, crate::tile_hotkey::Action::SendSpace(_)) {
+        SEND_QUEUED.fetch_add(1, Ordering::Relaxed);
     }
     unsafe {
         dispatch_async_f(
@@ -3637,7 +4050,12 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
             }
             a.update_tile_timer();
             if let Some(error) = a.tile_manager.last_error.take() {
-                a.feedback(&error);
+                a.last_tiling_feedback = error.clone();
+                if a.transfer_feedback_at
+                    .is_none_or(|at| at.elapsed() > Duration::from_secs(30))
+                {
+                    a.feedback(&error);
+                }
             }
         })
     });
@@ -3922,4 +4340,64 @@ pub fn run() {
     APP.with(|cell| {
         cell.borrow_mut().take();
     });
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    use crate::tile_hotkey::Action;
+    #[test]
+    fn nested_ax_borrow_defers_the_command_and_releases_it_once_available() {
+        let state = RefCell::new(Some(0u32));
+        let queued = Instant::now();
+        let nested = state.borrow_mut();
+        assert_eq!(
+            deliver_shortcut(&state, queued, 7, 7, Action::SendSpace(1), |count, _| {
+                *count += 1
+            }),
+            ShortcutDelivery::Busy
+        );
+        drop(nested);
+        assert_eq!(
+            deliver_shortcut(&state, queued, 7, 7, Action::SendSpace(1), |count, _| {
+                *count += 1
+            }),
+            ShortcutDelivery::Done
+        );
+        assert_eq!(*state.borrow(), Some(1));
+    }
+    #[test]
+    fn deferred_commands_cannot_survive_expiry_or_a_configuration_change() {
+        let state = RefCell::new(Some(0u32));
+        let old = Instant::now() - Duration::from_millis(400);
+        assert_eq!(
+            deliver_shortcut(&state, old, 7, 7, Action::SendSpace(1), |count, _| {
+                *count += 1
+            }),
+            ShortcutDelivery::Expired
+        );
+        assert_eq!(
+            deliver_shortcut(
+                &state,
+                Instant::now(),
+                7,
+                8,
+                Action::SendSpace(1),
+                |count, _| *count += 1
+            ),
+            ShortcutDelivery::Changed
+        );
+        assert_eq!(*state.borrow(), Some(0));
+        assert_eq!(
+            deliver_shortcut(
+                &RefCell::<Option<u32>>::new(None),
+                Instant::now(),
+                7,
+                7,
+                Action::SendSpace(1),
+                |count, _| *count += 1
+            ),
+            ShortcutDelivery::Inactive
+        );
+    }
 }

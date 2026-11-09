@@ -4,6 +4,7 @@ compile_error!("AMSpace requires macOS 13 or later.");
 mod accessibility;
 mod bar_background;
 mod border;
+mod custom_templates;
 mod desktop_mode;
 mod desktop_preview;
 mod focus;
