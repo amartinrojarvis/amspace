@@ -1,11 +1,8 @@
-AMSpace 0.8.0 — plantillas personales y estabilidad del mosaico.
+AMSpace 0.8.1 — las plantillas guardadas aparecen en el selector.
 
-- Guarda distribuciones con nombre desde Mosaico → Rejilla y plantillas. Previsualiza, aplica o elimina tus diseños; se reutilizan con otras ventanas y el mismo número de huecos.
-- Conserva la rejilla actual al aplicar una plantilla personal y mantiene la copia rápida anterior.
-- Evita finalizar gestos antiguos después de cambiar de escritorio y reiniciar verificaciones de una pantalla independiente.
-- Conserva las divisiones editadas cuando una app deja de responder temporalmente a Accesibilidad pero su ventana sigue confirmada por el sistema, sin escribir sobre ella durante la incertidumbre.
-- Reintenta de forma acotada la entrega de atajos durante consultas nativas reentrantes; descarta comandos caducados.
-- Envío inicial con ⌃⌘1–9 para evitar el solapamiento de ⌘⇧ con capturas. Las combinaciones elegidas explícitamente se conservan; el grupo de atajos sigue siendo opcional.
-- Copiar diagnóstico desde General conserva el resultado de los traslados separado de avisos de tamaño del mosaico, sin incluir títulos ni contenido de ventanas.
+- ⌃⌥Espacio muestra ahora, junto a las ocho distribuciones integradas, una tarjeta por cada plantilla guardada en **Mosaico → Rejilla y plantillas**: nombre, miniatura con sus divisiones reales y previsualización a tamaño real con las ventanas actuales.
+- Una plantilla guardada está disponible si tiene el mismo número de huecos que el mosaico de esa pantalla y sus rectángulos caben en el área útil; el resto se muestra deshabilitada, igual que antes.
+- Las flechas, el hover y el clic recorren la lista completa; las teclas 9 y 0 seleccionan las dos primeras plantillas guardadas. Intro aplica y Esc cancela, sin cambiar el resto de atajos.
+- La rejilla del destino se conserva y las preferencias por monitor y escritorio siguen guardándose por ID de escritorio.
 
-185 pruebas internas correctas, incluidas matrices de traslados, plantillas editadas y sesiones reproducibles con varias pantallas simuladas. Pendiente la comprobación física de la configuración concreta del equipo de destino. Paquete universal para Apple Silicon e Intel. Firma ad hoc, sin notarización de Apple. macOS 13 o posterior; las funciones privadas dependen de su disponibilidad real.
+187 pruebas internas correctas, con dos nuevas para el crecimiento de la galería y la equivalencia entre la miniatura guardada y la validación del commit. Pendiente la comprobación física en el equipo con dos pantallas. Paquete universal para Apple Silicon e Intel. Firma ad hoc, sin notarización de Apple. macOS 13 o posterior; las funciones privadas dependen de su disponibilidad real.

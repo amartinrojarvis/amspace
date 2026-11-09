@@ -20,6 +20,30 @@ pub enum Input {
     Confirm,
     Cancel,
 }
+
+/// A gallery card: one of the eight built-in templates or one saved distribution.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Selection {
+    Layout(Layout),
+    Custom(String),
+}
+/// Mirror of the acceptance test used by `apply_custom_distribution`.
+fn fits_area(desktop: &Desktop, area: NSRect) -> bool {
+    let frames = desktop.frames(area, 10.);
+    !frames.is_empty()
+        && frames.len() == desktop.order.len()
+        && frames.iter().all(|(_, r)| {
+            [r.origin.x, r.origin.y, r.size.width, r.size.height]
+                .iter()
+                .all(|n| n.is_finite())
+                && r.size.width >= 80.
+                && r.size.height >= 60.
+                && r.origin.x >= area.origin.x - 0.001
+                && r.origin.y >= area.origin.y - 0.001
+                && r.origin.x + r.size.width <= area.origin.x + area.size.width + 0.001
+                && r.origin.y + r.size.height <= area.origin.y + area.size.height + 0.001
+        })
+}
 pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
     Some(match key {
         18 => Input::Select(0),
@@ -30,8 +54,9 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         22 => Input::Select(5),
         26 => Input::Select(6),
         28 => Input::Select(7),
+        25 => Input::Select(8),
+        29 => Input::Select(9),
         123 => Input::Move(-1),
-        124 => Input::Move(1),
         125 => Input::Move(columns as isize),
         126 => Input::Move(-(columns as isize)),
         48 => Input::Move(if shift { -1 } else { 1 }),
@@ -40,10 +65,10 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         _ => return None,
     })
 }
-fn gallery_geometry(area: NSRect) -> (NSRect, Vec<NSRect>, usize) {
+fn gallery_geometry(area: NSRect, count: usize) -> (NSRect, Vec<NSRect>, usize) {
     let portrait = area.size.height > area.size.width;
     let columns = if portrait { 2 } else { 4 };
-    let rows = Layout::ALL.len().div_ceil(columns);
+    let rows = count.div_ceil(columns);
     let (cw, ch) = if portrait { (180., 244.) } else { (210., 158.) };
     let width = columns as f64 * (cw + 12.) + 36.;
     let height = rows as f64 * (ch + 12.) + 120.;
@@ -57,7 +82,7 @@ fn gallery_geometry(area: NSRect) -> (NSRect, Vec<NSRect>, usize) {
         width,
         height,
     );
-    let cards = (0..Layout::ALL.len())
+    let cards = (0..count)
         .map(|index| {
             rect(
                 panel.origin.x + 24. * scale + (index % columns) as f64 * (cw + 12. * scale),
@@ -225,14 +250,16 @@ pub struct Picker {
     pub context: PickerContext,
     pub selected: usize,
     pub columns: usize,
-    valid: [bool; Layout::ALL.len()],
+    valid: Vec<bool>,
+    titles: Vec<String>,
+    custom: Vec<crate::custom_templates::Template>,
     card_views: Vec<Obj>,
     buttons: Vec<Obj>,
     ghost: Obj,
     status: Obj,
 }
 impl Picker {
-    pub fn new(context: PickerContext, target: Obj) -> Option<Self> {
+    pub fn new(context: PickerContext, target: Obj, defaults: Obj) -> Option<Self> {
         unsafe {
             let screens: Obj = msg_send![class!(NSScreen), screens];
             let primary: Obj = msg_send![screens, firstObject];
@@ -272,7 +299,9 @@ impl Picker {
                 rect(0., 0., area.size.width, area.size.height),
             );
             let _: () = msg_send![root,addSubview:&*ghost];
-            let (gallery, cards, columns) = gallery_geometry(area);
+            let custom = crate::custom_templates::entries(defaults);
+            let total = Layout::ALL.len() + custom.len();
+            let (gallery, cards, columns) = gallery_geometry(area, total);
             plate(root, gallery, 0.92, false, 22.);
             let orientation = if columns == 2 {
                 "vertical"
@@ -313,8 +342,14 @@ impl Picker {
             );
             let mut card_views = vec![];
             let mut buttons = vec![];
-            let valid = Layout::ALL.map(|layout| context.proposal(layout).is_some());
-            for (index, card) in cards.iter().enumerate() {
+            let mut valid: Vec<bool> = Layout::ALL
+                .map(|layout| context.proposal(layout).is_some())
+                .to_vec();
+            let mut titles: Vec<String> = Layout::ALL
+                .iter()
+                .map(|layout| layout.screen_name(area).to_string())
+                .collect();
+            for (index, card) in cards.iter().take(Layout::ALL.len()).enumerate() {
                 let layout = Layout::ALL[index];
                 card_views.push(plate(root, *card, 0.10, true, 12.));
                 let thumb = thumbnail_area(*card, area);
@@ -366,6 +401,65 @@ impl Picker {
                     valid[index],
                 ));
             }
+            // Guarded library: same slot count, then the same hard 80×60 minimum.
+            for (offset, template) in custom.iter().enumerate() {
+                let index = Layout::ALL.len() + offset;
+                let Some(card) = cards.get(index) else {
+                    continue;
+                };
+                let fits = template.count == context.desktop.order.len()
+                    && template
+                        .preview()
+                        .is_some_and(|desktop| fits_area(&desktop, area));
+                valid.push(fits);
+                titles.push(template.name.clone());
+                card_views.push(plate(root, *card, 0.10, true, 12.));
+                let thumb = thumbnail_area(*card, area);
+                plate(root, thumb, 0.75, false, 4.);
+                if let Some(desktop) = template.preview() {
+                    let scale = thumb.size.width / area.size.width;
+                    for (_, frame) in desktop.frames(area, 10.) {
+                        plate(
+                            root,
+                            rect(
+                                thumb.origin.x + (frame.origin.x - area.origin.x) * scale,
+                                thumb.origin.y + thumb.size.height
+                                    - (frame.origin.y - area.origin.y + frame.size.height) * scale,
+                                frame.size.width * scale,
+                                frame.size.height * scale,
+                            ),
+                            if fits { 0.48 } else { 0.16 },
+                            true,
+                            2.,
+                        );
+                    }
+                }
+                light_label(
+                    root,
+                    rect(
+                        card.origin.x + 12.,
+                        card.origin.y + 10.,
+                        card.size.width - 24.,
+                        20.,
+                    ),
+                    &format!("{}  {}", index + 1, template.name),
+                    13.,
+                    true,
+                );
+                buttons.push(choice(
+                    root,
+                    *card,
+                    target,
+                    index as isize,
+                    &format!(
+                        "{} · {}{}",
+                        index + 1,
+                        template.name,
+                        if fits { "" } else { " · no cabe" }
+                    ),
+                    fits,
+                ));
+            }
             let status = light_label(
                 root,
                 rect(
@@ -385,6 +479,8 @@ impl Picker {
                 selected,
                 columns,
                 valid,
+                titles,
+                custom,
                 card_views,
                 buttons,
                 ghost: Retained::as_ptr(&ghost) as Obj,
@@ -406,17 +502,26 @@ impl Picker {
         }
     }
     pub fn move_selection(&mut self, offset: isize) {
-        for step in 1..=Layout::ALL.len() as isize {
-            let index = (self.selected as isize + offset * step)
-                .rem_euclid(Layout::ALL.len() as isize) as usize;
+        let total = self.valid.len() as isize;
+        for step in 1..=total {
+            let index = (self.selected as isize + offset * step).rem_euclid(total) as usize;
             if self.valid[index] {
                 self.select(index);
                 break;
             }
         }
     }
-    pub fn selected_layout(&self) -> Option<Layout> {
-        self.valid[self.selected].then_some(Layout::ALL[self.selected])
+    /// The chosen card as either a built-in layout or a saved distribution.
+    pub fn selection(&self) -> Option<Selection> {
+        if !self.valid[self.selected] {
+            return None;
+        }
+        if let Some(layout) = Layout::ALL.get(self.selected) {
+            return Some(Selection::Layout(*layout));
+        }
+        self.custom
+            .get(self.selected - Layout::ALL.len())
+            .map(|template| Selection::Custom(template.distribution.clone()))
     }
     fn render(&mut self) {
         unsafe {
@@ -424,7 +529,7 @@ impl Picker {
                 let title = format!(
                     "{} · {}{}",
                     index + 1,
-                    Layout::ALL[index].screen_name(self.context.area),
+                    self.titles[index],
                     if !self.valid[index] {
                         " · no cabe"
                     } else if index == self.selected {
@@ -447,7 +552,15 @@ impl Picker {
             }
             let empty: Retained<AnyObject> = msg_send![class!(NSArray), new];
             let _: () = msg_send![self.ghost,setSubviews:&*empty];
-            if let Some(desktop) = self.context.proposal(Layout::ALL[self.selected]) {
+            let proposed = match self.selection() {
+                Some(Selection::Layout(layout)) => self.context.proposal(layout),
+                Some(Selection::Custom(_)) => self
+                    .custom
+                    .get(self.selected - Layout::ALL.len())
+                    .and_then(|template| template.preview()),
+                None => None,
+            };
+            if let Some(desktop) = proposed {
                 let area = self.context.area;
                 for (index, (_, frame)) in desktop.frames(area, 10.).iter().enumerate() {
                     let r = rect(
@@ -469,7 +582,7 @@ impl Picker {
             crate::native::text(
                 self.status,
                 if self.valid[self.selected] {
-                    "Ratón o 1–8 · Flechas · Intro: aplicar · Esc: cancelar"
+                    "Ratón o teclas · Flechas · Intro: aplicar · Esc: cancelar"
                 } else {
                     "Esta distribución no cabe. Elige otra plantilla."
                 },
@@ -495,7 +608,7 @@ mod tests {
             rect(-900., -400., 900., 1600.),
             rect(0., 0., 640., 480.),
         ] {
-            let (gallery, cards, cols) = gallery_geometry(area);
+            let (gallery, cards, cols) = gallery_geometry(area, Layout::ALL.len());
             assert_eq!(
                 cols,
                 if area.size.height > area.size.width {
@@ -530,5 +643,34 @@ mod tests {
         for (index, key) in [18, 19, 20, 21, 23, 22, 26, 28].into_iter().enumerate() {
             assert_eq!(key_input(key, 3, false), Some(Input::Select(index)));
         }
+        // The two first saved templates answer to 9 and 0.
+        assert_eq!(key_input(25, 3, false), Some(Input::Select(8)));
+        assert_eq!(key_input(29, 3, false), Some(Input::Select(9)));
+    }
+    #[test]
+    fn gallery_rows_grow_with_the_saved_template_library() {
+        let area = rect(0., 0., 1600., 900.);
+        let (_, eight, _) = gallery_geometry(area, Layout::ALL.len());
+        let (_, eleven, cols) = gallery_geometry(area, Layout::ALL.len() + 3);
+        assert_eq!(eight.len(), Layout::ALL.len());
+        assert_eq!(eleven.len(), Layout::ALL.len() + 3);
+        assert_eq!(cols, 4);
+        assert!(eleven[Layout::ALL.len()].origin.y < eleven[0].origin.y);
+    }
+    #[test]
+    fn saved_distribution_preview_matches_the_commit_minimums() {
+        let area = rect(0., 0., 1600., 900.);
+        let mut desktop = Desktop::configured(Layout::Centered, None);
+        desktop.reconcile_at(&[1, 2, 3], area, 10., None);
+        let text = desktop.save_distribution(area).expect("serializable");
+        let template =
+            crate::custom_templates::Template::parse("id".into(), "Mi reparto".into(), text)
+                .expect("valid template");
+        assert_eq!(template.count, 3);
+        assert!(fits_area(&template.preview().unwrap(), area));
+        // A different slot count never matches the current desktop.
+        let mut fewer = Desktop::configured(Layout::Centered, None);
+        fewer.reconcile_at(&[1, 2], area, 10., None);
+        assert_ne!(fewer.order.len(), template.count);
     }
 }

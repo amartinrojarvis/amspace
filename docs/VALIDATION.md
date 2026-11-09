@@ -1,3 +1,10 @@
+## Selector de plantillas con distribuciones guardadas
+
+- `tile_picker.rs` dibuja ahora las ocho tarjetas integradas y una por plantilla de `tile.templates.v1`. `Picker::selection` devuelve `Selection::Layout` o `Selection::Custom`; `commit_picker` enruta a `apply_template` o `apply_custom_distribution` con el mismo `PickerContext`. Las flechas y el hover recorren la lista completa; 9 y 0 seleccionan las dos primeras guardadas.
+- Una tarjeta guardada se habilita con el mismo número de huecos que el mosaico actual y la misma validación de geometría del commit (80 × 60, dentro del área). El resto queda deshabilitada.
+- `./scripts/check.sh`: formato, Clippy sin warnings, plist y 187 pruebas correctas, ocho diagnósticos/benchmarks excluidos. Dos pruebas nuevas cubren el crecimiento de filas de la galería y la equivalencia entre preview y mínimos del commit; la prueba de teclado incluye 9 y 0.
+- Sin prueba física adicional: misma instancia y misma pantalla que en la revisión 0.8.0. La previsualización del panel se comprobó en el modelo; la aparición real del panel sigue dependiendo de la sesión gráfica del usuario.
+
 ## Publicación 0.8.0, build 45
 
 - Publicada a petición del usuario después de la batería interna: [v0.8.0](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.0), commit exacto `eb30a50e4de2ef5058c7ee6b2b4c17b640c30710`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42579693572): comprobaciones, bundle universal y empaquetado. Build 45 supera a RC 1/build 44; las rutas funcionales son las mismas, con seis pruebas adicionales versionadas.

@@ -2328,8 +2328,11 @@ Otras apps pueden tener atajos propios no detectables.",
             self.feedback("Activa el mosaico en el escritorio de esta pantalla.");
             return;
         };
-        self.layout_picker =
-            crate::tile_picker::Picker::new(context, Retained::as_ptr(&self.target) as Obj);
+        self.layout_picker = crate::tile_picker::Picker::new(
+            context,
+            Retained::as_ptr(&self.target) as Obj,
+            defaults,
+        );
         let Some(picker) = &self.layout_picker else {
             return;
         };
@@ -2340,7 +2343,7 @@ Otras apps pueden tener atajos propios no detectables.",
         let Some(picker) = self.layout_picker.take() else {
             return;
         };
-        let Some(layout) = picker.selected_layout() else {
+        let Some(selection) = picker.selection() else {
             self.layout_picker = Some(picker);
             return;
         };
@@ -2348,7 +2351,15 @@ Otras apps pueden tener atajos propios no detectables.",
         drop(picker);
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         self.tile_manager.refresh_for_picker(defaults);
-        if self.tile_manager.apply_template(defaults, &context, layout) {
+        let applied = match selection {
+            crate::tile_picker::Selection::Layout(layout) => {
+                self.tile_manager.apply_template(defaults, &context, layout)
+            }
+            crate::tile_picker::Selection::Custom(distribution) => self
+                .tile_manager
+                .apply_custom_distribution(defaults, &context, &distribution),
+        };
+        if applied {
             self.tile_manager.tick(defaults);
         } else {
             self.feedback("La pantalla o sus ventanas han cambiado. Abre de nuevo el selector.");
