@@ -2815,6 +2815,7 @@ impl Manager {
         if crate::desktop_mode::active() {
             return;
         }
+        let settling = self.settling_space();
         for (space, r) in active {
             let d = self.desktops.entry(space).or_default();
             d.grid = if pref(defaults, "tile.grid.enabled") != 0 {
@@ -2832,6 +2833,11 @@ impl Manager {
             }
             let ids = members.entry(space).or_default();
             ids.sort_unstable();
+            // While macOS publishes the arriving windows, one id can still be
+            // absent from the compositor list on the first scan. Reuse the
+            // retained order so its leaf is neither collapsed nor re-expanded:
+            // the same distribution is produced and no second write is needed.
+            retain_settled_ids(ids, &d.order, settling);
             let insertion_focus = if d.needs_insertion_focus(ids) {
                 *focused
             } else {
@@ -3084,6 +3090,19 @@ fn needs_placement(
         && !pending.is_some_and(|p| near(p, target))
         && !limited
             .is_some_and(|(requested, observed)| near(requested, target) && near(observed, actual))
+}
+
+/// Keep the previous distribution while a Space is still publishing windows.
+/// A prefix of the retained order is the same membership; the trailing id is
+/// only missing from the compositor list for one scan.
+fn retain_settled_ids(ids: &mut Vec<u32>, order: &[u32], settling: bool) {
+    if settling
+        && !ids.is_empty()
+        && ids.len() < order.len()
+        && ids.iter().all(|id| order.contains(id))
+    {
+        *ids = order.to_vec();
+    }
 }
 
 #[cfg(test)]
@@ -5698,5 +5717,137 @@ mod tests {
             None,
             Some((target, smaller))
         ));
+    }
+    #[test]
+    fn a_single_spiral_tile_needs_no_write_after_leaving_and_returning() {
+        let area = rect(10., 41., 1660., 947.);
+        let key: Workspace = (1, 7);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[42], area, 10.);
+        let original = desktop.frames(area, 10.);
+        assert_eq!(original.len(), 1);
+        let target = original[0].1;
+        let saved = desktop.save_distribution(area);
+        let mut manager = Manager {
+            active_areas: vec![(key, area)],
+            ..Default::default()
+        };
+        manager.desktops.insert(key, desktop.clone());
+        manager.windows.insert(
+            42,
+            Managed {
+                pid: 9,
+                space: key,
+                original: target,
+                original_area: area,
+                element: ax::application(std::process::id() as i32).unwrap(),
+            },
+        );
+        manager.applied.insert(42, target);
+        let now = Instant::now();
+        manager.space_changed_with_visible_at(now, &[key]);
+        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        let sample = ReentrySample {
+            areas: vec![(key, area)],
+            windows: vec![(9, 42, key.1, target, Some(target))],
+            absent: vec![],
+        };
+        assert!(!manager.observe_reentry(Some(sample.clone()), now + Duration::from_millis(600)));
+        assert!(manager.observe_reentry(Some(sample), now + Duration::from_millis(800)));
+        assert_eq!(manager.desktops[&key].frames(area, 10.), original);
+        assert_eq!(manager.desktops[&key].save_distribution(area), saved);
+        // The settled frame equals the destination, so no further AX write runs.
+        assert!(!manager.needs_placement(42, target, Some(target)));
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+        // A committed write verifies complete on its first check: no retry pair.
+        assert_eq!(
+            Verification::new(target).step(target, Instant::now()),
+            VerificationStep::Complete
+        );
+    }
+    #[test]
+    fn repeated_space_notifications_leave_one_tile_settled_without_pending_writes() {
+        let area = rect(0., 30., 880., 1580.);
+        let key: Workspace = (2, 8);
+        let mut desktop = Desktop::configured(Layout::ThreeBands, None);
+        desktop.reconcile(&[10, 20], area, 10.);
+        let original = desktop.frames(area, 10.);
+        assert_eq!(original.len(), 2);
+        let mut manager = Manager {
+            active_areas: vec![(key, area)],
+            ..Default::default()
+        };
+        manager.desktops.insert(key, desktop.clone());
+        for (id, frame) in &original {
+            manager.windows.insert(
+                *id,
+                Managed {
+                    pid: 42,
+                    space: key,
+                    original: *frame,
+                    original_area: area,
+                    element: ax::application(std::process::id() as i32).unwrap(),
+                },
+            );
+            manager.applied.insert(*id, *frame);
+        }
+        let now = Instant::now();
+        for index in 0..5 {
+            manager.space_changed_with_visible_at(now + Duration::from_millis(index * 40), &[key]);
+        }
+        let sample = ReentrySample {
+            areas: vec![(key, area)],
+            windows: original
+                .iter()
+                .map(|(id, frame)| (42, *id, key.1, *frame, Some(*frame)))
+                .collect(),
+            absent: vec![],
+        };
+        assert!(!manager.observe_reentry(Some(sample.clone()), now + Duration::from_millis(400)));
+        assert!(manager.observe_reentry(Some(sample), now + Duration::from_millis(600)));
+        assert!(manager.space_reentry.is_none());
+        assert!(manager.transitions.is_empty() && manager.verifications.is_empty());
+        for (id, frame) in &original {
+            assert_eq!(manager.desktops[&key].frames(area, 10.), original);
+            assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+        }
+    }
+    #[test]
+    fn a_partial_membership_during_settling_keeps_one_distribution_per_window() {
+        let area = rect(10., 41., 1660., 947.);
+        for layout in Layout::ALL {
+            let mut full = Desktop::configured(layout, None);
+            full.reconcile(&[10, 20, 30], area, 10.);
+            let original = full.frames(area, 10.);
+            assert_eq!(original.len(), 3);
+            // The compositor names only two windows on the first scan: the same
+            // three destinations must result, so each window is written once.
+            let mut partial = Desktop::configured(layout, None);
+            partial.reconcile(&[10, 20, 30], area, 10.);
+            let mut ids = vec![10, 20];
+            retain_settled_ids(&mut ids, &partial.order, true);
+            partial.reconcile_at(&ids, area, 10., None);
+            partial.fit(area, 10.);
+            assert_eq!(
+                partial.frames(area, 10.),
+                original,
+                "{layout:?}: the trailing window must keep its leaf during the settling burst"
+            );
+            // Once settled, a genuinely closed window does collapse the tree.
+            let mut closed = Desktop::configured(layout, None);
+            closed.reconcile(&[10, 20, 30], area, 10.);
+            let mut ids = vec![10, 20];
+            retain_settled_ids(&mut ids, &closed.order, false);
+            closed.reconcile_at(&ids, area, 10., None);
+            assert_eq!(closed.frames(area, 10.).len(), 2);
+            // An unrelated membership is not treated as a settling prefix.
+            let mut other = Desktop::configured(layout, None);
+            other.reconcile(&[10, 20, 30], area, 10.);
+            let mut ids = vec![10, 99];
+            retain_settled_ids(&mut ids, &other.order, true);
+            assert_eq!(ids, vec![10, 99]);
+        }
     }
 }

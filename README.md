@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.8.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.1/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.8.3](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.3/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -215,10 +215,12 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.8.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.1/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.1). También disponible mediante Buscar ahora en General.
+[Descargar 0.8.3](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.3/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.3). También disponible mediante Buscar ahora en General.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
 La versión 0.8.1 extiende el selector de ⌃⌥Espacio a esas plantillas guardadas: cada una ocupa una tarjeta con su nombre y su miniatura, se previsualiza con las ventanas reales y se aplica con Intro o clic. Solo se habilitan las que tienen el mismo número de huecos que el mosaico de esa pantalla y caben en su área útil.
+
+La versión 0.8.2 hace que el indicador y los atajos ⌘1–9 sigan la numeración del monitor que contiene el puntero, y 0.8.3 estabiliza el mosaico al volver a un escritorio: cada ventana conserva su hueco desde el primer escaneo, sin el doble ajuste visible anterior.
 
 La versión también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).
