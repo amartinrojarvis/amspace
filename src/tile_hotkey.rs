@@ -112,6 +112,7 @@ pub const MODIFIERS: &[(&str, u32)] = &[
     ("⌃⌘⇧", 4096 | 256 | 512),
     ("⌃⌘⌥", 4096 | 256 | 2048),
     ("⌃⌘⌥⇧", 4096 | 256 | 2048 | 512),
+    ("⌘", 256),
 ];
 pub fn key_index(value: isize) -> usize {
     value.clamp(0, KEYS.len() as isize - 1) as usize
@@ -192,21 +193,43 @@ pub fn suggestions(excluded: &[(usize, usize)]) -> Option<Vec<(usize, usize)>> {
     }
     Some(result)
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
-    Float = 1,
-    Layouts = 2,
+    Float,
+    Layouts,
+    Desktop(u8),
+    SendSpace(u8),
+    MonitorLeft,
+    MonitorRight,
+}
+impl Action {
+    pub fn id(self) -> u32 {
+        match self {
+            Self::Float => 1,
+            Self::Layouts => 2,
+            Self::Desktop(n) => 10 + u32::from(n),
+            Self::SendSpace(n) => 30 + u32::from(n),
+            Self::MonitorLeft => 50,
+            Self::MonitorRight => 51,
+        }
+    }
+    pub fn from_id(id: u32) -> Option<Self> {
+        match id {
+            1 => Some(Self::Float),
+            2 => Some(Self::Layouts),
+            10..=18 => Some(Self::Desktop((id - 10) as u8)),
+            30..=38 => Some(Self::SendSpace((id - 30) as u8)),
+            50 => Some(Self::MonitorLeft),
+            51 => Some(Self::MonitorRight),
+            _ => None,
+        }
+    }
 }
 fn action(signature: u32, id: u32, handler: usize) -> Option<Action> {
     if signature != u32::from_be_bytes(*b"AMSt") || id as usize != handler {
         return None;
     }
-    match id {
-        1 => Some(Action::Float),
-        2 => Some(Action::Layouts),
-        _ => None,
-    }
+    Action::from_id(id)
 }
 pub struct HotKey {
     key: *mut c_void,
@@ -233,7 +256,7 @@ impl HotKey {
                 pressed,
                 1,
                 &event,
-                action as usize as *mut c_void,
+                action.id() as usize as *mut c_void,
                 &mut this.handler,
             ) != 0
             {
@@ -244,7 +267,7 @@ impl HotKey {
                 MODIFIERS.get(mods)?.1,
                 HotKeyId {
                     signature: u32::from_be_bytes(*b"AMSt"),
-                    id: action as u32,
+                    id: action.id(),
                 },
                 target,
                 1, // kEventHotKeyExclusive
@@ -288,10 +311,10 @@ extern "C" fn pressed(_: *mut c_void, event: *mut c_void, data: *mut c_void) -> 
     if status != 0 {
         return -9874;
     }
-    match action(id.signature, id.id, data as usize) {
-        Some(Action::Float) => crate::ui::toggle_tile_float(),
-        Some(Action::Layouts) => crate::ui::toggle_layout_picker(),
-        None => return -9874,
+    if let Some(action) = action(id.signature, id.id, data as usize) {
+        crate::ui::queue_shortcut(action);
+    } else {
+        return -9874;
     }
     0
 }

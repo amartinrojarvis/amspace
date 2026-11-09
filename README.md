@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.6.18](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.6.18/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.7.0](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.7.0/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -69,7 +69,7 @@ Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certific
 
 El clic izquierdo selecciona el escritorio pulsado; pulsar el escritorio actual no hace nada. El clic derecho abre ajustes sin cambiar de escritorio. El cambio es directo, sin abrir la vista de Mission Control, y respeta el ajuste de desplazamiento natural. Para un destino lejano recorre los espacios intermedios y confirma cada cambio. El foco automático y el borde se pausan durante esa transición. No se modifican los atajos ni la configuración del sistema.
 
-Los ajustes se organizan en **Ventanas**, **Barra de menús**, **Mosaico** y **General**. En Barra de menús elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
+Los ajustes se organizan en **Ventanas**, **Barra de menús**, **Mosaico**, **Atajos** y **General**. En Barra de menús elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
 
 En Ventanas, **El foco sigue al cursor** mueve el foco del teclado; **Traer al primer plano** controla por separado la elevación. Una ventana parcialmente cubierta puede recibir el teclado al pasar por su parte visible sin apartar las ventanas que la cubren.
 
@@ -104,7 +104,7 @@ Consulta [VALIDATION.md](docs/VALIDATION.md) para las mediciones locales y el al
 
 ## Limitaciones conocidas
 
-macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spaces.rs` resuelve en ejecución tres funciones privadas de SkyLight, **solo de lectura**. No inyecta código, no modifica Dock y no requiere desactivar SIP. Si Apple cambia esas funciones o sus datos, el indicador presenta `—` y el resto de ajustes continúa disponible. El borde también utiliza funciones privadas para recibir eventos de ventana, consultar radios y mover únicamente su propio panel. No modifica la geometría de las ventanas de otras apps. Por esas dependencias, esta versión está pensada para distribución directa, no para la Mac App Store.
+macOS no ofrece una API pública para enumerar todos los Spaces. El módulo `spaces.rs` consulta metadatos mediante funciones privadas de SkyLight resueltas en ejecución. El envío de ventanas a otro escritorio usa, cuando está disponible, el puente de WindowManager; su entrada se localiza por el nombre exacto en la tabla Mach-O de la imagen cargada, sin escanear instrucciones ni modificar memoria. No inyecta código, no modifica Dock y no requiere desactivar SIP. Si Apple cambia esas funciones o sus datos, el indicador presenta `—` y el resto de ajustes continúa disponible. El borde también utiliza funciones privadas para recibir eventos de ventana, consultar radios y mover únicamente su propio panel. No modifica la geometría de las ventanas de otras apps. Por esas dependencias, esta versión está pensada para distribución directa, no para la Mac App Store.
 
 - Al añadir, eliminar o reordenar escritorios sin cambiar de Space, el indicador puede actualizarse en el siguiente cambio de aplicación/escritorio o al abrir sus ajustes.
 - La geometría y el orden del borde se leen de WindowServer, con notificaciones AX como respaldo si la API privada no está disponible. Algunas apps y versiones de macOS pueden exponer metadatos o notificaciones incompletos. El código limita los tiempos de espera AX.
@@ -132,7 +132,7 @@ Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSU
 
 Creado por **Alberto Martín** · [Instagram @amartinro](https://www.instagram.com/amartinro/) · [X @amartinro](https://x.com/amartinro).
 
-[Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt) · [Atribución del protocolo de foco de yabai](docs/YABAI-LICENSE.txt) · [Licencia del protocolo de gestos de iss](docs/ISS-LICENSE.txt) · [Atribución de strafe](docs/STRAFE-LICENSE.txt)
+[Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt) · [Atribución de foco y puente de ventanas de yabai](docs/YABAI-LICENSE.txt) · [Licencia del protocolo de gestos de iss](docs/ISS-LICENSE.txt) · [Atribución de strafe](docs/STRAFE-LICENSE.txt)
 
 ## Tiling por escritorio
 
@@ -148,9 +148,9 @@ Actívalo en **Ajustes → Mosaico** después de conceder Accesibilidad. El inte
 
 Arrastra una ventana tiled por su barra de título para intercambiarla con el hueco de otra ventana del mismo escritorio. Se respeta la rejilla virtual de la plantilla, incluso cerca de sus bordes y tras elegirla desde el atajo: no se crean divisiones nuevas durante esa recolocación. La vista previa muestra el hueco de destino y coincide con el resultado al soltar. Si los tamaños mínimos no permiten el intercambio, se conserva la distribución anterior. En un traslado entre monitores, la colocación inteligente sigue ofreciendo divisiones de llegada en los bordes.
 
-Puedes arrastrar entre monitores visibles, incluso con orientaciones, resoluciones y escalas distintas. Cada pareja monitor/escritorio mantiene su propio árbol; se usa el área útil en puntos de macOS y se respetan Dock, menú y márgenes. Espiral y Principal comienzan apiladas en pantallas verticales. También se separan las distribuciones cuando macOS comparte un Space entre monitores. El traslado nativo a otro Space sigue correspondiendo a macOS. Las flotantes permanecen fuera de esta colocación hasta usar su atajo.
+Puedes arrastrar entre monitores visibles, incluso con orientaciones, resoluciones y escalas distintas. Cada pareja monitor/escritorio mantiene su propio árbol; se usa el área útil en puntos de macOS y se respetan Dock, menú y márgenes. Espiral y Principal comienzan apiladas en pantallas verticales. También se separan las distribuciones cuando macOS comparte un Space entre monitores. También puedes enviar la ventana activa a otro escritorio desde Atajos, cuando macOS admite el puente nativo. Las flotantes permanecen fuera de esta colocación hasta usar su atajo.
 
-**⌃⌥Espacio** abre el selector semitransparente en el monitor del cursor. Muestra las ocho plantillas con miniaturas adaptadas a esa pantalla y una previsualización a tamaño real con las ventanas actuales. Pasa el ratón, usa las flechas o pulsa 1–8 para previsualizar; haz clic o pulsa Intro para aplicar. Esc, otro toque del atajo o un clic fuera del panel cancelan. Las miniaturas son ejemplos, mientras que la previsualización grande usa las ventanas reales. Las opciones que no cumplen el tamaño mínimo aparecen deshabilitadas. Configura la combinación en **Mosaico → Atajo del selector…**. La elección se guarda por monitor y escritorio, también si varios monitores comparten un Space. Ahora hay 54 teclas (letras, números, F1–F12, flechas, Espacio y Retorno) y 11 combinaciones de modificadores. En **Atajo del selector… → Buscar atajos libres**, AMSpace consulta los atajos de sistema y prueba reservas globales exclusivas en ese Mac. Elige una sugerencia y pulsa **Usar sugerido**; vuelve a reservarse al aplicarla. La comprobación no puede enumerar todos los atajos internos de otras apps. Las sugerencias deben buscarse en el ordenador donde se usarán.
+**⌃⌥Espacio** abre el selector semitransparente en el monitor del cursor. Muestra las ocho plantillas con miniaturas adaptadas a esa pantalla y una previsualización a tamaño real con las ventanas actuales. Pasa el ratón, usa las flechas o pulsa 1–8 para previsualizar; haz clic o pulsa Intro para aplicar. Esc, otro toque del atajo o un clic fuera del panel cancelan. Las miniaturas son ejemplos, mientras que la previsualización grande usa las ventanas reales. Las opciones que no cumplen el tamaño mínimo aparecen deshabilitadas. Configura la combinación en **Atajos → Selector de plantillas**. La elección se guarda por monitor y escritorio, también si varios monitores comparten un Space. Ahora hay 54 teclas (letras, números, F1–F12, flechas, Espacio y Retorno) y 12 combinaciones de modificadores. En **Atajos → Sugerencias… → Buscar atajos libres**, AMSpace consulta los atajos de sistema y prueba reservas globales exclusivas en ese Mac. Elige una sugerencia y pulsa **Usar sugerido**; vuelve a reservarse al aplicarla. La comprobación no puede enumerar todos los atajos internos de otras apps. Las sugerencias deben buscarse en el ordenador donde se usarán.
 
 **⌃⌥T** alterna la ventana activa entre flotante y tile. En los ajustes puedes elegir modificadores y tecla entre las combinaciones disponibles. Carbon registra el atajo para que no llegue simultáneamente a la aplicación enfocada; un conflicto se indica en ajustes. Una flotante permanece flotante aunque la muevas o redimensiones: solo vuelve al tile mediante el atajo. Desactivar el gestor o excluir un escritorio restaura la geometría guardada de sus ventanas.
 
@@ -189,3 +189,26 @@ En Espiral, las ventanas nuevas continúan el giro de la última división, aunq
 Los ajustes usan navegación lateral: Ventanas, Barra de menús, Mosaico y General. Mosaico muestra las ocho plantillas como tarjetas con miniaturas y selección directa. En Barra de menús puedes aplicar un fondo de color al widget: azul, salvia, lavanda, arena, rosa o gris, con la paleta y transparencia de Kairos Monitor. «Sin color» conserva el aspecto anterior. El fondo se guarda por usuario y utiliza una capa nativa estática, sin temporizadores ni imágenes adicionales.
 
 Todas las plantillas permiten ajustar las divisiones compartidas arrastrando bordes y esquinas. Las posiciones conservan los tamaños ajustados cuando intercambias las ventanas. En Centrada, Centrada XL y Principal vertical, las divisiones que delimitan a la principal se mueven simétricamente para mantenerla en el centro. Se respetan los mínimos de las aplicaciones y, si está activada, la rejilla de ajuste.
+
+## Atajos globales y traslado de ventanas (0.7)
+
+La sección **Atajos** reúne las combinaciones del selector, ventana flotante, cambio de escritorio y traslado de ventanas. Los atajos nuevos de navegación se activan con su propio interruptor; están desactivados inicialmente. Se conservan los atajos anteriores de Mosaico.
+
+| Acción | Combinación inicial |
+|---|---|
+| Ir al escritorio 1–9 de la pantalla activa | ⌘1–9 |
+| Enviar la ventana al escritorio 1–9 de su pantalla | ⌘⇧1–9 |
+| Enviar a la pantalla izquierda | ⌃⌘⌥← |
+| Enviar a la pantalla derecha | ⌃⌘⌥→ |
+| Alternar flotante/mosaico | Se conserva la combinación existente; inicialmente ⌃⌥T |
+| Selector de plantillas | Se conserva la combinación existente; inicialmente ⌃⌥Espacio |
+
+Las pantallas izquierda/derecha se eligen por su posición física, sin volver al extremo contrario cuando no existe otra pantalla. No se envía a una pantalla que muestra una aplicación a pantalla completa. Los números de escritorio se resuelven en cada pulsación, por el orden actual de Mission Control; no se guarda un ID obsoleto como destino.
+
+**Dar prioridad a los atajos de AMSpace**, desactivado inicialmente, filtra únicamente las combinaciones configuradas antes de que lleguen a las aplicaciones. El estado indica si está activo, suspendido o si se han usado reservas normales como alternativa. No garantiza prioridad absoluta frente a macOS, entrada segura ni otros interceptores. No se registran textos ni historial del teclado. Las combinaciones duplicadas dentro de AMSpace se rechazan conservando los ajustes previos; las reservas normales muestran cuántas combinaciones no están disponibles.
+
+**Al enviar a otro escritorio, permanecer en el origen** está activado inicialmente. Desmárcalo para seguir a la ventana, después de que macOS confirme su traslado. La operación comprueba identidad, tipo de ventana, ubicación y disponibilidad del destino. Se rechazan ventanas fijadas a varios escritorios, diálogos, pantalla completa y entrada segura. Los traslados tienen un plazo acotado, sin reenvíos repetidos entre Spaces. La llegada se confirma antes de confirmar el modelo del mosaico; un fallo deja el modelo sin esa propuesta y la reconciliación normal comprueba el estado real.
+
+El origen libera el hueco tras confirmar la llegada. El destino conserva su plantilla, rejilla, proporciones y ventanas existentes; se valida una copia antes de pedir el traslado. Si el destino está oculto, se coloca su mosaico en segundo plano antes de completar el traslado, sin activarlo. Las aplicaciones que rechacen esa colocación se reconcilian al entrar. Las flotantes siguen siendo flotantes. La función depende de que macOS acepte el puente nativo; si no está disponible, se indica en Atajos. No necesita desactivar SIP ni inyectar código.
+
+El cambio de escritorio conserva el mecanismo nativo por saltos, también para los atajos. Saltar de 1 a 3 puede recorrer el 2; no se utiliza una selección que solo cambie el número reportado sin cambiar la presentación real.

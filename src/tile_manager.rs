@@ -153,7 +153,7 @@ pub fn current_space() -> Option<u64> {
     let s = spaces::snapshot();
     s.active.and_then(|i| s.desktops.get(i).copied())
 }
-fn area(display: u32) -> Option<NSRect> {
+pub(crate) fn area(display: u32) -> Option<NSRect> {
     unsafe {
         let screens: Obj = msg_send![class!(NSScreen), screens];
         let first: Obj = msg_send![screens, firstObject];
@@ -618,7 +618,55 @@ pub struct Manager {
     space_reentry: Option<SpaceReentry>,
     pub last_error: Option<String>,
 }
+pub struct KeyboardTransfer {
+    pub source: Workspace,
+    pub destination: Workspace,
+    pub target: NSRect,
+    source_area: NSRect,
+    destination_area: NSRect,
+    desktop: Option<Desktop>,
+    tracked: bool,
+    floating: bool,
+}
+pub struct KeyboardPlacement {
+    pub pid: i32,
+    pub id: u32,
+    pub element: ax::Owned,
+    pub target: NSRect,
+}
+impl KeyboardTransfer {
+    /// Only a validated tiled proposal may resize the hidden destination.
+    pub fn background_frames(&self) -> Vec<(u32, NSRect)> {
+        self.desktop
+            .as_ref()
+            .map(|desktop| desktop.frames(self.destination_area, 10.))
+            .unwrap_or_default()
+    }
+}
 impl Manager {
+    pub fn keyboard_transfer_windows(&self, plan: &KeyboardTransfer) -> Vec<KeyboardPlacement> {
+        let Some(identities) = ws::all_window_ids() else {
+            return Vec::new();
+        };
+        plan.background_frames()
+            .into_iter()
+            .filter_map(|(id, target)| {
+                let (pid, _) = *identities.iter().find(|(_, window)| *window == id)?;
+                let element = self
+                    .windows
+                    .get(&id)
+                    .filter(|window| window.pid == pid)
+                    .map(|window| window.element.clone())
+                    .or_else(|| ax::window_for_id(pid, id))?;
+                Some(KeyboardPlacement {
+                    pid,
+                    id,
+                    element,
+                    target,
+                })
+            })
+            .collect()
+    }
     fn presentation_blocks_input(&mut self) -> bool {
         if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
             return true;
@@ -1078,6 +1126,212 @@ impl Manager {
                 }
             }
         }
+    }
+    pub fn prepare_keyboard_transfer(
+        &mut self,
+        defaults: Obj,
+        pid: i32,
+        id: u32,
+        source: Workspace,
+        destination: Workspace,
+        frame: NSRect,
+    ) -> Result<KeyboardTransfer, &'static str> {
+        let tracked = pref(defaults, "tile.enabled") != 0;
+        if self.presentation_blocks_input()
+            || (tracked && (self.space_reentry.is_some() || self.waiting_for_space(Instant::now())))
+        {
+            return Err("Espera a que termine el cambio de escritorio.");
+        }
+        let source_area = area(source.0).ok_or("La pantalla de origen ya no está disponible.")?;
+        let destination_area =
+            area(destination.0).ok_or("La pantalla de destino ya no está disponible.")?;
+        let floating = self.floating.contains(&id) || crate::tile_rules::floats(defaults, pid);
+        let tiled =
+            tracked && pref(defaults, &format!("tile.off.{}", destination.1)) == 0 && !floating;
+        let desktop =
+            if tiled {
+                let mut base = self.desktops.get(&destination).cloned().unwrap_or_else(|| {
+                    Desktop::configured(
+                        layout_pref(defaults, destination),
+                        if pref(defaults, "tile.grid.enabled") != 0 {
+                            Some((
+                                grid_count(defaults, "tile.grid.columns", 120, 240),
+                                grid_count(defaults, "tile.grid.rows", 6, 60),
+                            ))
+                        } else {
+                            None
+                        },
+                    )
+                });
+                let snapshot = ws::transition_windows()
+                    .ok_or("No se puede comprobar el escritorio de destino.")?;
+                // Refresh known membership without treating an unavailable AX
+                // listing as destruction of a customized hidden layout.
+                let mut ids: Vec<_> = base
+                    .order
+                    .iter()
+                    .copied()
+                    .filter(|known| {
+                        *known != id
+                            && !self.floating.contains(known)
+                            && spaces::window_space(*known)
+                                .is_none_or(|space| space == destination.1)
+                            && ws::ordered_in(*known) != Some(false)
+                            && snapshot.iter().any(|window| {
+                                window.id == *known
+                                    && !crate::tile_rules::floats(defaults, window.pid)
+                                    && window.frame.is_none_or(|frame| {
+                                        overlap(frame, destination_area)
+                                            > frame.size.width * frame.size.height * 0.5
+                                    })
+                            })
+                    })
+                    .collect();
+                for window in snapshot
+                    .into_iter()
+                    .filter(|w| w.layer == 0 && w.pid != std::process::id() as i32 && w.id != id)
+                {
+                    if window.frame.is_none_or(|frame| {
+                        overlap(frame, destination_area)
+                            <= frame.size.width * frame.size.height * 0.5
+                    }) {
+                        continue;
+                    }
+                    if spaces::window_space(window.id) != Some(destination.1)
+                        || ws::ordered_in(window.id) == Some(false)
+                        || self.floating.contains(&window.id)
+                        || crate::tile_rules::floats(defaults, window.pid)
+                    {
+                        continue;
+                    }
+                    // A native layer-0 entry is not proof of a tileable
+                    // window: auxiliary overlays and hidden AX windows also
+                    // appear here. Never let an unverified entry veto the
+                    // entire transfer, or resize it without AX confirmation.
+                    let element = self
+                        .windows
+                        .get(&window.id)
+                        .filter(|managed| managed.pid == window.pid)
+                        .map(|managed| managed.element.clone())
+                        .or_else(|| ax::window_for_id(window.pid, window.id));
+                    let eligible = match element {
+                        Some(element) => {
+                            ax::window_id(element.0) == Some(window.id)
+                                && ax::tileable(element.0)
+                                && !ax::flag(element.0, "AXMinimized")
+                                && !ax::flag(element.0, "AXFullScreen")
+                        }
+                        // A known tile may temporarily disappear from AX.
+                        // Preserve its slot while native membership holds.
+                        None => base.order.contains(&window.id),
+                    };
+                    if eligible && !ids.contains(&window.id) {
+                        ids.push(window.id);
+                    }
+                }
+                ids.sort_unstable();
+                base.reconcile_at(&ids, destination_area, 10., None);
+                Some(arrival_proposal(&base,id,None,destination_area,Some(&self.minimum_sizes))
+                .ok_or("La ventana no cabe en la distribución de destino; no se ha movido nada.")?)
+            } else {
+                None
+            };
+        let target = desktop
+            .as_ref()
+            .and_then(|d| {
+                d.frames(destination_area, 10.)
+                    .into_iter()
+                    .find(|(window, _)| *window == id)
+                    .map(|(_, frame)| frame)
+            })
+            .unwrap_or_else(|| restoration_frame(frame, source_area, destination_area));
+        self.cancel_drag();
+        let affected: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|(_, w)| w.space == source || w.space == destination)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in affected {
+            self.cancel_window_placement(id);
+        }
+        Ok(KeyboardTransfer {
+            source,
+            destination,
+            target,
+            source_area,
+            destination_area,
+            desktop,
+            tracked,
+            floating,
+        })
+    }
+    /// Commit only after native arrival and the bounded background placement.
+    /// Normal reentry still reconciles windows that refused hidden AX writes.
+    pub fn commit_keyboard_transfer(
+        &mut self,
+        plan: KeyboardTransfer,
+        pid: i32,
+        id: u32,
+        element: ax::Owned,
+        original: NSRect,
+    ) {
+        if area(plan.destination.0) != Some(plan.destination_area) {
+            self.invalidate();
+            return;
+        }
+        self.commit_keyboard_transfer_model(plan, pid, id, element, original);
+    }
+    fn commit_keyboard_transfer_model(
+        &mut self,
+        plan: KeyboardTransfer,
+        pid: i32,
+        id: u32,
+        element: ax::Owned,
+        original: NSRect,
+    ) {
+        self.cancel_window_placement(id);
+        for (key, desktop) in &mut self.desktops {
+            if *key != plan.destination {
+                desktop.remove(id);
+            }
+        }
+        let destination_area = plan.destination_area;
+        if let Some(desktop) = plan.desktop {
+            self.desktops.insert(plan.destination, desktop);
+        }
+        if plan.tracked {
+            if plan.floating {
+                self.floating.insert(id);
+            }
+            if let Some(window) = self.windows.get_mut(&id).filter(|w| w.pid == pid) {
+                window.original =
+                    restoration_frame(window.original, window.original_area, destination_area);
+                window.original_area = destination_area;
+                window.space = plan.destination;
+                window.element = element;
+            } else {
+                self.windows.insert(
+                    id,
+                    Managed {
+                        pid,
+                        space: plan.destination,
+                        original: restoration_frame(original, plan.source_area, destination_area),
+                        original_area: destination_area,
+                        element,
+                    },
+                );
+            }
+            self.handoffs.insert(
+                id,
+                MonitorHandoff {
+                    destination: plan.destination,
+                    expires: Instant::now() + Duration::from_millis(1200),
+                },
+            );
+        }
+        self.membership_grace.since.remove(&id);
+        self.invalidate();
     }
     pub fn toggle_float(&mut self, defaults: Obj) {
         if self.presentation_blocks_input() {
@@ -2519,7 +2773,7 @@ impl Manager {
     }
 }
 
-fn restoration_frame(original: NSRect, source: NSRect, destination: NSRect) -> NSRect {
+pub(crate) fn restoration_frame(original: NSRect, source: NSRect, destination: NSRect) -> NSRect {
     if source == destination {
         return original;
     }
@@ -2647,6 +2901,181 @@ fn needs_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn assert_keyboard_frames(desktop: &Desktop, area: NSRect) {
+        let frames = desktop.frames(area, 10.);
+        assert_eq!(frames.len(), desktop.order.len());
+        for (index, (_, frame)) in frames.iter().enumerate() {
+            assert!(frame.size.width >= 120. && frame.size.height >= 90.);
+            assert!(frame.origin.x >= area.origin.x - 1. && frame.origin.y >= area.origin.y - 1.);
+            assert!(frame.origin.x + frame.size.width <= area.origin.x + area.size.width + 1.);
+            assert!(frame.origin.y + frame.size.height <= area.origin.y + area.size.height + 1.);
+            for (_, other) in &frames[index + 1..] {
+                assert!(overlap(*frame, *other) < 0.01);
+            }
+        }
+    }
+    #[test]
+    fn keyboard_round_trips_cross_all_template_pairs_spaces_and_orientations() {
+        let source_area = rect(10., 41., 1660., 947.);
+        let destinations = [
+            ((1, 5), source_area),
+            ((2, 9), rect(-1420., -600., 1400., 2400.)),
+            ((2, 1), rect(1680., -1100., 1900., 1050.)),
+            ((2, 1), rect(-1100., 1050., 1080., 1900.)),
+        ];
+        let element = ax::application(std::process::id() as i32).unwrap();
+        for source_layout in Layout::ALL {
+            for target_layout in Layout::ALL {
+                for grid in [None, Some((120, 6))] {
+                    for (destination, destination_area) in destinations {
+                        let source = (1, 1);
+                        let untouched = (3, 9);
+                        let mut manager = Manager::default();
+                        let mut from = Desktop::configured(source_layout, grid);
+                        from.reconcile(&[1, 2, 3], source_area, 10.);
+                        let original = from.frames(source_area, 10.)[0].1;
+                        let mut to = Desktop::configured(target_layout, grid);
+                        to.reconcile(&[10, 11, 12], destination_area, 10.);
+                        let (resized_id, frame) = to.frames(destination_area, 10.)[0];
+                        let mut resized = frame;
+                        resized.size.width *= 0.9;
+                        to.resize(resized_id, frame, resized, destination_area, 10.);
+                        let saved = to.save_distribution(destination_area);
+                        manager.desktops.insert(source, from);
+                        manager.desktops.insert(destination, to);
+                        manager
+                            .desktops
+                            .insert(untouched, Desktop::configured(Layout::ThreeBands, None));
+                        let unaffected = manager.desktops[&untouched].clone();
+                        let proposed = arrival_proposal(
+                            &manager.desktops[&destination],
+                            1,
+                            None,
+                            destination_area,
+                            None,
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            manager.desktops[&destination].save_distribution(destination_area),
+                            saved
+                        );
+                        assert_keyboard_frames(&proposed, destination_area);
+                        let target = proposed
+                            .frames(destination_area, 10.)
+                            .into_iter()
+                            .find(|(id, _)| *id == 1)
+                            .unwrap()
+                            .1;
+                        let plan = KeyboardTransfer {
+                            source,
+                            destination,
+                            target,
+                            source_area,
+                            destination_area,
+                            desktop: Some(proposed),
+                            tracked: true,
+                            floating: false,
+                        };
+                        assert_eq!(plan.background_frames().len(), 4);
+                        manager.commit_keyboard_transfer_model(
+                            plan,
+                            42,
+                            1,
+                            element.clone(),
+                            original,
+                        );
+                        assert_eq!(manager.windows[&1].space, destination);
+                        assert_eq!(manager.desktops[&destination].layout, target_layout);
+                        assert!(manager.desktops[&untouched] == unaffected);
+                        assert_eq!(
+                            manager
+                                .desktops
+                                .values()
+                                .filter(|d| d.order.contains(&1))
+                                .count(),
+                            1
+                        );
+                        assert_keyboard_frames(&manager.desktops[&source], source_area);
+                        let proposed = arrival_proposal(
+                            &manager.desktops[&source],
+                            1,
+                            None,
+                            source_area,
+                            None,
+                        )
+                        .unwrap();
+                        let plan = KeyboardTransfer {
+                            source: destination,
+                            destination: source,
+                            target: original,
+                            source_area: destination_area,
+                            destination_area: source_area,
+                            desktop: Some(proposed),
+                            tracked: true,
+                            floating: false,
+                        };
+                        manager.commit_keyboard_transfer_model(
+                            plan,
+                            42,
+                            1,
+                            element.clone(),
+                            target,
+                        );
+                        assert_eq!(manager.windows[&1].space, source);
+                        assert_eq!(manager.desktops[&source].layout, source_layout);
+                        assert_eq!(
+                            manager
+                                .desktops
+                                .values()
+                                .filter(|d| d.order.contains(&1))
+                                .count(),
+                            1
+                        );
+                        assert!(manager.desktops[&untouched] == unaffected);
+                        assert_keyboard_frames(&manager.desktops[&source], source_area);
+                        assert_keyboard_frames(&manager.desktops[&destination], destination_area);
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn keyboard_floating_and_disabled_tiling_do_not_create_background_tiles() {
+        let element = ax::application(std::process::id() as i32).unwrap();
+        for tracked in [false, true] {
+            for floating in [false, true] {
+                let source = (1, 1);
+                let destination = (2, 1); // same native Space on different monitors
+                let source_area = rect(10., 41., 1660., 947.);
+                let destination_area = rect(-900., -400., 880., 1580.);
+                let original = rect(500., 100., 1000., 800.);
+                let mut manager = Manager::default();
+                let mut desktop = Desktop::configured(Layout::Spiral, None);
+                desktop.reconcile(&[2, 3], destination_area, 10.);
+                manager.desktops.insert(destination, desktop.clone());
+                let target = restoration_frame(original, source_area, destination_area);
+                let plan = KeyboardTransfer {
+                    source,
+                    destination,
+                    target,
+                    source_area,
+                    destination_area,
+                    desktop: None,
+                    tracked,
+                    floating,
+                };
+                assert!(plan.background_frames().is_empty());
+                manager.commit_keyboard_transfer_model(plan, 42, 1, element.clone(), original);
+                assert!(manager.desktops[&destination] == desktop);
+                assert_eq!(manager.floating.contains(&1), tracked && floating);
+                assert_eq!(manager.windows.contains_key(&1), tracked);
+                if tracked {
+                    assert_eq!(manager.windows[&1].space, destination);
+                    assert_eq!(manager.windows[&1].original, target);
+                }
+            }
+        }
+    }
     fn reentry_observation(
         key: Workspace,
         area: NSRect,
@@ -2659,6 +3088,64 @@ mod tests {
                 .map(|(id, r)| (42, *id, key.1, *r, Some(*r)))
                 .collect(),
             absent: Vec::new(),
+        }
+    }
+    #[test]
+    fn keyboard_arrival_preflight_preserves_custom_destination_until_commit() {
+        for layout in Layout::ALL {
+            for area in [
+                rect(-1500., 40., 1400., 900.),
+                rect(100., -1100., 900., 1400.),
+            ] {
+                for grid in [None, Some((12, 8))] {
+                    let mut destination = Desktop::configured(layout, grid);
+                    destination.reconcile_at(&[10, 11, 12, 13], area, 10., None);
+                    let initial = destination.frames(area, 10.);
+                    if let Some((id, frame)) = initial.first() {
+                        let mut adjusted = *frame;
+                        adjusted.size.width *= 0.9;
+                        destination.resize(*id, *frame, adjusted, area, 10.);
+                    }
+                    let before = destination.save_distribution(area);
+                    let before_frames = destination.frames(area, 10.);
+                    let result = arrival_proposal(&destination, 99, None, area, None);
+                    assert_eq!(destination.save_distribution(area), before);
+                    assert_eq!(destination.frames(area, 10.), before_frames);
+                    if let Some(proposed) = result {
+                        assert_eq!(proposed.order.len(), 5);
+                        assert!(proposed.order.contains(&99));
+                        for id in [10, 11, 12, 13] {
+                            assert!(proposed.order.contains(&id));
+                        }
+                        let frames = proposed.frames(area, 10.);
+                        assert_eq!(frames.len(), 5);
+                        for (i, (_, a)) in frames.iter().enumerate() {
+                            assert!(a.origin.x >= area.origin.x && a.origin.y >= area.origin.y);
+                            assert!(
+                                a.origin.x + a.size.width <= area.origin.x + area.size.width + 1.
+                            );
+                            assert!(
+                                a.origin.y + a.size.height <= area.origin.y + area.size.height + 1.
+                            );
+                            for (_, b) in &frames[i + 1..] {
+                                assert!(overlap(*a, *b) < 0.01);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn impossible_keyboard_arrival_leaves_destination_unchanged() {
+        let area = rect(0., 0., 1200., 800.);
+        for layout in Layout::ALL {
+            let mut destination = Desktop::configured(layout, None);
+            destination.reconcile_at(&[1, 2, 3], area, 10., None);
+            let before = destination.save_distribution(area);
+            let minimums = HashMap::from([(99, objc2_foundation::NSSize::new(5000., 5000.))]);
+            assert!(arrival_proposal(&destination, 99, None, area, Some(&minimums)).is_none());
+            assert_eq!(destination.save_distribution(area), before);
         }
     }
     #[test]

@@ -11,6 +11,8 @@ mod instance;
 mod layout_thumbnail;
 mod model;
 mod native;
+mod shortcuts;
+mod sky_bridge;
 mod space_style;
 mod space_switch;
 mod spaces;
@@ -22,15 +24,40 @@ mod tile_rules;
 mod tiling;
 mod ui;
 mod updater;
+mod window_move;
 mod window_server;
 
 fn main() {
-    if std::env::args().any(|a| a == "--render-desktop-previews") {
+    if std::env::args().any(|a| a == "--space-transfer-fixture") {
+        objc2::rc::autoreleasepool(|_| window_move::run_transfer_fixture());
+    } else if std::env::args().any(|a| a == "--check-priority-shortcuts") {
+        let result = objc2::rc::autoreleasepool(|_| shortcuts::check_priority_lifecycle());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    } else if std::env::args().any(|a| a == "--check-transfer-preflight") {
+        let result = objc2::rc::autoreleasepool(|_| window_move::check_transfer_preflight());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    } else if std::env::args().any(|a| a == "--check-space-transfer") {
+        let result = objc2::rc::autoreleasepool(|_| window_move::check_native_bridge());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    } else if std::env::args().any(|a| a == "--render-desktop-previews") {
         objc2::rc::autoreleasepool(|_| desktop_preview::render_diagnostics());
     } else if std::env::args().any(|a| a == "--diagnose") {
         objc2::rc::autoreleasepool(|_| {
             println!("AMSpace {}", env!("CARGO_PKG_VERSION"));
             println!("Accessibility: {}", accessibility::trusted());
+            println!(
+                "Native Space transfer: {}",
+                window_move::space_moves_available()
+            );
             println!("Spaces: {:?}", spaces::snapshot());
             println!("Visible desktops: {:?}", spaces::visible_desktops());
             for (pid, id, frame) in window_server::tile_windows() {

@@ -86,8 +86,11 @@ struct App {
     tile_timer: Option<Retained<AnyObject>>,
     tile_mouse: Option<crate::tile_mouse::Monitor>,
     tile_interval: f64,
-    tile_hotkey: Option<crate::tile_hotkey::HotKey>,
-    picker_hotkey: Option<crate::tile_hotkey::HotKey>,
+    shortcuts: crate::shortcuts::Service,
+    shortcut_config: Option<(Vec<crate::shortcuts::Binding>, bool)>,
+    shortcut_status: Obj,
+    shortcut_fields: Vec<(Obj, String, bool, isize)>,
+    transfer: Option<crate::window_move::Pending>,
     layout_picker: Option<crate::tile_picker::Picker>,
     picker_settings: Option<Retained<AnyObject>>,
     picker_hint: Obj,
@@ -268,10 +271,11 @@ unsafe fn paint_swatch(button: Obj, name: &str, rgb: [f64; 3]) {
         let _: () = msg_send![button, setToolTip:&*NSString::from_str(name)];
     }
 }
-const SETTINGS_SECTIONS: [(&str, &str); 6] = [
+const SETTINGS_SECTIONS: [(&str, &str); 7] = [
     ("Ventanas", "macwindow"),
     ("Barra de menús", "menubar.rectangle"),
     ("Mosaico", "rectangle.split.2x2"),
+    ("Atajos", "keyboard"),
     ("General", "gearshape"),
     ("Acerca de", "info.circle"),
     ("Salir", "power"),
@@ -314,13 +318,13 @@ unsafe fn build_navigation(parent: Obj, frame: NSRect, target: Obj, footer: bool
 extern "C-unwind" fn navigation_rows(_: Obj, _: Sel, table: Obj) -> isize {
     unsafe {
         let footer: isize = msg_send![table, tag];
-        if footer == 1 { 2 } else { 4 }
+        if footer == 1 { 2 } else { 5 }
     }
 }
 extern "C-unwind" fn navigation_view(_: Obj, _: Sel, table: Obj, _: Obj, row: isize) -> Obj {
     unsafe {
         let footer: isize = msg_send![table, tag];
-        let (title, symbol) = SETTINGS_SECTIONS[row as usize + if footer == 1 { 4 } else { 0 }];
+        let (title, symbol) = SETTINGS_SECTIONS[row as usize + if footer == 1 { 5 } else { 0 }];
         let cell = alloc_view(class!(NSTableCellView), rect(0., 0., 160., 36.));
         let field = label(
             Retained::as_ptr(&cell) as Obj,
@@ -454,8 +458,11 @@ impl App {
                 tile_timer: None,
                 tile_mouse: None,
                 tile_interval: 0.,
-                tile_hotkey: None,
-                picker_hotkey: None,
+                shortcuts: Default::default(),
+                shortcut_config: None,
+                shortcut_status: ptr::null_mut(),
+                shortcut_fields: vec![],
+                transfer: None,
                 layout_picker: None,
                 picker_settings: None,
                 picker_hint: ptr::null_mut(),
@@ -1043,6 +1050,7 @@ impl App {
     }
     fn hover(&mut self) {
         if self.layout_picker.is_some()
+            || self.transfer.is_some()
             || self.switching.is_some()
             || Instant::now() < self.hover_resume
             || focus::secure_input()
@@ -1140,6 +1148,7 @@ impl App {
             let front: Obj = msg_send![workspace, frontmostApplication];
             let front_pid: i32 = msg_send![front, processIdentifier];
             if self.switching.is_some()
+                || self.transfer.is_some()
                 || Instant::now() < self.hover_resume
                 || !self.hover_enabled
                 || self.sleeping
@@ -1278,7 +1287,7 @@ impl App {
                 0.5,
                 false,
             );
-            build_navigation(side, rect(12., height - 284., 160., 184.), target, false);
+            build_navigation(side, rect(12., height - 328., 160., 228.), target, false);
             self.preview = label(
                 side,
                 rect(20., 144., 145., 28.),
@@ -1301,14 +1310,18 @@ impl App {
                 rect(220., 78., content_width, tab_height),
             );
             let _: () = msg_send![&tabs, setTabViewType:6usize];
-            for i in 0..4 {
+            for i in 0..5 {
                 let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
                 // Keep all Mosaic controls visible, including on smaller displays.
                 // Matching frame and bounds aspect ratios scales the whole page uniformly.
                 let tile_height = settings_tile_geometry(content_width.max(560.)).0;
                 let scale = (tab_height / tile_height).min(content_width / 560.).min(1.);
-                let page_width = if i == 2 { content_width / scale } else { 432. };
-                let page_height = if i == 2 {
+                let page_width = if i == 2 || i == 3 {
+                    content_width / scale
+                } else {
+                    432.
+                };
+                let page_height = if i == 2 || i == 3 {
                     tile_height
                 } else if i == 1 {
                     430.
@@ -1317,7 +1330,7 @@ impl App {
                 };
                 let inner = alloc_view(
                     class!(NSView),
-                    if i == 2 {
+                    if i == 2 || i == 3 {
                         rect(
                             0.,
                             tab_height - page_height * scale,
@@ -1340,6 +1353,7 @@ impl App {
                     0 => self.build_window_page(page, target),
                     1 => self.build_space_page(page, target),
                     2 => self.build_tile_page(page, target),
+                    3 => self.build_shortcuts_page(page, target),
                     _ => self.build_application_page(page, target),
                 }
                 let item: Retained<AnyObject> = msg_send![class!(NSTabViewItem), new];
@@ -1489,14 +1503,341 @@ impl App {
             );
         }
     }
+    fn shortcut_action(&mut self, action: crate::tile_hotkey::Action) {
+        use crate::tile_hotkey::Action;
+        if !self.shortcuts.available(action)
+            || self.sleeping
+            || self.transfer.is_some()
+            || focus::secure_input()
+            || crate::desktop_mode::active()
+        {
+            return;
+        }
+        self.desktop_preview.hide();
+        match action {
+            Action::Desktop(index) => {
+                let snapshot = spaces::snapshot();
+                if let Some(id) = snapshot.desktops.get(index as usize) {
+                    self.select_desktop(*id);
+                } else {
+                    self.feedback("Ese escritorio no existe en la pantalla activa.");
+                }
+            }
+            Action::Float => {
+                if self.switching.is_none() && self.layout_picker.is_none() {
+                    self.tile_manager
+                        .toggle_float(Retained::as_ptr(&self.defaults) as Obj);
+                    self.update_tile_timer();
+                }
+            }
+            Action::Layouts => self.toggle_picker(),
+            Action::SendSpace(index) => {
+                self.start_transfer(crate::window_move::Destination::Space(index as usize))
+            }
+            Action::MonitorLeft => {
+                self.start_transfer(crate::window_move::Destination::Monitor(false))
+            }
+            Action::MonitorRight => {
+                self.start_transfer(crate::window_move::Destination::Monitor(true))
+            }
+        }
+    }
+    fn start_transfer(&mut self, destination: crate::window_move::Destination) {
+        if self.switching.is_some() || self.layout_picker.is_some() || self.transfer.is_some() {
+            return;
+        }
+        match crate::window_move::Pending::start(
+            &mut self.tile_manager,
+            Retained::as_ptr(&self.defaults) as Obj,
+            destination,
+        ) {
+            Ok(pending) => {
+                self.pending_focus = None;
+                self.focus_target = None;
+                self.hide_border();
+                self.transfer = Some(pending);
+                self.schedule_transfer_tick();
+            }
+            Err(message) => self.feedback(message),
+        }
+    }
+    fn schedule_transfer_tick(&self) {
+        unsafe {
+            let _: () = msg_send![&self.target,performSelector:sel!(transferTick:),withObject:ptr::null::<AnyObject>(),afterDelay:0.05f64];
+        }
+    }
+    fn step_transfer(&mut self) {
+        if self.sleeping {
+            self.transfer = None;
+            self.tile_manager.invalidate();
+            return;
+        }
+        let Some(mut pending) = self.transfer.take() else {
+            return;
+        };
+        match pending.poll() {
+            crate::window_move::Progress::Waiting => {
+                self.transfer = Some(pending);
+                self.schedule_transfer_tick();
+            }
+            result => {
+                let arrived =
+                    matches!(result, crate::window_move::Progress::Arrived) && pending.arrived();
+                let follow = pending.follow && arrived;
+                let destination = pending.plan.destination.1;
+                if arrived {
+                    self.tile_manager.commit_keyboard_transfer(
+                        pending.plan,
+                        pending.pid,
+                        pending.id,
+                        pending.element,
+                        pending.original,
+                    );
+                } else {
+                    self.tile_manager.invalidate();
+                }
+                self.hover_resume = Instant::now() + Duration::from_millis(400);
+                self.update_tile_timer();
+                self.update_window();
+                if let crate::window_move::Progress::Failed(message) = result {
+                    self.feedback(message);
+                }
+                if follow {
+                    self.select_desktop(destination);
+                }
+            }
+        }
+    }
+    fn edit_shortcuts(&mut self, edits: &[(&str, isize)]) {
+        if crate::shortcuts::edit(Retained::as_ptr(&self.defaults) as Obj, edits) {
+            self.configure_shortcuts();
+        } else {
+            self.feedback("Esa combinación coincide con otro atajo de AMSpace. Se conservan los ajustes anteriores.");
+        }
+        self.refresh_shortcut_fields();
+    }
+    fn configure_shortcuts(&mut self) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let tiling = crate::tile_manager::pref(defaults, "tile.enabled") != 0
+            && ax::trusted()
+            && !crate::desktop_mode::active();
+        let mut bindings = if self.sleeping {
+            vec![]
+        } else {
+            crate::shortcuts::bindings(defaults, tiling)
+        };
+        if !crate::window_move::space_moves_available() {
+            bindings.retain(|b| !matches!(b.action, crate::tile_hotkey::Action::SendSpace(_)));
+        }
+        let priority = crate::tile_manager::pref(defaults, "shortcuts.priority") != 0;
+        let config = (bindings.clone(), priority);
+        let retry = priority && !self.shortcuts.priority && ax::trusted();
+        if self.shortcut_config.as_ref() != Some(&config) || retry {
+            self.shortcuts = Default::default(); // Release old Carbon reservations before replacing them.
+            self.shortcuts = crate::shortcuts::Service::new(bindings, priority);
+            self.shortcut_config = Some(config);
+        }
+        self.refresh_shortcut_status();
+        self.refresh_picker_hint();
+    }
+    fn refresh_shortcut_fields(&self) {
+        unsafe {
+            let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            if !self.picker_mods.is_null() {
+                let _: () = msg_send![self.picker_mods,selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.picker.mods")) as isize];
+                let _: () = msg_send![self.picker_keys,selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref_or(defaults,"tile.picker.key",2)) as isize];
+            }
+            for (field, key, is_key, fallback) in &self.shortcut_fields {
+                let value = crate::tile_manager::pref_or(
+                    Retained::as_ptr(&self.defaults) as Obj,
+                    key,
+                    *fallback,
+                );
+                let index = if *is_key {
+                    crate::tile_hotkey::key_index(value)
+                } else {
+                    crate::tile_hotkey::modifier_index(value)
+                };
+                let _: () = msg_send![*field,selectItemAtIndex:index as isize];
+            }
+        }
+    }
+    fn refresh_shortcut_status(&self) {
+        if self.shortcut_status.is_null() {
+            return;
+        }
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let enabled = crate::tile_manager::pref(defaults, "shortcuts.enabled") != 0;
+        let priority = crate::tile_manager::pref(defaults, "shortcuts.priority") != 0;
+        let mut status = if priority && self.shortcuts.priority_active() {
+            "Prioridad activa".to_string()
+        } else if priority && self.shortcuts.priority {
+            "Prioridad suspendida; vuelve a activar el check para reintentar".to_string()
+        } else if priority {
+            "Prioridad no disponible; se usan reservas normales".to_string()
+        } else {
+            "Prioridad desactivada".to_string()
+        };
+        if !enabled {
+            status.push_str(" · navegación desactivada");
+        }
+        if !self.shortcuts.unavailable.is_empty() {
+            status.push_str(&format!(
+                " · {} combinaciones no disponibles",
+                self.shortcuts.unavailable.len()
+            ));
+        }
+        if !crate::window_move::space_moves_available() {
+            status.push_str("\nEl envío entre escritorios no está disponible en este macOS.");
+        }
+        unsafe {
+            text(self.shortcut_status, &status);
+        }
+    }
+    unsafe fn build_shortcuts_page(&mut self, root: Obj, target: Obj) {
+        unsafe {
+            let bounds: NSRect = msg_send![root, bounds];
+            let width = bounds.size.width;
+            let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            card(root, rect(0., 480., width, 90.));
+            label(
+                root,
+                rect(18., 530., width - 90., 24.),
+                "Navegación y traslado de ventanas",
+                14.,
+                0.3,
+                false,
+            );
+            toggle(
+                root,
+                width - 58.,
+                530.,
+                "Activar atajos de navegación y traslado",
+                target,
+                90,
+                crate::tile_manager::pref(defaults, "shortcuts.enabled") != 0,
+            );
+            label(
+                root,
+                rect(18., 492., width - 36., 28.),
+                "Activa los atajos nuevos cuando hayas elegido tus combinaciones.",
+                11.,
+                0.,
+                true,
+            );
+            let priority = button(
+                root,
+                rect(18., 444., width - 36., 26.),
+                "Dar prioridad a los atajos de AMSpace",
+                target,
+                91,
+            );
+            let _: () = msg_send![priority,setButtonType:3usize];
+            let _: () = msg_send![priority,setState:crate::tile_manager::pref(defaults,"shortcuts.priority").clamp(0,1)];
+            label(
+                root,
+                rect(18., 416., width - 36., 22.),
+                "macOS, otras herramientas de teclado y la entrada segura pueden limitarla.",
+                11.,
+                0.,
+                true,
+            );
+            self.shortcut_status =
+                label(root, rect(18., 365., width - 155., 44.), "", 10., 0., true);
+            let _: () = msg_send![self.shortcut_status,setMaximumNumberOfLines:2isize];
+            button(
+                root,
+                rect(width - 130., 380., 112., 26.),
+                "Sugerencias…",
+                target,
+                54,
+            );
+            let modifiers: Vec<_> = crate::tile_hotkey::MODIFIERS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            let keys: Vec<_> = crate::tile_hotkey::KEYS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            for (row, (title, prefix, mods_fallback, key_fallback)) in [
+                ("Cambiar a escritorio", "shortcuts.desktop", 11, None),
+                ("Enviar ventana a escritorio", "shortcuts.send", 3, None),
+                ("Enviar a pantalla izquierda", "shortcuts.left", 9, Some(50)),
+                ("Enviar a pantalla derecha", "shortcuts.right", 9, Some(51)),
+                ("Ventana flotante / mosaico", "tile", 0, Some(0)),
+                ("Selector de plantillas", "tile.picker", 0, Some(2)),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let y = 326. - row as f64 * 43.;
+                label(
+                    root,
+                    rect(18., y + 3., width - 300., 22.),
+                    title,
+                    13.,
+                    0.,
+                    false,
+                );
+                let mods = popup(
+                    root,
+                    rect(width - 264., y - 2., 122., 30.),
+                    &modifiers,
+                    target,
+                    300 + self.shortcut_fields.len() as isize,
+                );
+                self.shortcut_fields
+                    .push((mods, format!("{prefix}.mods"), false, mods_fallback));
+                if let Some(fallback) = key_fallback {
+                    let key = popup(
+                        root,
+                        rect(width - 134., y - 2., 116., 30.),
+                        &keys,
+                        target,
+                        300 + self.shortcut_fields.len() as isize,
+                    );
+                    self.shortcut_fields
+                        .push((key, format!("{prefix}.key"), true, fallback));
+                } else {
+                    label(
+                        root,
+                        rect(width - 118., y + 3., 96., 22.),
+                        "1 – 9",
+                        13.,
+                        0.3,
+                        false,
+                    );
+                }
+            }
+            let stay = button(
+                root,
+                rect(18., 59., width - 36., 26.),
+                "Al enviar a otro escritorio, permanecer en el origen",
+                target,
+                93,
+            );
+            let _: () = msg_send![stay,setButtonType:3usize];
+            let _: () = msg_send![stay,setState:crate::tile_manager::pref_or(defaults,"shortcuts.stay",1).clamp(0,1)];
+            label(
+                root,
+                rect(18., 15., width - 36., 32.),
+                "Los escritorios se numeran por pantalla. Flotante y selector requieren Mosaico activo.",
+                11.,
+                0.,
+                true,
+            );
+            self.refresh_shortcut_fields();
+            self.refresh_shortcut_status();
+        }
+    }
     fn configure_tiling(&mut self) {
         self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.tile_timer.take() {
                 let _: () = msg_send![&t, invalidate];
             }
-            self.tile_hotkey = None;
-            self.picker_hotkey = None;
+            self.configure_shortcuts();
             self.tile_mouse = None;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             if crate::tile_manager::pref(defaults, "tile.enabled") == 0
@@ -1511,7 +1852,11 @@ impl App {
             self.tile_mouse = crate::tile_mouse::Monitor::new(|down, point| {
                 autoreleasepool(|_| {
                     with_app(|a| {
-                        if a.layout_picker.is_some() || a.switching.is_some() || a.sleeping {
+                        if a.layout_picker.is_some()
+                            || a.transfer.is_some()
+                            || a.switching.is_some()
+                            || a.sleeping
+                        {
                             return;
                         }
                         a.tile_manager.mouse_event(
@@ -1523,29 +1868,6 @@ impl App {
                     })
                 });
             });
-            self.tile_hotkey = crate::tile_hotkey::HotKey::new(
-                crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults, "tile.key")),
-                crate::tile_hotkey::modifier_index(crate::tile_manager::pref(
-                    defaults,
-                    "tile.mods",
-                )),
-                crate::tile_hotkey::Action::Float,
-            );
-            self.picker_hotkey = crate::tile_hotkey::HotKey::new(
-                crate::tile_hotkey::key_index(crate::tile_manager::pref_or(
-                    defaults,
-                    "tile.picker.key",
-                    2,
-                )),
-                crate::tile_hotkey::modifier_index(crate::tile_manager::pref(
-                    defaults,
-                    "tile.picker.mods",
-                )),
-                crate::tile_hotkey::Action::Layouts,
-            );
-            if self.tile_hotkey.is_none() {
-                self.feedback("Atajo ocupado: elige otra combinación en Mosaico.");
-            }
             self.refresh_picker_hint();
             self.update_tile_timer();
             self.tile_manager.invalidate();
@@ -1635,13 +1957,7 @@ impl App {
             }
             text(
                 self.tile_controls[2],
-                if self.tile_hotkey.is_none()
-                    && crate::tile_manager::pref(defaults, "tile.enabled") != 0
-                {
-                    "Atajo no disponible."
-                } else {
-                    ""
-                },
+                "Configura los atajos en la sección Atajos.",
             );
         }
     }
@@ -1745,40 +2061,10 @@ impl App {
             button(
                 root,
                 rect(width / 2. + 3., 110., (width - 36.) / 2., 28.),
-                "Atajo del selector…",
+                "Selector de plantillas",
                 target,
-                54,
+                57,
             );
-            label(
-                root,
-                rect(18., 65., 150., 22.),
-                "Ventana flotante",
-                13.,
-                0.3,
-                false,
-            );
-            let mods = popup(
-                root,
-                rect(width - 254., 59., 120., 30.),
-                &crate::tile_hotkey::MODIFIERS
-                    .iter()
-                    .map(|(s, _)| *s)
-                    .collect::<Vec<_>>(),
-                target,
-                44,
-            );
-            let keys = popup(
-                root,
-                rect(width - 128., 59., 110., 30.),
-                &crate::tile_hotkey::KEYS
-                    .iter()
-                    .map(|(s, _)| *s)
-                    .collect::<Vec<_>>(),
-                target,
-                45,
-            );
-            let _: () = msg_send![mods, selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.mods")) as isize];
-            let _: () = msg_send![keys, selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref(defaults,"tile.key")) as isize];
             let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
             button(
                 root,
@@ -1798,7 +2084,10 @@ impl App {
         unsafe {
             text(
                 self.picker_hint,
-                if self.picker_hotkey.is_some() {
+                if self
+                    .shortcuts
+                    .available(crate::tile_hotkey::Action::Layouts)
+                {
                     "Atajo listo · abre el selector en la pantalla del cursor."
                 } else {
                     "Atajo no disponible: revisa tiling, Accesibilidad o la combinación."
@@ -2562,6 +2851,10 @@ Otras apps pueden tener atajos propios no detectables.",
     fn change(&mut self, sender: Obj) {
         unsafe {
             let tag: isize = msg_send![sender, tag];
+            if self.transfer.is_some() && ((40..=87).contains(&tag) || tag >= 2000) {
+                self.feedback("Espera a que termine el traslado antes de cambiar Mosaico.");
+                return;
+            }
             self.feedback("");
             match tag {
                 1 => {
@@ -2688,6 +2981,24 @@ Otras apps pueden tener atajos propios no detectables.",
                     self.tile_manager.invalidate();
                     self.refresh_tile_controls();
                 }
+                90..=93 => {
+                    let state: isize = msg_send![sender, state];
+                    let key = match tag {
+                        90 => "shortcuts.enabled",
+                        91 => "shortcuts.priority",
+                        93 => "shortcuts.stay",
+                        _ => "shortcuts.enabled",
+                    };
+                    crate::tile_manager::save(Retained::as_ptr(&self.defaults) as Obj, key, state);
+                    self.configure_shortcuts();
+                }
+                300..=311 => {
+                    if let Some((_, key, _, _)) = self.shortcut_fields.get((tag - 300) as usize) {
+                        let key = key.clone();
+                        let selected: isize = msg_send![sender, indexOfSelectedItem];
+                        self.edit_shortcuts(&[(&key, selected)]);
+                    }
+                }
                 54 => self.show_picker_settings(),
                 62 => {
                     let state: isize = msg_send![sender, state];
@@ -2706,17 +3017,14 @@ Otras apps pueden tener atajos propios no detectables.",
                 }
                 55 | 56 => {
                     let selected: isize = msg_send![sender, indexOfSelectedItem];
-                    crate::tile_manager::save(
-                        Retained::as_ptr(&self.defaults) as Obj,
+                    self.edit_shortcuts(&[(
                         if tag == 55 {
                             "tile.picker.mods"
                         } else {
                             "tile.picker.key"
                         },
                         selected,
-                    );
-                    self.configure_tiling();
-                    self.refresh_picker_hint();
+                    )]);
                 }
                 58 => self.find_picker_shortcuts(),
                 59 => {}
@@ -2724,12 +3032,10 @@ Otras apps pueden tener atajos propios no detectables.",
                     let index: isize = msg_send![self.picker_suggestions, indexOfSelectedItem];
                     if let Some(&(key, mods)) = self.suggested_shortcuts.get(index.max(0) as usize)
                     {
-                        let defaults = Retained::as_ptr(&self.defaults) as Obj;
-                        crate::tile_manager::save(defaults, "tile.picker.key", key as isize);
-                        crate::tile_manager::save(defaults, "tile.picker.mods", mods as isize);
-                        let _: () = msg_send![self.picker_keys,selectItemAtIndex:key as isize];
-                        let _: () = msg_send![self.picker_mods,selectItemAtIndex:mods as isize];
-                        self.configure_tiling(); // Reserve again: another app may have taken it since searching.
+                        self.edit_shortcuts(&[
+                            ("tile.picker.key", key as isize),
+                            ("tile.picker.mods", mods as isize),
+                        ]);
                     }
                 }
                 57 => self.toggle_picker(),
@@ -2849,6 +3155,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 }
                 _ => {}
             }
+            self.refresh_shortcut_fields();
             self.save();
             self.update_window();
             self.refresh_permission();
@@ -2930,6 +3237,39 @@ fn desktop_button_class() -> &'static AnyClass {
         builder.register()
     }
 }
+pub fn queue_shortcut(action: crate::tile_hotkey::Action) {
+    queue_shortcut_generation(action, crate::shortcuts::generation());
+}
+pub fn queue_shortcut_generation(action: crate::tile_hotkey::Action, generation: u64) {
+    unsafe extern "C" {
+        static _dispatch_main_q: std::ffi::c_void;
+        fn dispatch_async_f(
+            queue: *const std::ffi::c_void,
+            context: *mut std::ffi::c_void,
+            callback: extern "C" fn(*mut std::ffi::c_void),
+        );
+    }
+    extern "C" fn deliver(context: *mut std::ffi::c_void) {
+        let (action, queued, generation) =
+            unsafe { *Box::from_raw(context.cast::<(crate::tile_hotkey::Action, Instant, u64)>()) };
+        // Never execute an old window command after a modal loop or a blocked app.
+        if queued.elapsed() <= Duration::from_millis(350)
+            && generation == crate::shortcuts::generation()
+        {
+            autoreleasepool(|_| with_app(|a| a.shortcut_action(action)));
+        }
+    }
+    unsafe {
+        dispatch_async_f(
+            std::ptr::addr_of!(_dispatch_main_q),
+            Box::into_raw(Box::new((action, Instant::now(), generation))).cast(),
+            deliver,
+        );
+    }
+}
+extern "C-unwind" fn transfer_tick(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.step_transfer());
+}
 extern "C-unwind" fn settings_refresh(_: Obj, _: Sel, _: Obj) {
     with_app(|a| unsafe {
         if !a.settings.as_ref().is_some_and(|w| msg_send![w, isVisible]) {
@@ -2942,6 +3282,9 @@ extern "C-unwind" fn settings_refresh(_: Obj, _: Sel, _: Obj) {
         let index: isize = msg_send![a.tabs, indexOfTabViewItem:page];
         if index == 1 {
             a.refresh_spaces();
+        }
+        if index == 3 {
+            a.refresh_shortcut_status();
         }
     });
 }
@@ -3177,9 +3520,6 @@ extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
 extern "C-unwind" fn focus_pending(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.finish_focus());
 }
-pub fn toggle_layout_picker() {
-    with_app(|a| a.toggle_picker());
-}
 pub fn cancel_layout_picker() {
     with_app(|a| {
         a.layout_picker = None;
@@ -3216,18 +3556,6 @@ extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
             picker.select(index as usize);
             a.commit_picker();
         }
-    });
-}
-pub fn toggle_tile_float() {
-    with_app(|a| {
-        if a.layout_picker.is_some() {
-            return;
-        }
-        a.tile_manager
-            .toggle_float(Retained::as_ptr(&a.defaults) as Obj);
-        a.tile_manager.tick(Retained::as_ptr(&a.defaults) as Obj);
-        a.update_tile_timer();
-        a.update_window();
     });
 }
 pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
@@ -3295,7 +3623,7 @@ extern "C-unwind" fn desktop_distributed(_: Obj, _: Sel, notification: Obj) {
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
-            if a.layout_picker.is_some() {
+            if a.layout_picker.is_some() || a.transfer.is_some() {
                 return;
             }
             if a.switching.is_some() {
@@ -3496,6 +3824,7 @@ pub fn run() {
             (sel!(wake:), wake),
             (sel!(quit:), quit),
             (sel!(settingsRefresh:), settings_refresh),
+            (sel!(transferTick:), transfer_tick),
             (sel!(mouseEntered:), preview_enter),
             (sel!(mouseExited:), preview_exit),
             (sel!(showDesktopPreview:), preview_show),

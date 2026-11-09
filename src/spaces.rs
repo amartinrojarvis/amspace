@@ -1,4 +1,4 @@
-//! Read-only private SkyLight symbols, resolved at runtime. No injection or SIP changes.
+//! Runtime-resolved native Space metadata. No injection or SIP changes.
 use crate::accessibility::{Cf, Owned, array, equals_text, get, number};
 use crate::model::indicator;
 use crate::native::Obj;
@@ -326,4 +326,27 @@ pub fn settings_desktops() -> Vec<(u64, String)> {
         })
         .filter(|(id, _)| seen.insert(*id))
         .collect()
+}
+
+/// Desktop numbering follows Mission Control on the requested physical screen.
+pub fn desktop_ids_for_display(display: u32) -> Vec<u64> {
+    let Some(api) = api() else {
+        return vec![];
+    };
+    let Some(displays) = Owned::new(unsafe { (api.displays)((api.connection)()) }) else {
+        return vec![];
+    };
+    for entry in array(displays.0) {
+        let identifier = get(entry, ns_string!("Display Identifier"));
+        if display_number(identifier) != Some(display) && !equals_text(identifier, "Main") {
+            continue;
+        }
+        return array(get(entry, ns_string!("Spaces")))
+            .filter(|space| number(get(*space, ns_string!("type"))) == Some(0))
+            .filter_map(|space| {
+                number(get(space, ns_string!("ManagedSpaceID"))).map(|id| id as u64)
+            })
+            .collect();
+    }
+    vec![]
 }
