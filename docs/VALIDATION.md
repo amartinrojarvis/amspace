@@ -1,8 +1,12 @@
-## Preparación de la estable 0.8.0, build 45
+## Publicación 0.8.0, build 45
 
-- Publicación autorizada por el usuario después de la batería interna. Build 45 supera a RC 1/build 44; las rutas funcionales son las mismas que en la candidata, con la nueva batería de seis pruebas versionada.
-- Se conserva explícitamente como pendiente la comprobación física de Principal con Resolve/ChatGPT y de tres filas editadas en pantalla vertical. La autorización de publicación no se contabiliza como prueba física.
-- Comprobaciones locales finales: 185 pruebas correctas, cero fallos, ocho excluidas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 y firma estricta correctos. ZIP y feed Ed25519 generados y sus firmas verificadas. La descarga, CI del commit final y actualización se registran al completarse; el catálogo se cambia al final del procedimiento.
+- Publicada a petición del usuario después de la batería interna: [v0.8.0](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.0), commit exacto `eb30a50e4de2ef5058c7ee6b2b4c17b640c30710`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42579693572): comprobaciones, bundle universal y empaquetado. Build 45 supera a RC 1/build 44; las rutas funcionales son las mismas, con seis pruebas adicionales versionadas.
+- Comprobaciones locales finales: 185 pruebas correctas, cero fallos, ocho excluidas; formato, Clippy y plist correctos. Bundle arm64/x86_64 con firma estricta correcta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves.
+- ZIP, catálogo y SHA256SUMS publicados. Copia inmutable en `updates/0.8.0/AMSpace-universal.zip`, commit de alojamiento `069f442`. Descarga HTTPS sin autenticación idéntica byte a byte al ZIP firmado, con 0.8.0/build 45 dentro del archivo. SHA-256 `bb2cd2d5f926a72592c42d57efaa9bc3c2242fe1f6262b423c0cefe68c6153ed`; 2644450 bytes.
+- Catálogo anunciado después de verificar el ZIP público, commit `283c1ac`; descarga pública del catálogo idéntica y firma verificada. GitHub Release estable, no prerelease, marcada latest.
+- Prueba real del actualizador: desde la 0.7.0/build 43 instalada en Aplicaciones, Buscar ahora ofrece 0.8.0, descarga, instala y reinicia. General muestra 0.8.0; plist instalado build 45, firma estricta válida y ejecutable idéntico al paquete publicado. Se compararon preferencias antes/después: solo cambió `SULastCheckTime`. Copia recuperable de la instalación previa en `.cache/AMSpace-before-0.8.0.zip`.
+- Accesibilidad aparece pendiente en la instancia instalada antes y después de actualizar; no se ha alterado TCC ni se contabiliza esta instalación como prueba de control de ventanas. La ejecución nativa con permiso de RC 1 se documentó por separado.
+- Sigue pendiente la comprobación física de Principal con Resolve/ChatGPT y de tres filas editadas en pantalla vertical en el equipo del informe. La autorización de publicación no se contabiliza como prueba física. Intel real y otras configuraciones no disponibles tampoco se dan por verificadas.
 
 ## Batería interna ampliada antes de la estable 0.8.0
 
