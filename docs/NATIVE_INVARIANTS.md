@@ -48,7 +48,7 @@ Otro fallo real bloqueaba el envío al escritorio 1 con «Una ventana del destin
 
 Se consumen únicamente combinaciones configuradas y sus liberaciones, se suprimen repeticiones y se descartan acciones de más de 350 ms o de una generación anterior. Conservar esas guardas al editar atajos mientras hay acciones encoladas. El timeout del tap puede reactivarlo; una desactivación explícita no se combate en bucle.
 
-Los cambios de preferencias son transaccionales: si hay duplicados se restaura el valor anterior, incluida la ausencia de una clave. No renumerar las entradas históricas de `KEYS`, `MODIFIERS`, acciones ni plantillas. Las sugerencias de Carbon no enumeran todos los atajos locales de otras apps.
+Los cambios de preferencias son transaccionales: si hay duplicados se restaura el valor anterior, incluida la ausencia de una clave. No renumerar las entradas históricas de `KEYS`, `MODIFIERS`, acciones ni plantillas. Las sugerencias de Carbon no enumeran todos los atajos locales de otras apps. La serie de envío predeterminada de 0.7.0, ⌘⇧1–9, se solapa con atajos de captura del sistema. Antes de alterar el puente nativo, comprobar el estado de reservas/tap y probar otra combinación; ⌃⌘ es una alternativa configurable, no una garantía universal de ausencia de conflictos.
 
 La comprobación física del usuario validó las combinaciones; la simulación de teclado usada durante el desarrollo no era una prueba equivalente. Un test del ciclo de vida del tap no sustituye pulsar el atajo en el entorno que presenta el conflicto.
 

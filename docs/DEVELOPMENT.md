@@ -118,11 +118,12 @@ Si un caso necesita hardware no disponible, indícalo. Un resultado correcto del
 | La app nueva no aparece | Instancia anterior y bloqueo; ruta del ejecutable/bundle |
 | Cambia el número pero no el escritorio | Confirmación nativa de `space_switch`; no usar un setter de metadatos como sustituto del gesto real |
 | No se mueve entre escritorios en otro equipo | Confirmar versión/arquitectura de macOS, versión de AMSpace, AX y estado de Atajos. `--diagnose` distingue `Accessibility` de `Native Space transfer`; macOS 13 como mínimo del bundle no garantiza que el puente privado esté disponible en todas las versiones |
+| Capturas de pantalla al enviar | ⌘⇧1–9 incluye los atajos de captura ⌘⇧3/4/5. Probar «Enviar ventana a escritorio» con ⌃⌘ y verificar físicamente. No prometer que el tap venza a atajos del sistema ni concluir que esto explica por sí solo un fallo de ⌘⇧1/2 |
 | Solo falla un destino | Footer de ajustes, pertenencia nativa, caché y clasificación de entradas auxiliares; no asumir conflicto del atajo |
 | La ventana se ajusta al entrar | Plan, referencias AX retenidas, colocación oculta y rechazo de tamaño por la app; revisar el fallback de reentrada |
 | Foco cambia al abrir preview | Panel activable, captura del ratón o foco/raise incidental |
 | Ventana vuelve al monitor anterior | Cancelación de animaciones/verificaciones, pertenencia nativa y retención breve del monitor |
-| AX no disponible tras compilar | Firma/ruta/TCC antes de cambiar el algoritmo; no resetear permisos globales |
+| AX no disponible tras compilar | Firma/ruta/TCC antes de cambiar el algoritmo; contrastar con el estado de la instancia abierta desde Aplicaciones, pues `--diagnose` ejecuta otro proceso; no resetear permisos globales |
 | Error de descarga de Releases | Verificar también la URL pública del ZIP que usa el catálogo y sus bytes; un 504 del host alternativo no prueba un fallo de firma |
 
 ## Publicar trabajo
@@ -130,3 +131,5 @@ Si un caso necesita hardware no disponible, indícalo. Un resultado correcto del
 Para documentación: comprobar enlaces/rutas, revisar el diff, hacer commit y push a la rama acordada. No modificar binarios, versión ni catálogo para publicar solo estas guías.
 
 Para una app nueva: [UPDATES.md](UPDATES.md) es el procedimiento de referencia. El artefacto de CI no sustituye al ZIP firmado con la clave del Llavero. Mantén alineados código, plist, notas y paquete; publica el ZIP inmutable y verifica su descarga antes de anunciar el feed. Registra el commit de código, CI, checksum, instalación comprobada y límites de validación. No conviertas datos locales ignorados en requisitos de publicación.
+
+`AXIsProcessTrusted` consulta el proceso actual, según la [documentación de Apple](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted). Los atajos de captura del sistema se describen en la [guía de Apple](https://support.apple.com/en-euro/guide/mac-help/mh26782/mac); un resultado diferente entre el diagnóstico y la app gráfica requiere contrastar sus estados, no asumir una causa de TCC sin comprobarla.
