@@ -215,6 +215,8 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Candidata 0.8.0: plantillas personalizadas
 
+[Descargar candidata 0.8.0 RC 1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.0-rc.1/AMSpace-universal.zip) · [Notas de la candidata](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.0-rc.1). Instalación manual; no se anuncia en el canal estable.
+
 La versión estable enlazada arriba continúa en 0.7.0. El código de la candidata añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
 La candidata también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).

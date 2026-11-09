@@ -1,3 +1,11 @@
+## Candidata publicada 0.8.0 RC 1, build 44
+
+- Prerelease: https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.0-rc.1, código `ed2d715defaf8f8cb7ea72d65f59f1b37a4adecb`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42575661566.
+- ZIP universal firmado, firma separada y SHA256SUMS publicados. Copia inmutable en `updates/0.8.0-rc.1/AMSpace-universal.zip`; descarga HTTPS sin autenticación comparada byte a byte con el ZIP firmado y comprobados 0.8.0/build 44 dentro del archivo. SHA-256: `49dfebae539fae853e8328b2f130f68d0e89fbfd9b2b7bda0eb2af561f6f8a5f`; 2644448 bytes.
+- GitHub sigue marcando 0.7.0 como latest y `appcast.xml` estable conserva build 43. No se anuncia el feed generado para la candidata. Una futura estable 0.8.0 usará build 45 o superior.
+- Candidata abierta localmente desde `dist/AMSpace.app`, con Accesibilidad y capacidades nativas vigentes. Prueba de biblioteca: guardar/aplicar, duplicados, persistencia al relanzar y eliminación de la plantilla temporal; no quedaron datos QA en la biblioteca. Inspección visual de ventana completa, preview azul y textos multilínea; copia del diagnóstico verificada.
+- Pendiente confirmación física del equipo con dos pantallas: tres filas verticales editadas al cambiar el escritorio del otro monitor y Principal editada con las apps del caso reportado. No se da por probada esa configuración por publicar la prerelease.
+
 ## Preparación 0.8.0, build 44 — candidata
 
 - 179 pruebas correctas, ocho diagnósticos/benchmarks excluidos. Incluye tres regresiones que fallaron antes de la corrección: gesto antiguo tras cambiar el escritorio de otro monitor, reinicio de la verificación de la fila inferior en una pantalla independiente y pérdida del hueco de una app con AX ocupado más de 650 ms pese a pertenencia nativa confirmada.
