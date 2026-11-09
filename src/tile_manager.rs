@@ -110,7 +110,7 @@ fn layout_pref(defaults: Obj, space: Workspace) -> Layout {
         pref(defaults, &format!("tile.layout.{}", space.1)),
     ))
 }
-fn pointer_display() -> Option<u32> {
+pub(crate) fn pointer_display() -> Option<u32> {
     point_display(pointer()?)
 }
 fn point_display(point: NSPoint) -> Option<u32> {

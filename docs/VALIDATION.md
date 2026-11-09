@@ -1,3 +1,10 @@
+## Revisión sobre 0.8.1/build 46: indicador por pantalla del puntero
+
+- Informe del usuario con dos monitores: los atajos ⌘1–9 no cambiaban de escritorio al usar el puntero en la pantalla vertical. Causa localizada en `spaces::read`: la instantánea se tomaba del `display` cuyo `Current Space` coincidía con `SLSGetActiveSpace`, que solo nombra la pantalla principal. Los índices `1–9` y el texto del indicador correspondían así a los escritorios del monitor principal aunque la operación concernía al monitor secundario.
+- `read` ahora elige la pantalla en el orden: la que contiene el puntero (`tile_manager::pointer_display`, misma conversión de coordenadas que el mosaico), la que posee el `ManagedSpaceID` devuelto por `SLSGetActiveSpace`, y por último la primera entrada. `desktops` y `active` se leen del `Spaces` de esa pantalla, así que `Action::Desktop`, el menú del estado y los botones por escritorio usan la numeración del monitor correcto. `visible_desktops` sigue exponiendo una pareja `(pantalla, Space)` por cada monitor físico.
+- Prueba nueva `indicator_follows_the_pointer_screen_and_falls_back_to_the_active_one`: puntero en cada monitor, ninguno coincidiendo con el Space activo y una pantalla sin número resuelto. `./scripts/check.sh`: formato, Clippy sin warnings, plist y 188 pruebas correctas, ocho diagnósticos/benchmarks excluidos.
+- Límite: este equipo tiene una sola pantalla; la selección por puntero en dos monitores físicos (uno vertical) requiere confirmación en el Mac del informe. El `detail` ahora numera la entrada de SkyLight (`pantalla 1`, `pantalla 2`) en lugar de la etiqueta fija `pantalla activa`.
+
 ## Publicación 0.8.1, build 46
 
 - Publicada a petición del usuario: [v0.8.1](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.1), commit exacto `f468b5d17911737f52ec3fb2c93123db40c8639e`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42587353301).

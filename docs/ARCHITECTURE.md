@@ -23,7 +23,7 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `space_switch.rs` | Cambio directo asíncrono mediante gestos nativos de escritorio |
 | `space_style.rs` | Texto atribuido y SF Symbols; color activo/inactivo y preferencias por ID de escritorio |
 | `model.rs` | Presentación del indicador y normalización de preferencias |
-| `spaces.rs` | Resolución opcional de SkyLight, lectura y selección de pantalla activa |
+| `spaces.rs` | Resolución opcional de SkyLight, lectura y selección de pantalla (puntero, luego Space activo de WindowServer) |
 | `accessibility.rs` | RAII de CoreFoundation, consultas AX, observador de foco y ciclo de vida, respaldo de geometría |
 | `window_server.rs` | Identidad, orden, geometría y radios reales; notificaciones de movimiento, tamaño, creación y cierre |
 | `native.rs` | Puente AppKit pequeño: vistas, texto y colores |

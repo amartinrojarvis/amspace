@@ -1,8 +1,7 @@
-AMSpace 0.8.1 — las plantillas guardadas aparecen en el selector.
+AMSpace 0.8.2 — el indicador y los atajos siguen la pantalla del puntero.
 
-- ⌃⌥Espacio muestra ahora, junto a las ocho distribuciones integradas, una tarjeta por cada plantilla guardada en **Mosaico → Rejilla y plantillas**: nombre, miniatura con sus divisiones reales y previsualización a tamaño real con las ventanas actuales.
-- Una plantilla guardada está disponible si tiene el mismo número de huecos que el mosaico de esa pantalla y sus rectángulos caben en el área útil; el resto se muestra deshabilitada, igual que antes.
-- Las flechas, el hover y el clic recorren la lista completa; las teclas 9 y 0 seleccionan las dos primeras plantillas guardadas. Intro aplica y Esc cancela, sin cambiar el resto de atajos.
-- La rejilla del destino se conserva y las preferencias por monitor y escritorio siguen guardándose por ID de escritorio.
+- Con Spaces independientes por pantalla, ⌘1–9 y los botones del indicador usan ahora la numeración del monitor que contiene el puntero. Antes se tomaba siempre la del monitor principal, porque `SLSGetActiveSpace` solo nombra esa pantalla: en un monitor secundario (por ejemplo, en vertical) los atajos no coincidían con sus escritorios.
+- Orden de selección: pantalla del puntero, después la que posee el escritorio activo de WindowServer y, si ninguna resuelve, la primera entrada. La numeración sigue el orden de Mission Control de ese monitor; las ventanas a pantalla completa no cuentan como escritorios normales.
+- El detalle del indicador nombra la pantalla (`Escritorio 2 de 3 · pantalla 2`) en lugar de la etiqueta fija `pantalla activa`. Las miniaturas, el mosaico por `(DisplayID, SpaceID)` y los traslados conservan su comportamiento.
 
-187 pruebas internas correctas, con dos nuevas para el crecimiento de la galería y la equivalencia entre la miniatura guardada y la validación del commit. Pendiente la comprobación física en el equipo con dos pantallas. Paquete universal para Apple Silicon e Intel. Firma ad hoc, sin notarización de Apple. macOS 13 o posterior; las funciones privadas dependen de su disponibilidad real.
+188 pruebas internas correctas, con una nueva para la selección de pantalla del indicador. Pendiente la comprobación física en el equipo con dos monitores (uno vertical). Paquete universal para Apple Silicon e Intel. Firma ad hoc, sin notarización de Apple. macOS 13 o posterior; las funciones privadas dependen de su disponibilidad real.

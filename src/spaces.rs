@@ -104,6 +104,21 @@ mod tests {
         assert_eq!(position_in_display(&[20, 10, 77], 20), Some(0));
         assert_eq!(position_in_display(&[10, 77], 20), None);
     }
+    #[test]
+    fn indicator_follows_the_pointer_screen_and_falls_back_to_the_active_one() {
+        // Secondary portrait (id 2) keeps its own Spaces next to the main one.
+        let two = [(Some(1), Some(10u64)), (Some(2), Some(20u64))];
+        // Pointer on the portrait screen: its Space, not the main one.
+        assert_eq!(chosen_display(&two, Some(2), 10), 1);
+        // Pointer on the main screen.
+        assert_eq!(chosen_display(&two, Some(1), 20), 0);
+        // No pointer match: the screen owning the WindowServer active Space.
+        assert_eq!(chosen_display(&two, Some(9), 20), 1);
+        // Neither source resolves: deterministic first entry.
+        assert_eq!(chosen_display(&two, None, 0), 0);
+        // A display without a resolved number still participates by position.
+        assert_eq!(chosen_display(&[(None, Some(5))], Some(1), 5), 0);
+    }
 }
 
 struct Api {
@@ -168,49 +183,66 @@ fn read() -> Option<Snapshot> {
         let cid = (api.connection)();
         (Owned::new((api.displays)(cid))?, (api.active)(cid))
     };
-    for display in array(displays.0) {
-        let current = number(get(
-            get(display, ns_string!("Current Space")),
-            ns_string!("ManagedSpaceID"),
-        ))? as u64;
-        if current != active {
-            continue;
-        }
-        let spaces = array(get(display, ns_string!("Spaces")));
-        let desktops: Vec<_> = spaces
-            .filter(|s| number(get(*s, ns_string!("type"))) == Some(0))
-            .collect();
-        if let Some(i) = desktops
-            .iter()
-            .position(|s| number(get(*s, ns_string!("ManagedSpaceID"))) == Some(active as i64))
-        {
-            return Some(Snapshot {
-                title: indicator(i + 1, desktops.len()),
-                desktops: desktops
-                    .iter()
-                    .filter_map(|s| {
-                        number(get(*s, ns_string!("ManagedSpaceID"))).map(|id| id as u64)
-                    })
-                    .collect(),
-                active: Some(i),
-                detail: format!(
-                    "Escritorio {} de {} · pantalla activa",
-                    i + 1,
-                    desktops.len()
-                ),
-            });
-        }
+    let entries: Vec<_> = array(displays.0)
+        .map(|entry| {
+            (
+                display_number(get(entry, ns_string!("Display Identifier"))),
+                number(get(
+                    get(entry, ns_string!("Current Space")),
+                    ns_string!("ManagedSpaceID"),
+                ))
+                .map(|id| id as u64),
+            )
+        })
+        .collect();
+    if entries.is_empty() {
+        return None;
+    }
+    // Every physical screen keeps its own Spaces, so the indicator follows the
+    // screen holding the pointer; `SLSGetActiveSpace` only names the main one.
+    let pointer = crate::tile_manager::pointer_display();
+    let index = chosen_display(&entries, pointer, active);
+    let display = array(displays.0).nth(index)?;
+    let desktops: Vec<_> = array(get(display, ns_string!("Spaces")))
+        .filter(|space| number(get(*space, ns_string!("type"))) == Some(0))
+        .filter_map(|space| number(get(space, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
+        .collect();
+    if desktops.is_empty() {
+        return None;
+    }
+    let current = entries[index].1?;
+    let count = desktops.len();
+    if let Some(i) = position_in_display(&desktops, current) {
         return Some(Snapshot {
-            title: "▣".into(),
-            desktops: desktops
-                .iter()
-                .filter_map(|s| number(get(*s, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
-                .collect(),
-            active: None,
-            detail: format!("Pantalla completa · {} escritorios", desktops.len()),
+            title: indicator(i + 1, count),
+            desktops,
+            active: Some(i),
+            detail: format!("Escritorio {} de {} · pantalla {}", i + 1, count, index + 1),
         });
     }
-    None
+    Some(Snapshot {
+        title: "▣".into(),
+        desktops,
+        active: None,
+        detail: format!("Pantalla completa · {count} escritorios"),
+    })
+}
+
+/// Screen whose Spaces the indicator reports: the pointer's screen first, then
+/// the one owning the WindowServer active Space, then the first entry.
+fn chosen_display(
+    entries: &[(Option<u32>, Option<u64>)],
+    pointer: Option<u32>,
+    active: u64,
+) -> usize {
+    pointer
+        .and_then(|target| entries.iter().position(|(id, _)| *id == Some(target)))
+        .or_else(|| {
+            entries
+                .iter()
+                .position(|(_, current)| *current == Some(active))
+        })
+        .unwrap_or(0)
 }
 
 /// Fail closed for sticky/all-desktop windows and unavailable private API.

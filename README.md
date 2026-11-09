@@ -81,7 +81,7 @@ En Ventanas, **El foco sigue al cursor** mueve el foco del teclado; **Traer al p
 | Aplicación a pantalla completa | `▣` |
 | API de escritorios no disponible | `—` |
 
-Los números son relativos a los escritorios normales de la pantalla activa, en el orden de Mission Control. Las ventanas a pantalla completa no se cuentan como escritorios normales. El orden puede cambiar si macOS tiene activado reordenar Spaces por uso reciente.
+Los números son relativos a los escritorios normales de la pantalla que contiene el puntero, en el orden de Mission Control; si el puntero no resuelve, se usa la pantalla del escritorio activo de WindowServer. Con Spaces por pantalla, cada monitor numera sus propios escritorios. Las ventanas a pantalla completa no se cuentan como escritorios normales. El orden puede cambiar si macOS tiene activado reordenar Spaces por uso reciente.
 
 El borde sigue la ventana enfocada por AMSpace y respeta su posición en la pila; fuera de ese seguimiento, usa la ventana normal delantera de la aplicación activa; distingue ventanas de una misma app y recibe eventos de creación y cierre. No rodea la propia ventana de ajustes de AMSpace.
 
