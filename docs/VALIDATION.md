@@ -1,6 +1,12 @@
+## Preparación de la estable 0.8.0, build 45
+
+- Publicación autorizada por el usuario después de la batería interna. Build 45 supera a RC 1/build 44; las rutas funcionales son las mismas que en la candidata, con la nueva batería de seis pruebas versionada.
+- Se conserva explícitamente como pendiente la comprobación física de Principal con Resolve/ChatGPT y de tres filas editadas en pantalla vertical. La autorización de publicación no se contabiliza como prueba física.
+- Comprobaciones locales finales: 185 pruebas correctas, cero fallos, ocho excluidas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 y firma estricta correctos. ZIP y feed Ed25519 generados y sus firmas verificadas. La descarga, CI del commit final y actualización se registran al completarse; el catálogo se cambia al final del procedimiento.
+
 ## Batería interna ampliada antes de la estable 0.8.0
 
-- 185 pruebas correctas, cero fallos y ocho diagnósticos/benchmarks excluidos. `./scripts/check.sh` completo correcto: formato, Clippy sin warnings, pruebas y plist.
+- 185 pruebas correctas, cero fallos y ocho diagnósticos/benchmarks excluidos. `./scripts/check.sh` completo correcto: formato, Clippy sin warnings, pruebas y plist. Commit de la batería `ce534663343bce407a299d277d7e1dff5aeadcca`; [CI y bundle universal correctos](https://github.com/amartinrojarvis/amspace/actions/runs/42579339498).
 - Se añaden seis pruebas: matriz de 129.024 traslados editados, 64 sesiones de 500 acciones, 20.496 alteraciones de datos, 5.832 cambios/desconexiones de topología, reintentos acotados con 10.000 notificaciones repetidas y capacidad/persistencia Unicode de la biblioteca.
 - [ROBUSTNESS.md](ROBUSTNESS.md) registra combinaciones, semillas, resultados, un caso de mínimos incompatible y límites de las simulaciones. No se han cambiado rutas de ejecución ni el binario de RC 1; continúa pendiente la prueba física de las dos distribuciones reportadas. No se publica la estable en esta revisión.
 

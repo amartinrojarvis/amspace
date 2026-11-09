@@ -41,4 +41,4 @@ Estas son pruebas del modelo y sus guardas reales: no crean ni mueven ventanas n
 
 RC 1 ya tiene compilación universal y pruebas nativas locales con ventanas temporales, registradas en [VALIDATION.md](VALIDATION.md). Sigue pendiente comprobar físicamente en el equipo del informe: Principal modificada con Resolve/ChatGPT y tres filas modificadas en pantalla vertical, tanto al trabajar como al cambiar el Space de la otra pantalla. Tampoco se ha probado hardware Intel, desconexiones físicas ni todos los comportamientos de todas las apps. La matriz cubre clases de variaciones y secuencias reproducibles; no constituye una garantía de ausencia de bugs ni una enumeración infinita de casos.
 
-El catálogo estable conserva 0.7.0/build 43. Esta batería no publica la definitiva.
+Al completar esta batería, el catálogo estable conservaba 0.7.0/build 43. La autorización posterior de publicar 0.8.0 y su evidencia se registran en [VALIDATION.md](VALIDATION.md); no equivalen a una confirmación física.
