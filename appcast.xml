@@ -1,19 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.7.0</title><pubDate>Mon, 09 Nov 2026 05:30:49 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.7.0 — atajos globales y traslado de ventanas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.8.0</title><pubDate>Mon, 09 Nov 2026 07:29:14 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.8.0 — plantillas personales y estabilidad del mosaico.
 
-- Nueva sección Atajos: escritorios 1–9, enviar ventana a escritorio, enviar a pantalla izquierda/derecha, flotante y selector.
-- Check opcional para dar prioridad a las combinaciones de AMSpace, con estado real y alternativa mediante reservas exclusivas. No se garantiza prioridad absoluta frente al sistema o la entrada segura.
-- Conservación de atajos anteriores y rechazo de combinaciones duplicadas sin perder los ajustes previos.
-- Envío nativo de ventanas con comprobación de identidad y destino, confirmación acotada y preparación del mosaico antes de mover.
-- Se conserva la disposición del destino y el estado flotante. El mosaico del destino se coloca también en segundo plano, sin activar el escritorio; las apps que rechacen la colocación se ajustan al entrar.
-- Ajuste «Al enviar a otro escritorio, permanecer en el origen», activado inicialmente; puede desactivarse para seguir a la ventana.
-- Protección frente a rotación, desconexión o cambios de escala durante un traslado; actualización de destinos con ventanas abiertas después de crear su caché.
-- Se mantiene el cambio de escritorio nativo confirmado; los destinos lejanos pueden recorrer los intermedios.
+- Guarda distribuciones con nombre desde Mosaico → Rejilla y plantillas. Previsualiza, aplica o elimina tus diseños; se reutilizan con otras ventanas y el mismo número de huecos.
+- Conserva la rejilla actual al aplicar una plantilla personal y mantiene la copia rápida anterior.
+- Evita finalizar gestos antiguos después de cambiar de escritorio y reiniciar verificaciones de una pantalla independiente.
+- Conserva las divisiones editadas cuando una app deja de responder temporalmente a Accesibilidad pero su ventana sigue confirmada por el sistema, sin escribir sobre ella durante la incertidumbre.
+- Reintenta de forma acotada la entrega de atajos durante consultas nativas reentrantes; descarta comandos caducados.
+- Envío inicial con ⌃⌘1–9 para evitar el solapamiento de ⌘⇧ con capturas. Las combinaciones elegidas explícitamente se conservan; el grupo de atajos sigue siendo opcional.
+- Copiar diagnóstico desde General conserva el resultado de los traslados separado de avisos de tamaño del mosaico, sin incluir títulos ni contenido de ventanas.
 
-Requiere macOS 13 o posterior. El traslado entre escritorios depende de la disponibilidad del puente nativo en cada sistema.
-Paquete universal para Apple Silicon e Intel. La firma ad hoc puede requerir renovar Accesibilidad tras actualizar.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.7.0/AMSpace-universal.zip" length="2603348" type="application/octet-stream" sparkle:version="43" sparkle:shortVersionString="0.7.0" sparkle:edSignature="MAVGIbFrFkTZWek8/uihzZKSejDRODhmwcF1MiJ5rqWVVGSL88dngB1sdyUgTriycmczfocN4slDsyzzNjSBCQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: e3fBvL8FcdRBNaWxN0Z59C28WVZTG0aWk90aXToqFP5eCpQk0+Y8A2sUukbiv4xy0n693qWKP63d5z6u+Wm1AA==
-length: 2551
+185 pruebas internas correctas, incluidas matrices de traslados, plantillas editadas y sesiones reproducibles con varias pantallas simuladas. Pendiente la comprobación física de la configuración concreta del equipo de destino. Paquete universal para Apple Silicon e Intel. Firma ad hoc, sin notarización de Apple. macOS 13 o posterior; las funciones privadas dependen de su disponibilidad real.
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.0/AMSpace-universal.zip" length="2644450" type="application/octet-stream" sparkle:version="45" sparkle:shortVersionString="0.8.0" sparkle:edSignature="5CEUB7s/F9DY+7iQLO96mY5EfCqvPGAaQfg87gj0FJRxgjnsnAqJEqj4GYPKT3X8E0tQByx3ajwNP70ch/BvCA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: 7mb88irPkabWkDQXsc6RvnycT9kom+hyUwgD+6vv8VVjj0QoWltJi1S/to0O8dp9YDqvQiAtzzek0Nm0QGvxCQ==
+length: 2595
 -->
