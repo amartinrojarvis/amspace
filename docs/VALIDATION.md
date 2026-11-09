@@ -1,3 +1,9 @@
+## Batería interna ampliada antes de la estable 0.8.0
+
+- 185 pruebas correctas, cero fallos y ocho diagnósticos/benchmarks excluidos. `./scripts/check.sh` completo correcto: formato, Clippy sin warnings, pruebas y plist.
+- Se añaden seis pruebas: matriz de 129.024 traslados editados, 64 sesiones de 500 acciones, 20.496 alteraciones de datos, 5.832 cambios/desconexiones de topología, reintentos acotados con 10.000 notificaciones repetidas y capacidad/persistencia Unicode de la biblioteca.
+- [ROBUSTNESS.md](ROBUSTNESS.md) registra combinaciones, semillas, resultados, un caso de mínimos incompatible y límites de las simulaciones. No se han cambiado rutas de ejecución ni el binario de RC 1; continúa pendiente la prueba física de las dos distribuciones reportadas. No se publica la estable en esta revisión.
+
 ## Candidata publicada 0.8.0 RC 1, build 44
 
 - Prerelease: https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.0-rc.1, código `ed2d715defaf8f8cb7ea72d65f59f1b37a4adecb`. CI completa correcta: https://github.com/amartinrojarvis/amspace/actions/runs/42575661566.

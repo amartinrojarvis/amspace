@@ -13,6 +13,7 @@ Antes de modificar una zona, lee los archivos correspondientes:
 | Contratos nativos y regresiones que no deben volver | [docs/NATIVE_INVARIANTS.md](docs/NATIVE_INVARIANTS.md) |
 | Detalle de implementación | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Evidencia de pruebas, historial y límites físicos | [docs/VALIDATION.md](docs/VALIDATION.md) |
+| Matrices y sesiones reproducibles antes de 0.8 | [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md) |
 | Firma, archivos inmutables y publicación | [docs/UPDATES.md](docs/UPDATES.md) |
 
 La versión de código está en `Cargo.toml`/`Cargo.lock`; la del bundle y su build en `assets/Info.plist`. `appcast.xml` describe la actualización publicada, no necesariamente el trabajo en curso. No deduzcas el estado actual de una sección histórica de validación ni de archivos locales en `.cache/`.

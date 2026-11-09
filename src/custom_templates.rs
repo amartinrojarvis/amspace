@@ -203,4 +203,45 @@ mod tests {
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
         });
     }
+    #[test]
+    fn library_capacity_unicode_and_failed_saves_preserve_all_existing_templates() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite =
+                NSString::from_str(&format!("amspace.custom-capacity.{}", std::process::id()));
+            let defaults: objc2::rc::Allocated<AnyObject> =
+                msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
+            let obj = Retained::as_ptr(&defaults) as Obj;
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+            let data = "2 1 2 0 0 v0.6 w0 w1".to_string();
+            for i in 0..LIMIT {
+                save(obj, &format!("Edición 🎬 {i:02}"), data.clone()).unwrap();
+            }
+            let before = entries(obj);
+            assert_eq!(before.len(), LIMIT);
+            for (name, text) in [
+                ("Otra", data.clone()),
+                ("edición 🎬 00", data.clone()),
+                ("", data.clone()),
+                ("Dañada", "2 1 2 0 0 vNaN w0 w1".into()),
+            ] {
+                assert!(save(obj, name, text).is_err());
+                assert_eq!(entries(obj), before);
+            }
+            remove(obj, "does-not-exist");
+            assert_eq!(entries(obj), before);
+            remove(obj, &before[0].id);
+            let name = "ñ".repeat(60);
+            save(obj, &name, data.clone()).unwrap();
+            assert_eq!(entries(obj).len(), LIMIT);
+            let reloaded: objc2::rc::Allocated<AnyObject> =
+                msg_send![class!(NSUserDefaults), alloc];
+            let reloaded: Retained<AnyObject> = msg_send![reloaded,initWithSuiteName:&*suite];
+            assert_eq!(entries(Retained::as_ptr(&reloaded) as Obj), entries(obj));
+            assert!(Template::parse("x".into(), "OK".into(), "x".repeat(65537)).is_none());
+            assert!(Template::parse("x".repeat(81), "OK".into(), data).is_none());
+            assert!(valid_name(&"ñ".repeat(61)).is_err());
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
+    }
 }

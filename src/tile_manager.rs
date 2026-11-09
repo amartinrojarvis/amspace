@@ -71,6 +71,9 @@ fn trace_tiling() -> bool {
 }
 pub type Workspace = (u32, u64); // Display identity + native Space identity.
 
+#[cfg(test)]
+mod robustness_tests;
+
 #[derive(Clone)]
 pub struct PickerContext {
     pub workspace: Workspace,

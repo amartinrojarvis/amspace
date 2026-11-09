@@ -663,6 +663,110 @@ pub fn check_native_bridge() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2_foundation::NSSize;
+    #[test]
+    fn topology_permutations_cancel_only_when_a_participant_changes() {
+        let permutations = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        let mut checked = 0;
+        for portrait in [false, true] {
+            for scale in [1., 1.5, 2.] {
+                let screens = [
+                    ScreenGeometry {
+                        id: 1,
+                        frame: rect(0., 0., 2560., 1440.),
+                        visible: rect(10., 41., 2540., 1327.),
+                        scale: 2.,
+                    },
+                    ScreenGeometry {
+                        id: 2,
+                        frame: rect(
+                            -1080.,
+                            -300.,
+                            if portrait { 1080. } else { 1920. },
+                            if portrait { 1920. } else { 1080. },
+                        ),
+                        visible: rect(
+                            -1070.,
+                            -259.,
+                            if portrait { 1060. } else { 1900. },
+                            if portrait { 1870. } else { 1030. },
+                        ),
+                        scale,
+                    },
+                    ScreenGeometry {
+                        id: 3,
+                        frame: rect(0., -1080., 1920., 1080.),
+                        visible: rect(0., -1055., 1920., 1055.),
+                        scale: 1.,
+                    },
+                ];
+                for source in 1..=3 {
+                    for destination in 1..=3 {
+                        for permutation in permutations {
+                            let current = permutation.map(|i| screens[i]);
+                            assert!(same_transfer_screens(
+                                &screens,
+                                &current,
+                                source,
+                                destination
+                            ));
+                            for changed in 0..3 {
+                                for field in 0..5 {
+                                    let mut altered = current;
+                                    match field {
+                                        0 => altered[changed].scale += 0.25,
+                                        1 => altered[changed].frame.origin.x += 10.,
+                                        2 => {
+                                            altered[changed].frame.size = NSSize::new(
+                                                altered[changed].frame.size.height,
+                                                altered[changed].frame.size.width,
+                                            )
+                                        }
+                                        3 => altered[changed].visible.size.height -= 25.,
+                                        _ => altered[changed].id += 100,
+                                    }
+                                    let participant = current[changed].id == source
+                                        || current[changed].id == destination;
+                                    assert_eq!(
+                                        same_transfer_screens(
+                                            &screens,
+                                            &altered,
+                                            source,
+                                            destination
+                                        ),
+                                        !participant
+                                    );
+                                    checked += 1;
+                                }
+                                let retained: Vec<_> = current
+                                    .iter()
+                                    .copied()
+                                    .enumerate()
+                                    .filter(|(i, _)| *i != changed)
+                                    .map(|(_, screen)| screen)
+                                    .collect();
+                                let participant = current[changed].id == source
+                                    || current[changed].id == destination;
+                                assert_eq!(
+                                    same_transfer_screens(&screens, &retained, source, destination),
+                                    !participant
+                                );
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("TOPOLOGY_MATRIX changes_and_disconnects={checked}");
+    }
     #[test]
     fn transfer_topology_checks_both_participants_not_enumeration_order() {
         let source = ScreenGeometry {
