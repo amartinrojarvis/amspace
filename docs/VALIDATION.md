@@ -7,6 +7,14 @@
 - Comprobación física en esta sesión, con dos ventanas reales en el mosaico: doce lecturas de `--diagnose` por fase del ida/vuelta ⌃← → devuelven siempre `10,41 825×947` y `845,41 825×947`, sin segundo estado. Los `window unavailable` intermedios pertenecen al hueco del deslizamiento y no producen escritura (la rama `!visible.contains(...)` descarta la verificación sin tocar geometría). Proceso en reposo ≈ 74,7 MiB de RSS y ~2,2 % de CPU con el tap prioritario activo.
 - Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
 
+## Publicación 0.8.7, build 52
+
+- Publicada a petición del usuario: [v0.8.7](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.7), commit exacto `33b473a0c42ed8689298116609ceea362679214d`. Release estable, no prerelease.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `f55f859c1ed10ba19029a76813b9b749d6d3b41a670a01483805bba095372731`; 2 649 418 bytes. Copia inmutable en `updates/0.8.7/AMSpace-universal.zip`, commit de alojamiento `3e93a0e`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.7/build 52 dentro del archivo. Catálogo anunciado después de esa verificación, commit `cb5255a`, con `sparkle:version="52"` y `length="2649418"`; el `appcast.xml` de la raíz es idéntico byte a byte a la descarga pública.
+- Instalación local desde 0.8.6/build 51: copia de retorno en `.cache/AMSpace-before-0.8.7.zip`, paquete sustituido, firma estricta válida e instancia 0.8.7/build 52. Preferencias antes/después idénticas, sin claves nuevas ni perdidas.
+- Comprobación física con el árbol de tres ventanas (una maestra y dos apiladas), tres idas y vueltas ⌃← →: seis lecturas por fase devuelven siempre `10,41 969×947`, `990,41 680×469` y `989,520 681×468`, sin segundo estado en ninguna de las tres.
+- Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
+
 ## Revisión sobre 0.8.5/build 50: menos trabajo por cuadro sin cambiar el resultado
 
 - Temporizador del mosaico (`tile_manager::tick_interval`): 0,25 s con el modelo en reposo; siguen 80 ms mientras asienta un Space (`space_reentry`/`space_quiet_until`), con modelo sucio o con verificaciones en curso, y 1/60 s con animación, arrastre, candidatos de gesto o entrega pendiente. El umbral interno de enumeración sigue en 500 ms y el de asentamiento en 100 ms, así que el cuadro más largo no retrasa ningún escaneo: los avisos de Space/pantalla/activación, los gestos del ratón y `dirty` conmutan el temporizador en su propio cuadro. Los ocho diagnósticos/benchmarks excluidos y las demás pruebas quedan igual.
