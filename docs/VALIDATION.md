@@ -7,6 +7,14 @@
 - Comprobación física con el binario de esta revisión y el árbol real de tres ventanas: tras tres idas y vueltas ⌃← →, `--diagnose` devuelve `10,41 825×947`, `845,41 825×469` y `845,520 825×468` para el escritorio 1 y `1010,41 660×947` / `10,41 990×947` para el 5; ningún segundo estado. Los `window unavailable` intermedios siguen sin generar escritura.
 - Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
 
+## Publicación 0.8.9, build 54
+
+- Publicada a petición del usuario: [v0.8.9](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.9), commit exacto `8fd4b25cb0e11943dceef32e202388c055ca1dc8`. Release estable, no prerelease; única diferencia con 0.8.8: el candidato de grupo de pestañas nativa se sirve del memo de pertenencia del cuadro.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `c539fe0cf158186a45b9b0cbfc913bbfc7ecfeebcd8d57ce3b01810917103ec7`; 2 650 282 bytes. Copia inmutable en `updates/0.8.9/AMSpace-universal.zip`, commit de alojamiento `74a32dc`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.9/build 54 dentro del archivo. Catálogo anunciado después de esa verificación, con `sparkle:version="54"` y `length="2650282"`; el `appcast.xml` de la raíz es idéntico byte a byte a la descarga pública.
+- Instalación local desde 0.8.8/build 53: copia de retorno en `.cache/AMSpace-before-0.8.9.zip`, paquete sustituido, firma estricta válida e instancia 0.8.9/build 54. Preferencias antes/después idénticas, sin claves nuevas ni perdidas.
+- Comprobación física con el árbol real de tres ventanas (una maestra y dos apiladas), tres idas y vueltas ⌃← →: `10,41 825×947`, `845,41 825×469` y `845,520 825×468` estables, sin segundo estado. Los `window unavailable` intermedios del escritorio 5 no producen escritura.
+- Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
+
 ## Publicación 0.8.8, build 53
 
 - Publicada a petición del usuario: [v0.8.8](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.8), commit exacto `12a99b28f57468eac03182b73a83a7c9e9e309de`. Release estable, no prerelease.
