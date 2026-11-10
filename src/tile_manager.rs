@@ -1614,6 +1614,18 @@ impl Manager {
                 continue;
             };
             let actual = NSRect::new(position, size);
+            // During the bounded settle window the compositor can still report
+            // the pre-slide frame. The destination already committed owns the
+            // window, so neither the duplicate write nor its learned limit is
+            // evidence yet; the verification resumes on the first scan after
+            // the window expires, where a real drift still repairs itself.
+            if committed_during_settling(
+                self.settling_space(),
+                self.applied.get(&id).copied(),
+                self.verifications[&id].target,
+            ) {
+                continue;
+            }
             let verification = self.verifications.get_mut(&id).unwrap();
             match verification.step(actual, now) {
                 VerificationStep::Wait => {}
@@ -3113,6 +3125,14 @@ fn retain_settled_ids(ids: &mut Vec<u32>, order: &[u32], settling: bool) {
     {
         *ids = order.to_vec();
     }
+}
+
+/// While a Space is still publishing its windows, the destination already in
+/// `applied` is the authoritative one, so the verification must not rewrite it.
+/// Outside the settle window, or for a genuinely different destination, the
+/// observed frame still drives the repair.
+fn committed_during_settling(settling: bool, applied: Option<NSRect>, target: NSRect) -> bool {
+    settling && applied.is_some_and(|applied| near(applied, target))
 }
 
 #[cfg(test)]
@@ -5911,6 +5931,32 @@ mod tests {
         assert!(
             manager.needs_placement(7, target, Some(native)),
             "after the settle window, real drift is repaired again"
+        );
+    }
+    #[test]
+    fn the_verification_skips_only_the_destination_committed_during_settling() {
+        let target = rect(10., 41., 1660., 947.);
+        let native = rect(200., 120., 900., 600.);
+        let other = rect(10., 41., 800., 947.);
+        assert!(
+            committed_during_settling(true, Some(target), target),
+            "the committed destination owns the window while the Space settles"
+        );
+        assert!(
+            !committed_during_settling(true, Some(native), target),
+            "the pre-slide frame is not a destination, so the retry still runs"
+        );
+        assert!(
+            !committed_during_settling(true, Some(other), target),
+            "a different committed rect must not silence this window's retry"
+        );
+        assert!(
+            !committed_during_settling(false, Some(target), target),
+            "after the bounded window, a real drift is repaired again"
+        );
+        assert!(
+            !committed_during_settling(true, None, target),
+            "without a committed destination the verification keeps its own budget"
         );
     }
 }
