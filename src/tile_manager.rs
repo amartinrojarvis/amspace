@@ -1546,14 +1546,12 @@ impl Manager {
             },
         );
     }
-    fn animate(&mut self, active: &[(Workspace, NSRect)]) {
+    fn animate(&mut self, active: &[(Workspace, NSRect)], candidates: &[(i32, u32, NSRect)]) {
         if self.transitions.is_empty() {
             return;
         }
-        // One compositor snapshot replaces synchronous AX flag reads per frame/window.
-        let Some(candidates) = ws::try_tile_windows() else {
-            return;
-        };
+        // The tick's single compositor snapshot replaces synchronous AX flag
+        // reads per frame/window.
         let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let mut done = vec![];
         let now = Instant::now();
@@ -1588,13 +1586,14 @@ impl Manager {
             self.transitions.remove(&id);
         }
     }
-    fn verify_placements(&mut self, active: &[(Workspace, NSRect)]) {
+    fn verify_placements(
+        &mut self,
+        active: &[(Workspace, NSRect)],
+        candidates: &[(i32, u32, NSRect)],
+    ) {
         if self.verifications.is_empty() {
             return;
         }
-        let Some(candidates) = ws::try_tile_windows() else {
-            return;
-        };
         let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let now = Instant::now();
         for id in self.verifications.keys().copied().collect::<Vec<_>>() {
@@ -1983,10 +1982,14 @@ impl Manager {
         true
     }
     pub fn tick_interval(&self) -> f64 {
+        // 0.08 while a bounded operation is in flight; 0.25 when the model is
+        // idle. The internal 500 ms scan gate is unchanged, so the coarser idle
+        // cadence cannot postpone a scan, and every notification, gesture or
+        // dirty flag still resumes a fast timer on the very tick it is set.
         if self.space_reentry.is_some() && self.drag.is_none()
-            || self
-                .space_quiet_until
-                .is_some_and(|until| Instant::now() < until)
+            || self.space_quiet_until.is_some()
+            || self.dirty
+            || !self.verifications.is_empty()
         {
             0.08
         } else if !self.transitions.is_empty()
@@ -1996,7 +1999,7 @@ impl Manager {
         {
             1. / 60.
         } else {
-            0.08
+            0.25
         }
     }
     /// False tells the UI to stop its timer after permission is revoked.
@@ -2503,10 +2506,16 @@ impl Manager {
                 return;
             }
         }
+        // One coherent compositor snapshot serves verification, animation and
+        // membership for this tick: the same data three times over, instead of
+        // three lists that can disagree during a native slide.
+        let Some(candidates) = ws::try_tile_windows() else {
+            return;
+        };
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
         if place_windows {
-            self.verify_placements(&active);
-            self.animate(&active);
+            self.verify_placements(&active, &candidates);
+            self.animate(&active, &candidates);
         }
         if !self.transitions.is_empty() {
             // Do not interleave full AX enumeration with the 160 ms animation.
@@ -2520,9 +2529,6 @@ impl Manager {
         {
             return;
         }
-        let Some(candidates) = ws::try_tile_windows() else {
-            return;
-        };
         self.last_visible_windows =
             Some(candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect());
         self.last_scan = Some(Instant::now());
@@ -5659,7 +5665,7 @@ mod tests {
     #[test]
     fn high_frequency_ticks_exist_only_during_motion() {
         let mut manager = Manager::default();
-        assert_eq!(manager.tick_interval(), 0.08);
+        assert_eq!(manager.tick_interval(), 0.25);
         let from = rect(0., 0., 400., 300.);
         let to = rect(0., 0., 1000., 800.);
         manager.transitions.insert(

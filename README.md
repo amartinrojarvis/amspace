@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.8.5](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.5/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.8.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.6/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -215,7 +215,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.8.5](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.5/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.5). También disponible mediante Buscar ahora en General.
+[Descargar 0.8.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.6/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.6). También disponible mediante Buscar ahora en General.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
