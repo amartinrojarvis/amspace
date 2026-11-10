@@ -3121,14 +3121,19 @@ fn needs_placement(
 }
 
 /// Keep the previous distribution while a Space is still publishing windows.
-/// A prefix of the retained order is the same membership; the trailing id is
-/// only missing from the compositor list for one scan.
+/// During the settle burst the compositor list can lag the retained order in
+/// two ways: one id not yet published (a gap anywhere in the list) or one
+/// transient extra id (a native tab's second `NSWindow`, an Electron helper).
+/// Both are the same membership as the retained order, so that order wins and
+/// each leaf is written once. An unrelated list is a real change and is kept.
 fn retain_settled_ids(ids: &mut Vec<u32>, order: &[u32], settling: bool) {
-    if settling
-        && !ids.is_empty()
-        && ids.len() < order.len()
-        && ids.iter().all(|id| order.contains(id))
-    {
+    // An empty retained order is the first visit, not a lagging list.
+    if !settling || ids.is_empty() || order.is_empty() || ids.len() == order.len() {
+        return;
+    }
+    // Different lengths with either inclusion hold only for the two lag
+    // shapes above, so those reuse the retained order.
+    if ids.iter().all(|id| order.contains(id)) || order.iter().all(|id| ids.contains(id)) {
         *ids = order.to_vec();
     }
 }
@@ -5878,6 +5883,30 @@ mod tests {
             retain_settled_ids(&mut ids, &closed.order, false);
             closed.reconcile_at(&ids, area, 10., None);
             assert_eq!(closed.frames(area, 10.).len(), 2);
+            // A gap in the middle is the same membership during the burst.
+            let mut gap = Desktop::configured(layout, None);
+            gap.reconcile(&[10, 20, 30], area, 10.);
+            let mut ids = vec![10, 30];
+            retain_settled_ids(&mut ids, &gap.order, true);
+            gap.reconcile_at(&ids, area, 10., None);
+            gap.fit(area, 10.);
+            assert_eq!(
+                gap.frames(area, 10.),
+                original,
+                "{layout:?}: a mid-list gap must not collapse the published leaf"
+            );
+            // One transient extra id (native tab second NSWindow) keeps the tree.
+            let mut extra = Desktop::configured(layout, None);
+            extra.reconcile(&[10, 20, 30], area, 10.);
+            let mut ids = vec![10, 20, 30, 40];
+            retain_settled_ids(&mut ids, &extra.order, true);
+            extra.reconcile_at(&ids, area, 10., None);
+            extra.fit(area, 10.);
+            assert_eq!(
+                extra.frames(area, 10.),
+                original,
+                "{layout:?}: the transient extra id must not redistribute the tree"
+            );
             // An unrelated membership is not treated as a settling prefix.
             let mut other = Desktop::configured(layout, None);
             other.reconcile(&[10, 20, 30], area, 10.);
