@@ -2730,7 +2730,9 @@ impl Manager {
                         {
                             self.tab_groups.insert(old, previous);
                         }
-                        if spaces::window_space(old).is_some_and(|native| native != space.1) {
+                        if window_space_cached(old, &mut space_of)
+                            .is_some_and(|native| native != space.1)
+                        {
                             continue;
                         }
                         if let Some(previous) = self.tab_groups.get(&old) {
