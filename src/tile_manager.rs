@@ -536,13 +536,19 @@ impl ReentrySample {
 #[derive(Default)]
 struct SpaceReentry {
     anchor: Option<(ReentrySample, Instant)>,
+    incomplete: u8,
 }
 impl SpaceReentry {
     fn observe(&mut self, sample: Option<ReentrySample>, now: Instant) -> bool {
         let Some(sample) = sample else {
+            // None is an incomplete read, not an empty desktop, so the anchor
+            // restarts. A bounded burst of them still resumes the normal scan
+            // from a fresh list instead of keeping the fast timer forever.
             self.anchor = None;
-            return false;
+            self.incomplete += 1;
+            return self.incomplete >= 8;
         };
+        self.incomplete = 0;
         if let Some((previous, since)) = &self.anchor {
             if previous.agrees(&sample) {
                 return now.duration_since(*since) >= Duration::from_millis(160);
@@ -908,6 +914,9 @@ impl Manager {
             .filter(|w| w.layer == 0 && w.onscreen && w.pid != std::process::id() as i32)
             .filter_map(|w| Some((w.pid, w.id, w.frame?)))
             .collect();
+        // The burst samples every window twice or thrice; one native read per
+        // id keeps this frame's membership self-consistent and cheap.
+        let mut space_of: HashMap<u32, Option<u64>> = HashMap::new();
         let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let expected: Vec<_> = self
             .desktops
@@ -934,7 +943,7 @@ impl Manager {
             if ordered == Some(false) {
                 continue;
             }
-            let native = spaces::window_space(id);
+            let native = window_space_cached(id, &mut space_of);
             if native.is_some_and(|native| native != w.space.1) {
                 continue;
             }
@@ -949,7 +958,7 @@ impl Manager {
                 let replaced = candidates.iter().any(|(pid, other, _)| {
                     if *pid != w.pid
                         || *other == id
-                        || spaces::window_space(*other) != Some(w.space.1)
+                        || window_space_cached(*other, &mut space_of) != Some(w.space.1)
                     {
                         return false;
                     }
@@ -1000,7 +1009,7 @@ impl Manager {
             {
                 continue;
             }
-            let Some(native) = spaces::window_space(entry.id) else {
+            let Some(native) = window_space_cached(entry.id, &mut space_of) else {
                 continue;
             };
             if !active.iter().any(|(key, _)| key.1 == native) {
@@ -1026,7 +1035,7 @@ impl Manager {
             {
                 continue;
             }
-            let native = match spaces::window_space(id) {
+            let native = match window_space_cached(id, &mut space_of) {
                 Some(native) => native,
                 None if expected_ids.contains(&(pid, id)) => return None,
                 None => continue,
@@ -1492,7 +1501,13 @@ impl Manager {
         self.inactive_tabs.remove(&new);
         self.membership_grace.since.remove(&old);
     }
-    fn needs_placement(&self, id: u32, target: NSRect, actual: Option<NSRect>) -> bool {
+    fn needs_placement(
+        &self,
+        id: u32,
+        target: NSRect,
+        actual: Option<NSRect>,
+        settling: bool,
+    ) -> bool {
         let pending = self
             .transitions
             .get(&id)
@@ -1503,11 +1518,7 @@ impl Manager {
             // pre-slide frame twice, and re-writing an identical rect only adds
             // a second visible step. The bounded settle window keeps the repair
             // for real drift on the first scan after it expires.
-            .or_else(|| {
-                self.settling_space()
-                    .then(|| self.applied.get(&id).copied())
-                    .flatten()
-            });
+            .or_else(|| settling.then(|| self.applied.get(&id).copied()).flatten());
         // A focus/application notification requests a scan, not a new placement.
         // Limits expire when the target or observed geometry changes, never just
         // because `dirty` was set by a workspace callback.
@@ -1546,7 +1557,12 @@ impl Manager {
             },
         );
     }
-    fn animate(&mut self, active: &[(Workspace, NSRect)], candidates: &[(i32, u32, NSRect)]) {
+    fn animate(
+        &mut self,
+        active: &[(Workspace, NSRect)],
+        candidates: &[(i32, u32, NSRect)],
+        space_of: &mut HashMap<u32, Option<u64>>,
+    ) {
         if self.transitions.is_empty() {
             return;
         }
@@ -1561,7 +1577,7 @@ impl Manager {
                 continue;
             };
             if !active.iter().any(|(space, _)| *space == w.space)
-                || spaces::window_space(*id) != Some(w.space.1)
+                || window_space_cached(*id, space_of) != Some(w.space.1)
                 || !visible.contains(&(w.pid, *id))
             {
                 done.push(*id);
@@ -1590,6 +1606,8 @@ impl Manager {
         &mut self,
         active: &[(Workspace, NSRect)],
         candidates: &[(i32, u32, NSRect)],
+        settling: bool,
+        space_of: &mut HashMap<u32, Option<u64>>,
     ) {
         if self.verifications.is_empty() {
             return;
@@ -1603,7 +1621,7 @@ impl Manager {
             };
             if self.floating.contains(&id)
                 || !active.iter().any(|(key, _)| *key == w.space)
-                || spaces::window_space(id) != Some(w.space.1)
+                || window_space_cached(id, space_of) != Some(w.space.1)
                 || !visible.contains(&(w.pid, id))
             {
                 self.verifications.remove(&id);
@@ -1619,7 +1637,7 @@ impl Manager {
             // evidence yet; the verification resumes on the first scan after
             // the window expires, where a real drift still repairs itself.
             if committed_during_settling(
-                self.settling_space(),
+                settling,
                 self.applied.get(&id).copied(),
                 self.verifications[&id].target,
             ) {
@@ -1631,6 +1649,12 @@ impl Manager {
                 VerificationStep::Complete => {
                     self.verifications.remove(&id);
                     self.constrained.remove(&id);
+                    // The settled frame is the proof of the smallest workable
+                    // size. A larger minimum learned by an earlier Limited step
+                    // must not keep nudging the tree on later round trips.
+                    if let Some(minimum) = self.minimum_sizes.get_mut(&id) {
+                        settle_minimum(minimum, actual.size);
+                    }
                 }
                 VerificationStep::Retry => {
                     // Electron and permission changes can invalidate a retained
@@ -2512,10 +2536,14 @@ impl Manager {
         let Some(candidates) = ws::try_tile_windows() else {
             return;
         };
+        // One Space-membership memo per tick, so every reader of this frame
+        // consults the same native answer instead of three mid-slide reads.
+        let settling = self.settling_space();
+        let mut space_of: HashMap<u32, Option<u64>> = HashMap::new();
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
         if place_windows {
-            self.verify_placements(&active, &candidates);
-            self.animate(&active, &candidates);
+            self.verify_placements(&active, &candidates, settling, &mut space_of);
+            self.animate(&active, &candidates, &mut space_of);
         }
         if !self.transitions.is_empty() {
             // Do not interleave full AX enumeration with the 160 ms animation.
@@ -2557,7 +2585,7 @@ impl Manager {
                 self.forget_window(id);
                 transferred.remove(&id);
             }
-            let Some(space) = spaces::window_space(id) else {
+            let Some(space) = window_space_cached(id, &mut space_of) else {
                 if self.windows.get(&id).is_some_and(|w| w.pid == pid) {
                     uncertain.insert(id);
                 }
@@ -2766,7 +2794,7 @@ impl Manager {
                 && all_ids
                     .as_ref()
                     .is_none_or(|ids| ids.contains(&(w.pid, *id)))
-                && spaces::window_space(*id).is_none_or(|native| native == w.space.1)
+                && window_space_cached(*id, &mut space_of).is_none_or(|native| native == w.space.1)
             {
                 // Being temporarily offscreen is not proof of destruction. A
                 // confirmed native Space transfer never retains the old leaf.
@@ -2825,7 +2853,7 @@ impl Manager {
                 }
             }
         }
-        if self.settling_space() {
+        if settling {
             // During the native transition, onscreen visibility can lag Space
             // membership. Do not erase a live desktop's ratios in that gap.
             for (id, w) in &self.windows {
@@ -2833,7 +2861,7 @@ impl Manager {
                     && !self.inactive_tabs.contains(id)
                     && !self.floating.contains(id)
                     && active.iter().any(|(space, _)| *space == w.space)
-                    && spaces::window_space(*id) == Some(w.space.1)
+                    && window_space_cached(*id, &mut space_of) == Some(w.space.1)
                 {
                     members.entry(w.space).or_default().push(*id);
                 }
@@ -2843,7 +2871,7 @@ impl Manager {
         if crate::desktop_mode::active() {
             return;
         }
-        let settling = self.settling_space();
+        // The settle flag was read once for this tick, above.
         for (space, r) in active {
             let d = self.desktops.entry(space).or_default();
             d.grid = if pref(defaults, "tile.grid.enabled") != 0 {
@@ -2898,11 +2926,11 @@ impl Manager {
                 // WindowServer bounds can include the native Space slide offset.
                 // AX reports the app's frame, already read during membership scan.
                 let actual = actual_frames.get(&id).copied();
-                if !self.needs_placement(id, frame, actual) {
+                if !self.needs_placement(id, frame, actual, settling) {
                     continue;
                 }
                 self.constrained.remove(&id);
-                if transferred.contains(&id) || self.settling_space() {
+                if transferred.contains(&id) || settling {
                     // macOS has already animated the Space transition. Commit
                     // the destination once, rather than animating it a second time.
                     self.transitions.remove(&id);
@@ -3103,6 +3131,25 @@ fn stable_overlap_workspace(
     (retained > 0. && retained >= best * 0.95).then_some(previous)
 }
 
+/// Clamp a learned app minimum to the frame the app just proved it can hold,
+/// never below the smallest usable tile. Idempotent, so repeated round trips
+/// converge instead of growing monotonically.
+fn settle_minimum(minimum: &mut objc2_foundation::NSSize, actual: objc2_foundation::NSSize) {
+    minimum.width = minimum.width.min(actual.width).max(80.);
+    minimum.height = minimum.height.min(actual.height).max(60.);
+}
+
+/// One native Space read per window per tick. The animation, the verification
+/// and the membership scan must agree on the same mid-slide answer.
+fn window_space_cached(id: u32, memo: &mut HashMap<u32, Option<u64>>) -> Option<u64> {
+    if let Some(known) = memo.get(&id) {
+        return *known;
+    }
+    let read = spaces::window_space(id);
+    memo.insert(id, read);
+    read
+}
+
 /// Compare actual geometry, not just the last requested destination. A stable
 /// app-imposed size limit is not retried until the target or observed frame changes.
 fn needs_placement(
@@ -3275,7 +3322,12 @@ mod tests {
                             for (id, frame) in &frames {
                                 assert_eq!(manager.applied.get(id), Some(frame));
                                 assert_eq!(manager.constrained.get(id), Some(&(*frame, *frame)));
-                                assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+                                assert!(!manager.needs_placement(
+                                    *id,
+                                    *frame,
+                                    Some(*frame),
+                                    manager.settling_space()
+                                ));
                             }
                         }
                     }
@@ -3810,7 +3862,12 @@ mod tests {
                     );
                     assert_eq!(manager.desktops[&key].frames(area, 10.), frames);
                     for (id, r) in &frames {
-                        assert!(!manager.needs_placement(*id, *r, Some(*r)));
+                        assert!(!manager.needs_placement(
+                            *id,
+                            *r,
+                            Some(*r),
+                            manager.settling_space()
+                        ));
                     }
                 }
             }
@@ -3843,6 +3900,37 @@ mod tests {
         assert!(!barrier.observe(Some(closing.clone()), now + Duration::from_millis(480)));
         assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(560)));
         assert!(barrier.observe(Some(sample), now + Duration::from_millis(720)));
+    }
+    #[test]
+    fn a_burst_of_incomplete_reads_still_releases_the_fast_timer() {
+        let now = Instant::now();
+        let area = rect(10., 41., 1660., 947.);
+        let sample = reentry_observation((1, 7), area, &[(1, area)]);
+        let mut barrier = SpaceReentry::default();
+        // An incomplete read restarts the agreement, but the burst is bounded.
+        for _ in 0..7 {
+            assert!(!barrier.observe(None, now));
+        }
+        assert!(barrier.observe(None, now));
+        // A real observation restarts the counter and needs its own stability.
+        assert!(!barrier.observe(Some(sample.clone()), now));
+        assert!(!barrier.observe(None, now));
+        assert!(!barrier.observe(Some(sample.clone()), now));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(159)));
+        assert!(barrier.observe(Some(sample), now + Duration::from_millis(160)));
+    }
+    #[test]
+    fn a_settled_frame_clamps_a_grown_minimum_without_losing_the_floor() {
+        // A Limited step once observed a wider frame than the tile can hold.
+        let mut minimum = objc2_foundation::NSSize::new(1200., 800.);
+        settle_minimum(&mut minimum, objc2_foundation::NSSize::new(825., 947.));
+        assert_eq!((minimum.width, minimum.height), (825., 800.));
+        // Idempotent: the same settled frame cannot drift the tree again.
+        settle_minimum(&mut minimum, objc2_foundation::NSSize::new(825., 947.));
+        assert_eq!((minimum.width, minimum.height), (825., 800.));
+        // Never below the smallest usable tile.
+        settle_minimum(&mut minimum, objc2_foundation::NSSize::new(10., 10.));
+        assert_eq!((minimum.width, minimum.height), (80., 60.));
     }
     #[test]
     fn reentry_requires_stability_after_cumulative_motion_and_display_changes() {
@@ -4290,7 +4378,12 @@ mod tests {
             desktop.fit(secondary.1, 10.);
             assert_eq!(desktop.frames(secondary.1, 10.), original);
             for (id, frame) in &original {
-                assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+                assert!(!manager.needs_placement(
+                    *id,
+                    *frame,
+                    Some(*frame),
+                    manager.settling_space()
+                ));
             }
         }
         // A real native Space change must still override cached ownership.
@@ -4343,7 +4436,7 @@ mod tests {
         assert_eq!(manager.applied[&2], area);
         assert_eq!(manager.constrained[&3], (area, resized));
         assert_eq!(manager.desktops[&portrait].frames(area, 10.), before);
-        assert!(!manager.needs_placement(3, area, Some(resized)));
+        assert!(!manager.needs_placement(3, area, Some(resized), manager.settling_space()));
         // A settled window needs no geometry write on repeated notifications.
         for offset in [100, 200, 300] {
             manager.space_changed_with_visible_at(
@@ -4351,7 +4444,7 @@ mod tests {
                 &[(1, 9), portrait],
             );
             assert_eq!(manager.applied[&4], area);
-            assert!(!manager.needs_placement(4, area, Some(area)));
+            assert!(!manager.needs_placement(4, area, Some(area), manager.settling_space()));
             assert_eq!(manager.desktops[&portrait].frames(area, 10.), before);
         }
         assert!(!manager.waiting_for_space(now + Duration::from_millis(900)));
@@ -4403,7 +4496,7 @@ mod tests {
             assert_eq!(manager.desktops[&space].order, vec![1, next, 3]);
             assert_eq!(manager.applied[&next], target);
             assert_eq!(manager.minimum_sizes[&next], target.size);
-            assert!(!manager.needs_placement(next, target, Some(target)));
+            assert!(!manager.needs_placement(next, target, Some(target), manager.settling_space()));
             selected = next;
         }
         manager.desktops.get_mut(&space).unwrap().remove(selected);
@@ -4688,10 +4781,10 @@ mod tests {
         for _ in 0..10 {
             // Same invalidate used by the NSWorkspace activation callback.
             manager.invalidate();
-            assert!(!manager.needs_placement(1, target, Some(actual)));
+            assert!(!manager.needs_placement(1, target, Some(actual), false));
         }
-        assert!(manager.needs_placement(1, rect(-890., -390., 1200., 1580.), Some(actual)));
-        assert!(manager.needs_placement(1, target, Some(rect(-800., -390., 1100., 1580.))));
+        assert!(manager.needs_placement(1, rect(-890., -390., 1200., 1580.), Some(actual), false));
+        assert!(manager.needs_placement(1, target, Some(rect(-800., -390., 1100., 1580.)), false));
     }
 
     #[test]
@@ -5799,7 +5892,7 @@ mod tests {
         assert_eq!(manager.desktops[&key].frames(area, 10.), original);
         assert_eq!(manager.desktops[&key].save_distribution(area), saved);
         // The settled frame equals the destination, so no further AX write runs.
-        assert!(!manager.needs_placement(42, target, Some(target)));
+        assert!(!manager.needs_placement(42, target, Some(target), manager.settling_space()));
         assert!(manager.transitions.is_empty());
         assert!(manager.verifications.is_empty());
         // A committed write verifies complete on its first check: no retry pair.
@@ -5852,7 +5945,7 @@ mod tests {
         assert!(manager.transitions.is_empty() && manager.verifications.is_empty());
         for (id, frame) in &original {
             assert_eq!(manager.desktops[&key].frames(area, 10.), original);
-            assert!(!manager.needs_placement(*id, *frame, Some(*frame)));
+            assert!(!manager.needs_placement(*id, *frame, Some(*frame), manager.settling_space()));
         }
     }
     #[test]
@@ -5943,12 +6036,12 @@ mod tests {
         manager.space_changed_with_visible_at(base, &[key]);
         manager.applied.insert(7, target);
         assert!(
-            !manager.needs_placement(7, target, Some(native)),
+            !manager.needs_placement(7, target, Some(native), manager.settling_space()),
             "the committed destination is still pending during the settle window"
         );
         let other = rect(10., 41., 800., 947.);
         assert!(
-            manager.needs_placement(7, other, Some(native)),
+            manager.needs_placement(7, other, Some(native), manager.settling_space()),
             "a genuinely different template must still be written"
         );
         let sample = ReentrySample {
@@ -5959,12 +6052,12 @@ mod tests {
         assert!(!manager.observe_reentry(Some(sample.clone()), base + Duration::from_millis(200)));
         assert!(manager.observe_reentry(Some(sample), base + Duration::from_millis(400)));
         assert!(
-            !manager.needs_placement(7, target, Some(native)),
+            !manager.needs_placement(7, target, Some(native), manager.settling_space()),
             "the bounded window keeps the single committed write"
         );
         std::thread::sleep(Duration::from_millis(1300));
         assert!(
-            manager.needs_placement(7, target, Some(native)),
+            manager.needs_placement(7, target, Some(native), manager.settling_space()),
             "after the settle window, real drift is repaired again"
         );
     }

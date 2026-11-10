@@ -1,6 +1,6 @@
 [package]
 name = "amspace"
-version = "0.8.7"
+version = "0.8.8"
 edition = "2024"
 rust-version = "1.85"
 description = "A quiet, native macOS menu bar companion for Spaces and focus"
