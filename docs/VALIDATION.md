@@ -7,6 +7,13 @@
 - Comprobación física en esta sesión, con la instancia instalada: `--diagnose` antes y después de un ida/vuelta ⌃← → reporta el mismo marco `10,41 1660×947` para la única ventana del mosaico; proceso en reposo 74,7 MiB de RSS y ~2,8 % de CPU con el tap prioritario activo. `--diagnose` de solo lectura: 0,10 s y 19,6 MiB de pico.
 - Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe. Los números de RSS/CPU corresponden a esta sesión y no son un requisito fijo.
 
+## Publicación 0.8.6, build 51
+
+- Publicada a petición del usuario: [v0.8.6](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.6), commit exacto `4df7df42719f55fd1dbd9b84683033f4b10879ea`. Release estable, no prerelease; CI correcta sobre ese commit y sobre el anuncio `0e23d40`.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `6f24f993436a7ef8bb674340b667c7576253f7632323efbe2674718e7e68c15d`; 2 649 069 bytes. Copia inmutable en `updates/0.8.6/AMSpace-universal.zip`, commit de alojamiento `07c2cb6`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.6/build 51 dentro del archivo. Catálogo anunciado después de esa verificación, commit `0e23d40`, con `sparkle:version="51"` y `length="2649069"`; el `appcast.xml` de la raíz es idéntico byte a byte a la descarga pública.
+- Instalación local desde 0.8.5/build 50: copia de retorno en `.cache/AMSpace-before-0.8.6.zip`, paquete sustituido, firma estricta válida e instancia instalada 0.8.6/build 51. Preferencias antes/después idénticas, sin claves nuevas ni perdidas.
+- Límite: una sola pantalla física; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
+
 ## Revisión sobre 0.8.4/build 49: la verificación no reescribe el destino comprometido
 
 - Informe del usuario en este equipo (una pantalla): al volver al escritorio con una sola ventana, esa ventana seguía mostrando el par de ajustes. Tercera causa, distinta de las dos anteriores: la rama `VerificationStep::Retry` de `verify_placements` escribía `verification.target` por su cuenta, sin pasar por `needs_placement`. Durante el deslizamiento, `ax::geometry` aún devolvía el marco anterior al deslizamiento, el `due` de 120 ms vencía y el mismo rect se volvía a escribir; encima, un segundo reintento fallido lo convertía en límite aprendido en `constrained`.
