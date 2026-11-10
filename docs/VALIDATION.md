@@ -6,6 +6,13 @@
 - `./scripts/check.sh`: formato, Clippy sin warnings, plist y 193 pruebas correctas, ocho diagnósticos/benchmarks excluidos.
 - Límite: una sola pantalla física en esta sesión. El par de monitores (uno vertical) sigue sin confirmación ahí.
 
+## Publicación 0.8.5, build 50
+
+- Publicada a petición del usuario: [v0.8.5](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.5), commit exacto `7345a114d8dec85b92c02100ee1fefb9b5179a6e`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42818096418). Release estable, no prerelease.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `2c3088db9a060c1255bed3ae0538b5ab05666dce91bd8dde2a98e5d48c75e3db`; 2 648 571 bytes. Copia inmutable en `updates/0.8.5/AMSpace-universal.zip`, commit de alojamiento `90d98bf`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.5/build 50 dentro del archivo. Catálogo anunciado después de esa verificación, commit `798daf2`, con `sparkle:version="50"` y `length="2648571"`; el `appcast.xml` de la raíz es idéntico byte a byte a la descarga pública.
+- Instalación local desde 0.8.4/build 49: copia de retorno en `.cache/AMSpace-before-0.8.5.zip`, paquete sustituido, firma estricta válida y `--diagnose` en la instancia instalada: 0.8.5, Accesibilidad vigente, puente nativo disponible y tres escritorios reales. Preferencias antes/después idénticas, sin claves nuevas ni perdidas.
+- Límite: una sola pantalla física en esta sesión; el par de monitores (uno vertical) sigue sin confirmación en el Mac del informe.
+
 ## Revisión sobre 0.8.3/build 48: una sola escritura por ventana durante el asentamiento
 
 - Informe del usuario tras la 0.8.3: con una sola ventana en el escritorio, el par de ajustes seguía visible. Segunda causa, distinta de la membresía parcial: `needs_placement` (método de `Manager`) solo trataba como destino pendiente `transitions`/`verifications`. Durante el deslizamiento, `verify_placements` descarta la verificación cuando la ventana aún no figura en la lista del compositor (`tile_manager.rs`, rama de `!visible.contains(...)`), así que el escaneo siguiente de los 100 ms volvía a leer el marco previo al deslizamiento, lo comparaba con el destino y repetía la misma escritura: dos pasos visibles.
