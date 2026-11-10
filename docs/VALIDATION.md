@@ -6,6 +6,13 @@
 - `./scripts/check.sh`: formato, Clippy sin warnings, plist y 192 pruebas correctas, ocho diagnósticos/benchmarks excluidos. Las cuatro regresiones anteriores siguen vigentes.
 - Límite: este equipo tiene una sola pantalla física. El par de monitores (uno vertical) y la reducción a un único ajuste siguen sin confirmación ahí.
 
+## Publicación 0.8.4, build 49
+
+- Publicada a petición del usuario: [v0.8.4](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.4), commit exacto `f3b7fcaeb504f01bc7b8bcd6cf13601dd755c3b7`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42675605819). Release estable, no prerelease.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `6740452da9ddbafd2e8bbf2a09fd7cc25031d98cf1d759726c838b8dce1d927e`; 2 648 751 bytes. Copia inmutable en `updates/0.8.4/AMSpace-universal.zip`, commit de alojamiento `7bc3baa`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.4/build 49 dentro del archivo. Catálogo anunciado después de esa verificación, commit `3703097`, con `sparkle:version="49"` y `length="2648751"`; el `appcast.xml` de la raíz es idéntico byte a byte a la descarga pública.
+- Instalación local: la instancia en Aplicaciones es 0.8.4/build 49 (plist verificado). `--diagnose` en la instancia instalada: Accesibilidad vigente, puente nativo disponible y tres escritorios reales.
+- Límite: una sola pantalla física en esta sesión; la reducción a un único ajuste con dos monitores (uno vertical) sigue pendiente de confirmación en el Mac del informe.
+
 ## Revisión sobre 0.8.2/build 47: un solo ajuste por ventana al volver
 
 - Informe del usuario: con cualquier plantilla, al volver de otro escritorio una ventana (normalmente la última) se redimensionaba y volvía a ajustarse sola. Causa en `tick_mode_input`: durante el deslizamiento nativo, `ws::try_tile_windows()` puede devolver aún la lista incompleta en el primer escaneo. `Desktop::reconcile_at` eliminaba el id ausente —colapsando su nodo y repartiendo su área— y en el escaneo siguiente lo reañadía al final del `order` con una geometría distinta: dos escrituras, dos estados visibles.
@@ -14,12 +21,24 @@
 - `./scripts/check.sh`: formato, Clippy sin warnings, plist y 191 pruebas correctas, ocho diagnósticos/benchmarks excluidos. Trazas nativas con `AMSPACE_TRACE_SPACES=1` sobre los escritorios reales: `swipe=1 -> 5`, `confirmed=5`, `swipe=5 -> 1`, `confirmed=1` en ambos sentidos.
 - Límite: este equipo tiene una sola pantalla física. Los dos monitores (uno vertical) y la reducción del parpadeo a un único ajuste requieren confirmación en el Mac del informe.
 
+## Publicación 0.8.3, build 48
+
+- Publicada a petición del usuario: [v0.8.3](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.3), commit exacto `eec21df547bf0a85ee77910ac7ad546a02cc99e4`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42663440070). Release estable, no prerelease.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `5f3eaca9bf43155f49aa8ace2e7f1a6189b0a5c2ca21c48065e90e1c65abb38f`; 2 648 601 bytes. Copia inmutable en `updates/0.8.3/AMSpace-universal.zip`, commit de alojamiento `bd9220a`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.3/build 48 dentro del archivo. Catálogo anunciado después de esa verificación, commit `9f3ebbf`, con `sparkle:version="48"` y `length="2648601"`.
+- 191 pruebas internas correctas en el commit publicado, según la revisión anterior.
+
 ## Revisión sobre 0.8.1/build 46: indicador por pantalla del puntero
 
 - Informe del usuario con dos monitores: los atajos ⌘1–9 no cambiaban de escritorio al usar el puntero en la pantalla vertical. Causa localizada en `spaces::read`: la instantánea se tomaba del `display` cuyo `Current Space` coincidía con `SLSGetActiveSpace`, que solo nombra la pantalla principal. Los índices `1–9` y el texto del indicador correspondían así a los escritorios del monitor principal aunque la operación concernía al monitor secundario.
 - `read` ahora elige la pantalla en el orden: la que contiene el puntero (`tile_manager::pointer_display`, misma conversión de coordenadas que el mosaico), la que posee el `ManagedSpaceID` devuelto por `SLSGetActiveSpace`, y por último la primera entrada. `desktops` y `active` se leen del `Spaces` de esa pantalla, así que `Action::Desktop`, el menú del estado y los botones por escritorio usan la numeración del monitor correcto. `visible_desktops` sigue exponiendo una pareja `(pantalla, Space)` por cada monitor físico.
 - Pruebas nuevas `indicator_follows_the_pointer_screen_and_falls_back_to_the_active_one`, `a_single_spiral_tile_needs_no_write_after_leaving_and_returning` y `repeated_space_notifications_leave_one_tile_settled_without_pending_writes`: puntero en cada monitor, ninguno coincidiendo con el Space activo, una pantalla sin número resuelto, y la convergencia de un único tile (Espiral, una ventana) tras salir y volver, sin escrituras pendientes ni reintento de verificación. `./scripts/check.sh`: formato, Clippy sin warnings, plist y 190 pruebas correctas, ocho diagnósticos/benchmarks excluidos.
 - Límite: este equipo tiene una sola pantalla; la selección por puntero en dos monitores físicos (uno vertical) requiere confirmación en el Mac del informe. El `detail` ahora numera la entrada de SkyLight (`pantalla 1`, `pantalla 2`) en lugar de la etiqueta fija `pantalla activa`.
+
+## Publicación 0.8.2, build 47
+
+- Publicada a petición del usuario: [v0.8.2](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.2), commit exacto `70fbf6b5f1b3d3b1a2509b6558bbded4ee6df473`. [CI completa correcta](https://github.com/amartinrojarvis/amspace/actions/runs/42626378917). Release estable, no prerelease.
+- Bundle universal arm64/x86_64 con firma estricta. ZIP y feed Ed25519 firmados y verificados, sin exportar claves. SHA-256 del ZIP `88d901b851e6609d337b0995514e9c4af131660787826b0ebbeaa118ac2239c0`; 2 648 119 bytes. Copia inmutable en `updates/0.8.2/AMSpace-universal.zip`, commit de alojamiento `1055f9e`; descarga HTTPS sin autenticación idéntica byte a byte, con 0.8.2/build 47 dentro del archivo. Catálogo anunciado después de esa verificación, commit `5036f93`, con `sparkle:version="47"` y `length="2648119"`.
+- 190 pruebas internas correctas en el commit publicado, según la revisión anterior.
 
 ## Publicación 0.8.1, build 46
 
