@@ -106,10 +106,34 @@ pub enum Zone {
     Bottom,
     Center,
 }
+/// A tabbed group of windows sharing one template slot. `members` is the tab
+/// order; `members[active]` is the id owning that slot in `Desktop::order`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Group {
+    pub members: Vec<u32>,
+    pub active: usize,
+}
+impl Group {
+    pub fn leaf(&self) -> Option<u32> {
+        self.members.get(self.active).copied()
+    }
+    /// Remove `id` and return the tab that now owns the strip's leaf.
+    fn take(&mut self, id: u32) -> Option<u32> {
+        let index = self.members.iter().position(|w| *w == id)?;
+        self.members.remove(index);
+        if self.active >= index && self.active > 0 {
+            self.active -= 1;
+        }
+        self.active = self.active.min(self.members.len().saturating_sub(1));
+        self.leaf()
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DropIntent {
     Screen(Zone),
     Window(u32, Zone),
+    /// Released in the top third of a slot: join it as a tab.
+    Group(u32),
 }
 /// Global monitor coordinates in points; thresholds scale with the usable area.
 pub fn drop_intent(
@@ -118,6 +142,7 @@ pub fn drop_intent(
     dragged: u32,
     p: NSPoint,
     smart: bool,
+    grouped: bool,
 ) -> Option<DropIntent> {
     let padded = rect(
         area.origin.x - 12.,
@@ -131,10 +156,14 @@ pub fn drop_intent(
     // A managed window moves between the template's virtual slots. The native
     // window is under the pointer while dragging, so hit-test the model instead.
     if frames.iter().any(|(id, _)| *id == dragged) {
-        return frames
+        let (id, slot) = frames
             .iter()
-            .min_by(|(_, a), (_, b)| distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p)))
-            .map(|(id, _)| DropIntent::Window(*id, Zone::Center));
+            .min_by(|(_, a), (_, b)| distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p)))?;
+        return Some(if grouped && in_top_third(*slot, p) {
+            DropIntent::Group(*id)
+        } else {
+            DropIntent::Window(*id, Zone::Center)
+        });
     }
     if smart {
         let band = (area.size.width.min(area.size.height) * 0.08).clamp(28., 80.);
@@ -155,14 +184,17 @@ pub fn drop_intent(
         .iter()
         .filter(|(id, _)| *id != dragged)
         .find(|(_, r)| contains(*r, p))?;
-    Some(DropIntent::Window(
-        target.0,
-        if smart {
-            zone(target.1, p)
-        } else {
-            Zone::Center
-        },
-    ))
+    Some(if !smart {
+        DropIntent::Window(target.0, Zone::Center)
+    } else if grouped && in_top_third(target.1, p) {
+        DropIntent::Group(target.0)
+    } else {
+        DropIntent::Window(target.0, zone(target.1, p))
+    })
+}
+/// The top third of a slot groups; the lower two thirds take its place.
+fn in_top_third(r: NSRect, p: NSPoint) -> bool {
+    contains(r, p) && (p.y - r.origin.y) / r.size.height < 1. / 3.
 }
 fn distance_to_rect(r: NSRect, p: NSPoint) -> f64 {
     let dx = (r.origin.x - p.x)
@@ -366,6 +398,21 @@ impl Node {
                 }),
                 (a, b) => a.or(b),
             },
+        }
+    }
+    /// Point the leaf of `target` at `id`, leaving every ratio untouched.
+    fn rename(&mut self, target: u32, id: u32) {
+        match self {
+            Self::Empty => {}
+            Self::Leaf(w) => {
+                if *w == target {
+                    *w = id;
+                }
+            }
+            Self::Split { first, second, .. } => {
+                first.rename(target, id);
+                second.rename(target, id);
+            }
         }
     }
 
@@ -598,6 +645,9 @@ pub struct Desktop {
     pub grid: Option<(u32, u32)>,
     resized: Option<(Layout, Vec<u32>, Node)>,
     minimums: std::collections::HashMap<u32, objc2_foundation::NSSize>,
+    /// Tabbed groups, in creation order. Only `members[active]` owns a slot in
+    /// `order`, so the tree keeps exactly one leaf per group.
+    groups: Vec<Group>,
 }
 impl Desktop {
     pub fn configured(layout: Layout, grid: Option<(u32, u32)>) -> Self {
@@ -631,17 +681,31 @@ impl Desktop {
         }
         true
     }
-    pub fn remove(&mut self, id: u32) {
+    /// Drop a window. When it was the visible tab of a group, its sibling is
+    /// promoted into the very same slot and returned, so the tree is renamed
+    /// instead of collapsed and the other proportions survive.
+    pub fn remove(&mut self, id: u32) -> Option<u32> {
         self.minimums.remove(&id);
-        if !self.order.contains(&id) {
-            return;
-        }
         let old = self.order.clone();
+        let Some(position) = self.order.iter().position(|w| *w == id) else {
+            self.prune_member(id);
+            return None;
+        };
         self.order.retain(|w| *w != id);
+        let promoted = self
+            .groups
+            .iter_mut()
+            .find(|group| group.members.contains(&id))
+            .and_then(|group| group.take(id));
+        if let Some(next) = promoted {
+            self.order.insert(position, next);
+            self.remap_resized(&old);
+            return Some(next);
+        }
         if self.layout.centered_axis().is_some() {
             // Keep the old outer ratios as a reference. A changed membership no
             // longer matches `resized`, so base_tree rebuilds both sidebars.
-            return;
+            return None;
         }
         // Collapse only the vanished leaf's parent. Unrelated divisions retain
         // their user-defined proportions, across all templates.
@@ -652,6 +716,187 @@ impl Desktop {
             tree.remove(id)
                 .map(|tree| (layout, self.order.clone(), tree))
         });
+        None
+    }
+    fn prune_member(&mut self, id: u32) {
+        for group in &mut self.groups {
+            if let Some(index) = group.members.iter().position(|w| *w == id) {
+                let was_active = group.active == index;
+                group.members.remove(index);
+                if was_active {
+                    group.active = group.active.min(group.members.len().saturating_sub(1));
+                }
+                break;
+            }
+        }
+        self.groups.retain(|group| !group.members.is_empty());
+    }
+    /// Tabbed groups on this desktop, in creation order.
+    pub fn groups(&self) -> &[Group] {
+        &self.groups
+    }
+    /// Point each strip's leaf at the member the compositor really shows, so a
+    /// native tab switch never leaves an offscreen id owning the slot.
+    pub fn sync_tabs(&mut self, visible: &[u32]) {
+        for index in 0..self.groups.len() {
+            let Some(active) = self.groups[index].leaf() else {
+                continue;
+            };
+            if visible.contains(&active) {
+                continue;
+            }
+            if let Some(next) = self.groups[index]
+                .members
+                .iter()
+                .copied()
+                .find(|w| *w != active && visible.contains(w))
+            {
+                self.select_tab(next);
+            }
+        }
+    }
+    /// `Some(true)` for the visible tab, `Some(false)` for a hidden one.
+    pub fn tab_role(&self, id: u32) -> Option<bool> {
+        let group = self
+            .groups
+            .iter()
+            .find(|group| group.members.contains(&id))?;
+        let index = group.members.iter().position(|w| *w == id)?;
+        Some(index == group.active)
+    }
+    /// True when `id` shares another window's slot without owning it.
+    pub fn is_hidden_tab(&self, id: u32) -> bool {
+        self.tab_role(id) == Some(false)
+    }
+    /// The strip to draw above `id`'s slot: tab order plus visible index.
+    pub fn tab_strip(&self, id: u32) -> Option<(&[u32], usize)> {
+        let group = self
+            .groups
+            .iter()
+            .find(|group| group.members.contains(&id))?;
+        Some((&group.members, group.active))
+    }
+    /// Make `id` the visible tab. Returns the previously visible id so the
+    /// caller can retire its cached geometry.
+    pub fn select_tab(&mut self, id: u32) -> Option<u32> {
+        let group = self
+            .groups
+            .iter_mut()
+            .find(|group| group.members.contains(&id))?;
+        let index = group.members.iter().position(|w| *w == id)?;
+        if index == group.active {
+            return Some(id);
+        }
+        let previous = group.members[group.active];
+        group.active = index;
+        if let Some(position) = self.order.iter().position(|w| *w == previous) {
+            let old = self.order.clone();
+            self.order[position] = id;
+            self.remap_resized(&old);
+        }
+        Some(previous)
+    }
+    /// Attach `id` to `target`'s strip, or start a new two-tab group. The
+    /// dropped window becomes the visible tab and owns the single leaf.
+    fn join_group(&mut self, id: u32, target: u32) {
+        if id == target || !self.order.contains(&target) {
+            return;
+        }
+        let old = self.order.clone();
+        let valid = self
+            .resized
+            .as_ref()
+            .is_some_and(|(layout, order, _)| *layout == self.layout && *order == old);
+        if let Some(index) = self
+            .groups
+            .iter()
+            .position(|group| group.members.contains(&id) && group.members.contains(&target))
+        {
+            // Already one strip: the drop only promotes that tab into the slot.
+            let previous = self.groups[index].members[self.groups[index].active];
+            self.groups[index].active = self.groups[index]
+                .members
+                .iter()
+                .position(|w| *w == id)
+                .unwrap();
+            if let Some(position) = self.order.iter().position(|w| *w == previous) {
+                self.order[position] = id;
+                if valid {
+                    if let Some((_, _, tree)) = &mut self.resized {
+                        tree.rename(previous, id);
+                    }
+                }
+            }
+            return;
+        }
+        let owned_slot = self.order.contains(&id);
+        let mut sibling = None;
+        if let Some(from) = self
+            .groups
+            .iter()
+            .position(|group| group.members.contains(&id))
+        {
+            sibling = self.groups[from].take(id);
+            if self.groups[from].members.is_empty() {
+                self.groups.remove(from);
+            }
+        }
+        match self
+            .groups
+            .iter()
+            .position(|group| group.members.contains(&target))
+        {
+            Some(index) => {
+                let group = &mut self.groups[index];
+                group.members.push(id);
+                group.active = group.members.len() - 1;
+            }
+            None => self.groups.push(Group {
+                members: vec![target, id],
+                active: 1,
+            }),
+        }
+        let mut order = old;
+        if let Some(next) = sibling {
+            // The promoted sibling keeps its own strip's slot.
+            if let Some(position) = order.iter().position(|w| *w == id) {
+                order[position] = next;
+                if valid {
+                    if let Some((_, _, tree)) = &mut self.resized {
+                        tree.rename(id, next);
+                    }
+                }
+            }
+        } else if owned_slot {
+            // A lone member of its own strip: free that slot like a closure.
+            if let Some(position) = order.iter().position(|w| *w == id) {
+                order.remove(position);
+                if valid {
+                    if let Some((_, _, tree)) = &mut self.resized {
+                        let previous = std::mem::replace(tree, Node::Empty);
+                        *tree = previous.remove(id).unwrap_or(Node::Empty);
+                    }
+                }
+            }
+        }
+        if let Some(position) = order.iter().position(|w| *w == target) {
+            order[position] = id;
+            if valid {
+                if let Some((_, _, tree)) = &mut self.resized {
+                    tree.rename(target, id);
+                }
+            }
+        }
+        self.order = order;
+    }
+    fn remap_resized(&mut self, old: &[u32]) {
+        if let Some((layout, order, tree)) = &mut self.resized
+            && *layout == self.layout
+            && *order == old
+        {
+            tree.remap(old, &self.order);
+            *order = self.order.clone();
+        }
     }
     #[cfg(test)]
     pub fn reconcile(&mut self, ids: &[u32], area: NSRect, gap: f64) {
@@ -672,47 +917,50 @@ impl Desktop {
             }
         }
         for id in ids {
-            if !self.order.contains(id) {
-                if self.layout.centered_axis().is_some() {
-                    self.order.push(*id);
-                    continue;
-                }
-                let frames = self.frames(area, gap);
-                let target = frames
-                    .iter()
-                    .find(|(id, _)| {
-                        Some(*id)
-                            == if self.layout == Layout::Spiral {
-                                self.order.last().copied()
-                            } else {
-                                focused
-                            }
-                    })
-                    .or_else(|| frames.last())
-                    .copied();
-                if let (Some((layout, order, tree)), Some((target, r))) =
-                    (&mut self.resized, target)
-                {
-                    if *layout == self.layout && *order == self.order {
-                        if *layout == Layout::Spiral {
-                            tree.insert_spiral(target, *id, Zone::Right);
-                        } else {
-                            tree.insert(
-                                target,
-                                *id,
-                                if r.size.width >= r.size.height {
-                                    Zone::Right
-                                } else {
-                                    Zone::Bottom
-                                },
-                            );
-                        }
-
-                        order.push(*id);
-                    }
-                }
-                self.order.push(*id);
+            if self.order.contains(id) {
+                continue;
             }
+            // A hidden tab already owns its group's leaf; it is not an arrival.
+            if self.groups.iter().any(|group| group.members.contains(id)) {
+                continue;
+            }
+            if self.layout.centered_axis().is_some() {
+                self.order.push(*id);
+                continue;
+            }
+            let frames = self.frames(area, gap);
+            let target = frames
+                .iter()
+                .find(|(id, _)| {
+                    Some(*id)
+                        == if self.layout == Layout::Spiral {
+                            self.order.last().copied()
+                        } else {
+                            focused
+                        }
+                })
+                .or_else(|| frames.last())
+                .copied();
+            if let (Some((layout, order, tree)), Some((target, r))) = (&mut self.resized, target) {
+                if *layout == self.layout && *order == self.order {
+                    if *layout == Layout::Spiral {
+                        tree.insert_spiral(target, *id, Zone::Right);
+                    } else {
+                        tree.insert(
+                            target,
+                            *id,
+                            if r.size.width >= r.size.height {
+                                Zone::Right
+                            } else {
+                                Zone::Bottom
+                            },
+                        );
+                    }
+
+                    order.push(*id);
+                }
+            }
+            self.order.push(*id);
         }
     }
     pub fn place(&mut self, id: u32, target: u32, z: Zone) {
@@ -759,6 +1007,14 @@ impl Desktop {
             }
             let target = match intent {
                 DropIntent::Window(target, _) => target,
+                DropIntent::Group(target) => {
+                    if !self.order.contains(&target) || target == id {
+                        return None;
+                    }
+                    result.join_group(id, target);
+                    return (result.frames(area, gap).len() == result.order.len())
+                        .then_some(result);
+                }
                 DropIntent::Screen(side) => {
                     let p = match side {
                         Zone::Left => {
@@ -799,6 +1055,13 @@ impl Desktop {
         }
         if !self.order.is_empty() && self.effective_tree(area, gap).is_none() {
             return None;
+        }
+        if let DropIntent::Group(target) = intent {
+            if !self.order.contains(&target) || target == id {
+                return None;
+            }
+            result.join_group(id, target);
+            return (result.frames(area, gap).len() == result.order.len()).then_some(result);
         }
         // A cross-display arrival uses the destination's membership policy,
         // then occupies a template slot. Free-form edge insertion could turn
@@ -2331,6 +2594,7 @@ mod tests {
                                 target_rect.origin.y + target_rect.size.height / 2.,
                             ),
                             true,
+                            true,
                         )
                         .unwrap();
                         let mut proposed = desktop.proposed_drop(source, intent, area, 10.)
@@ -2545,7 +2809,7 @@ mod tests {
                 ),
             ] {
                 assert_eq!(
-                    drop_intent(area, &frames, 99, p, true),
+                    drop_intent(area, &frames, 99, p, true, true),
                     Some(DropIntent::Screen(side))
                 );
             }
@@ -2555,11 +2819,11 @@ mod tests {
                 target.origin.y + target.size.height / 2.,
             );
             assert_eq!(
-                drop_intent(area, &frames, 99, center, true),
+                drop_intent(area, &frames, 99, center, true, true),
                 Some(DropIntent::Window(2, Zone::Center))
             );
             assert_eq!(
-                drop_intent(area, &frames, 2, center, true),
+                drop_intent(area, &frames, 2, center, true, true),
                 Some(DropIntent::Window(2, Zone::Center))
             );
             assert_eq!(
@@ -2568,7 +2832,8 @@ mod tests {
                     &frames,
                     1,
                     NSPoint::new(area.origin.x - 30., center.y),
-                    true
+                    true,
+                    true,
                 ),
                 None
             );
@@ -2580,11 +2845,11 @@ mod tests {
         ];
         let p = NSPoint::new(820., 500.);
         assert_eq!(
-            drop_intent(area, &frames, 99, p, true),
+            drop_intent(area, &frames, 99, p, true, true),
             Some(DropIntent::Window(2, Zone::Left))
         );
         assert_eq!(
-            drop_intent(area, &frames, 99, p, false),
+            drop_intent(area, &frames, 99, p, false, true),
             Some(DropIntent::Window(2, Zone::Center))
         );
     }
@@ -3331,5 +3596,151 @@ mod tests {
         assert_eq!(zone(r, NSPoint::new(-490., 170.)), Zone::Left);
         assert_eq!(zone(r, NSPoint::new(-300., 25.)), Zone::Top);
         assert_eq!(zone(r, NSPoint::new(-300., 170.)), Zone::Center);
+    }
+    #[test]
+    fn top_third_drop_joins_strip_and_keeps_one_leaf_per_slot() {
+        let area = rect(0., 30., 1600., 900.);
+        let mut d = Desktop::configured(Layout::Spiral, None);
+        d.reconcile(&[1, 2, 3], area, 10.);
+        let before = d.frames(area, 10.);
+        let slot = before.iter().find(|(id, _)| *id == 1).unwrap().1;
+        let p = NSPoint::new(
+            slot.origin.x + slot.size.width / 2.,
+            slot.origin.y + slot.size.height / 4.,
+        );
+        assert_eq!(
+            drop_intent(area, &before, 3, p, true, true),
+            Some(DropIntent::Group(1))
+        );
+        assert_eq!(
+            drop_intent(area, &before, 3, p, true, false),
+            Some(DropIntent::Window(1, Zone::Center))
+        );
+        let joined = d
+            .proposed_drop(3, DropIntent::Group(1), area, 10.)
+            .expect("join must fit");
+        assert_layout_invariants(&joined, area);
+        // Only the visible tab owns a slot: the strip takes the target's and the
+        // dropped window's own leaf collapses.
+        assert_eq!(joined.order, vec![3, 2]);
+        let frames = joined.frames(area, 10.);
+        assert_eq!(
+            frames.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert_full_area(&frames, area, 10.);
+        assert_eq!(
+            joined.tab_strip(3).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![1, 3], 1))
+        );
+        assert_eq!(
+            joined.tab_strip(1).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![1, 3], 1))
+        );
+        assert!(joined.is_hidden_tab(1));
+        assert!(!joined.is_hidden_tab(3));
+        assert_eq!(joined.tab_role(2), None);
+        // A hidden tab is not an arrival: reconciling keeps two slots.
+        let mut stable = joined.clone();
+        stable.reconcile(&[1, 2, 3], area, 10.);
+        assert_eq!(stable.frames(area, 10.), frames);
+        // Selecting the hidden tab moves the same leaf, not a new split.
+        assert_eq!(stable.select_tab(1), Some(3));
+        assert_eq!(stable.order, vec![1, 2]);
+        let selected = stable.frames(area, 10.);
+        assert_eq!(
+            selected.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            selected.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+            frames.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+        );
+    }
+    #[test]
+    fn joining_strips_promotes_the_sibling_and_closing_the_tab_frees_no_slot() {
+        let area = rect(0., 0., 1600., 1000.);
+        let mut d = Desktop::configured(Layout::Grid, None);
+        d.reconcile(&[1, 2, 3, 4], area, 10.);
+        let first = d
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .expect("first join");
+        assert_eq!(first.order, vec![2, 3, 4]);
+        let arrival = first
+            .proposed_drop(5, DropIntent::Group(3), area, 10.)
+            .expect("arrival joins");
+        assert_eq!(arrival.order, vec![2, 5, 4]);
+        assert_eq!(
+            arrival.tab_strip(5).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![3, 5], 1))
+        );
+        // Merging a whole strip into another keeps both existing slots: the
+        // promoted sibling inherits the leaf of the strip that lost its tab.
+        let merged = arrival
+            .proposed_drop(5, DropIntent::Group(2), area, 10.)
+            .expect("merge strips");
+        assert_layout_invariants(&merged, area);
+        // Merging keeps both slots: the dropped tab takes the target's leaf and
+        // the promoted sibling keeps the leaf of the strip that lost it.
+        assert_eq!(merged.order, vec![5, 3, 4]);
+        assert_eq!(
+            merged.tab_strip(5).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![1, 2, 5], 2))
+        );
+        assert_eq!(
+            merged.tab_strip(3).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![3], 0))
+        );
+        assert_eq!(merged.tab_strip(4), None);
+        // Closing the visible tab promotes its sibling into the very same rect.
+        let mut closed = merged.clone();
+        let target = merged.frames(area, 10.)[0].1;
+        assert_eq!(closed.remove(5), Some(2));
+        assert_eq!(closed.order, vec![2, 3, 4]);
+        assert_eq!(closed.frames(area, 10.)[0].1, target);
+        assert_eq!(
+            closed.tab_strip(2).map(|(m, a)| (m.to_vec(), a)),
+            Some((vec![1, 2], 1))
+        );
+    }
+    #[test]
+    fn group_intent_rejects_unknown_targets_and_adopts_visible_tabs() {
+        let area = rect(0., 0., 1200., 800.);
+        let empty = Desktop::configured(Layout::Grid, None);
+        assert!(
+            empty
+                .proposed_drop(1, DropIntent::Group(9), area, 10.)
+                .is_none()
+        );
+        let mut d = Desktop::configured(Layout::VerticalMaster, None);
+        d.reconcile(&[1, 2, 3], area, 10.);
+        let joined = d
+            .proposed_drop(4, DropIntent::Group(2), area, 10.)
+            .expect("arrival joins a slot");
+        assert_eq!(joined.order, vec![1, 4, 3]);
+        assert!(
+            joined
+                .proposed_drop(4, DropIntent::Group(77), area, 10.)
+                .is_none()
+        );
+        // The compositor can show the hidden tab before the next model event.
+        let mut adopted = joined.clone();
+        adopted.sync_tabs(&[1, 2, 3]);
+        assert_eq!(adopted.order, vec![1, 2, 3]);
+        assert_eq!(
+            adopted
+                .frames(area, 10.)
+                .iter()
+                .map(|(_, r)| *r)
+                .collect::<Vec<_>>(),
+            joined
+                .frames(area, 10.)
+                .iter()
+                .map(|(_, r)| *r)
+                .collect::<Vec<_>>()
+        );
+        // An already-visible leaf is left untouched.
+        adopted.sync_tabs(&[1, 2, 3]);
+        assert_eq!(adopted.order, vec![1, 2, 3]);
     }
 }

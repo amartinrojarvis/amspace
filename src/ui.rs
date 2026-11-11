@@ -2212,7 +2212,8 @@ impl App {
             let animation_row = last_row - 37.;
             let simple_row = animation_row - 40.;
             let preview_row = simple_row - 40.;
-            let actions_row = preview_row - 44.;
+            let groups_row = preview_row - 40.;
+            let actions_row = groups_row - 44.;
             label(
                 root,
                 rect(18., animation_row, width - 90., 22.),
@@ -2263,6 +2264,23 @@ impl App {
                 target,
                 61,
                 crate::tile_manager::pref(defaults, "tile.resize.preview") != 0,
+            );
+            label(
+                root,
+                rect(18., groups_row, width - 90., 22.),
+                "Agrupar como pestañas",
+                13.,
+                0.,
+                false,
+            );
+            toggle(
+                root,
+                width - 58.,
+                groups_row,
+                "Agrupar como pestañas",
+                target,
+                65,
+                crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0,
             );
             button(
                 root,
@@ -3522,6 +3540,16 @@ Otras apps pueden tener atajos propios no detectables.",
                     // The next tick re-reads the flag and picks its own cadence.
                     self.tile_manager.invalidate();
                     self.update_tile_timer();
+                }
+                65 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "tile.groups",
+                        state,
+                    );
+                    // Only future drops consult the flag; live trees keep their strips.
+                    self.tile_manager.invalidate();
                 }
                 64 => {
                     let state: isize = msg_send![sender, state];

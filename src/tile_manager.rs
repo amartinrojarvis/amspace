@@ -681,8 +681,15 @@ impl Manager {
             }
             let desktop = &self.desktops[&key];
             report.push_str(&format!(
-                "Workspace {key:?} layout={:?} grid={:?} order={:?}\n",
-                desktop.layout, desktop.grid, desktop.order
+                "Workspace {key:?} layout={:?} grid={:?} order={:?} strips={:?}\n",
+                desktop.layout,
+                desktop.grid,
+                desktop.order,
+                desktop
+                    .groups()
+                    .iter()
+                    .map(|group| (group.members.clone(), group.active))
+                    .collect::<Vec<_>>()
             ));
             if let Some((_, area)) = self.active_areas.iter().find(|(active, _)| *active == key) {
                 report.push_str(&format!(
@@ -1528,6 +1535,28 @@ impl Manager {
         // Limits expire when the target or observed geometry changes, never just
         // because `dirty` was set by a workspace callback.
         needs_placement(target, actual, pending, self.constrained.get(&id).copied())
+    }
+    /// Hidden tabs share their strip's slot. Write the same destination once so
+    /// a later native tab switch needs no second placement.
+    fn place_hidden_tab(&mut self, id: u32, frame: NSRect) {
+        if self.transitions.contains_key(&id) || self.verifications.contains_key(&id) {
+            return;
+        }
+        if self
+            .applied
+            .get(&id)
+            .is_some_and(|cached| near(*cached, frame))
+        {
+            return;
+        }
+        let Some(w) = self.windows.get(&id) else {
+            return;
+        };
+        let element = w.element.0;
+        let mut verification = Verification::new(frame);
+        verification.accepted = ax::set_frame(element, frame);
+        self.verifications.insert(id, verification);
+        self.applied.insert(id, frame);
     }
     #[cfg(test)]
     fn place_drag(&mut self, id: u32, space: Workspace, target: u32, zone: Zone) {
@@ -2394,6 +2423,7 @@ impl Manager {
                                 drag.id,
                                 p,
                                 pref(defaults, "tile.simple") == 0,
+                                pref_or(defaults, "tile.groups", 1) != 0,
                             )
                             .or_else(|| {
                                 (frames.is_empty() && contains(*area, p))
@@ -2814,6 +2844,10 @@ impl Manager {
                 && !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && active.iter().any(|(key, _)| *key == w.space)
+                && !self
+                    .desktops
+                    .get(&w.space)
+                    .is_some_and(|d| d.is_hidden_tab(*id))
                 && all_ids
                     .as_ref()
                     .is_none_or(|ids| ids.contains(&(w.pid, *id)))
@@ -2917,6 +2951,9 @@ impl Manager {
             // retained order so its leaf is neither collapsed nor re-expanded:
             // the same distribution is produced and no second write is needed.
             retain_settled_ids(ids, &d.order, settling);
+            // A native tab switch changes the visible id without a model event:
+            // adopt it before geometry so the slot keeps a live leaf.
+            d.sync_tabs(ids);
             let insertion_focus = if d.needs_insertion_focus(ids) {
                 *focused
             } else {
@@ -2939,6 +2976,7 @@ impl Manager {
                     Some("Demasiadas ventanas para esta plantilla; usa Cuadrícula.".into());
                 continue;
             }
+            let mut hidden: Vec<(u32, NSRect)> = Vec::new();
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
                     return;
@@ -2968,6 +3006,25 @@ impl Manager {
                 }
                 // Cache destinations; animation owns intermediate frames.
                 self.applied.insert(id, frame);
+                hidden.extend(
+                    self.desktops
+                        .get(&space)
+                        .and_then(|d| d.tab_strip(id))
+                        .map(|(members, _)| {
+                            members
+                                .iter()
+                                .filter(|w| **w != id)
+                                .map(|w| (*w, frame))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                );
+            }
+            for (id, frame) in hidden {
+                if !place_windows || self.floating.contains(&id) {
+                    continue;
+                }
+                self.place_hidden_tab(id, frame);
             }
         }
         self.dirty = false;
@@ -4527,6 +4584,46 @@ mod tests {
         assert!(manager.floating.contains(&4));
         assert_eq!(manager.desktops[&space].order, vec![1, 3]);
     }
+    #[test]
+    fn hidden_tabs_share_the_slot_frame_and_are_written_once() {
+        let mut manager = Manager::default();
+        let space = (1, 7);
+        let area = rect(10., 41., 1660., 947.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let desktop = desktop
+            .proposed_drop(3, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let slot = desktop.frames(area, 10.)[0].1;
+        assert_eq!(desktop.order, vec![3, 2]);
+        manager.desktops.insert(space, desktop);
+        for id in [1, 2, 3] {
+            manager.windows.insert(
+                id,
+                Managed {
+                    pid: std::process::id() as i32,
+                    space,
+                    original: area,
+                    original_area: area,
+                    element: ax::application(std::process::id() as i32).unwrap(),
+                },
+            );
+        }
+        manager.place_hidden_tab(1, slot);
+        assert_eq!(manager.applied[&1], slot);
+        assert!(manager.verifications.contains_key(&1));
+        assert!(!manager.needs_placement(1, slot, Some(slot), manager.settling_space()));
+        // A repeated tick writes nothing new for the same destination.
+        manager.place_hidden_tab(1, slot);
+        assert_eq!(manager.verifications.len(), 1);
+        // A live transition owns the id until it settles.
+        manager.transition_from(3, rect(10., 41., 100., 100.), slot);
+        let transitions = manager.transitions.len();
+        let verifications = manager.verifications.len();
+        manager.place_hidden_tab(3, slot);
+        assert_eq!(manager.transitions.len(), transitions);
+        assert_eq!(manager.verifications.len(), verifications);
+    }
 
     #[test]
     fn tab_switches_preserve_adjusted_frames_in_every_template_and_orientation() {
@@ -5620,7 +5717,8 @@ mod tests {
                                 frame.origin.y + frame.size.height / 2.,
                             ),
                         ] {
-                            let intent = drop_intent(area, &slots, source, point, true).unwrap();
+                            let intent =
+                                drop_intent(area, &slots, source, point, true, false).unwrap();
                             let preview =
                                 committed.proposed_drop(source, intent, area, 10.).unwrap();
                             assert_eq!(preview.layout, layout);
@@ -5684,7 +5782,7 @@ mod tests {
                 let source = frames[0].0;
                 let (target, slot) = frames.last().copied().unwrap();
                 let point = NSPoint::new(slot.origin.x + 2., slot.origin.y + 2.);
-                let intent = drop_intent(area, &frames, source, point, true).unwrap();
+                let intent = drop_intent(area, &frames, source, point, true, false).unwrap();
                 let proposed =
                     arrival_proposal(&committed, source, Some(intent), area, None).unwrap();
                 assert_eq!(
