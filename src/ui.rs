@@ -1732,7 +1732,14 @@ impl App {
                 self.transfer = Some(pending);
                 self.schedule_transfer_tick();
             }
-            Err(message) => self.record_transfer(message, true),
+            Err(message) => {
+                self.record_transfer(message, true);
+                // A reselection of the current desktop produces no native
+                // slide, so the soft frame is the only visible confirmation.
+                if transfer_flashes(message) {
+                    self.flash_desktop();
+                }
+            }
         }
     }
     fn schedule_transfer_tick(&self) {
@@ -4523,10 +4530,21 @@ pub fn run() {
     });
 }
 
+/// Only the no-op outcome gets the soft frame: the other failures already
+/// report their own text and left the layout untouched.
+fn transfer_flashes(message: &str) -> bool {
+    message == crate::window_move::SAME_DESTINATION
+}
 #[cfg(test)]
 mod delivery_tests {
     use super::*;
     use crate::tile_hotkey::Action;
+    #[test]
+    fn only_the_no_op_transfer_outcome_confirms_with_the_soft_frame() {
+        assert!(transfer_flashes(crate::window_move::SAME_DESTINATION));
+        assert!(!transfer_flashes("No hay una ventana activa."));
+        assert!(!transfer_flashes("Esta ventana no admite traslados."));
+    }
     #[test]
     fn nested_ax_borrow_defers_the_command_and_releases_it_once_available() {
         let state = RefCell::new(Some(0u32));

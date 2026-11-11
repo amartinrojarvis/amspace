@@ -17,6 +17,9 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant},
 };
+/// Distinguishes a no-op reselection from a real failure so the caller can
+/// still confirm the desktop with the soft frame.
+pub const SAME_DESTINATION: &str = "La ventana ya está en ese destino.";
 fn operation_class() -> Option<&'static AnyClass> {
     static LOAD: OnceLock<bool> = OnceLock::new();
     if !*LOAD.get_or_init(|| unsafe {
@@ -309,7 +312,7 @@ impl Pending {
             }
         };
         if destination == source {
-            return Err("La ventana ya está en ese destino.");
+            return Err(SAME_DESTINATION);
         }
         if destination.1 != source.1 && !space_moves_available() {
             return Err("Esta versión de macOS no ofrece el traslado seguro entre escritorios.");

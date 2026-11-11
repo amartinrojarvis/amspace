@@ -1,3 +1,9 @@
+## Revisión 0.9.1/build 56: el marco también confirma el traslado sin cambio
+
+- `Pending::start` devuelve la constante `window_move::SAME_DESTINATION` cuando origen y destino coinciden, y `start_transfer` solo llama a `flash_desktop()` para ese resultado; las demás incidencias (`No hay una ventana activa.`, `Esta ventana no admite traslados.`, `Espera a que la ventana termine de moverse…`) conservan su texto en el historial sin cuadro. Regresión `only_the_no_op_transfer_outcome_confirms_with_the_soft_frame`, que fija el resultado del ayudante `transfer_flashes`.
+- `./scripts/check.sh`: formato, Clippy sin warnings, plist y **198 pruebas** correctas, ocho diagnósticos/benchmarks excluidos. Paquete universal regenerado con `./scripts/bundle.sh --universal` y firmado con `scripts/prepare-release.py`.
+- Comprobación física local: mismo monitor único 1680×1050; el panel de confirmación sigue midiendo `0,31 1680×967` con sus cuatro lados visibles y las preferencias `tile.animate = 1`, `flash = 1` se conservan. La versión publicada es la 0.9.1/build 56; la 0.9.0/build 55 quedó como artefacto intermedio en la rama `updates` sin catálogo que la referencie.
+
 ## Revisión 0.9.0/build 55: animación conmutable, marco de escritorio y flotantes del sistema
 
 - `tile.animate` (ausente = 1) decide la colocación en `tick_mode_input`, antes de cualquier escritura: con 1 se mantiene el lote interpolado de 160 ms a 60 Hz; con 0 `transition_from` elimina su transición y deja una única escritura completa más su verificación, y `tick_interval` devuelve el ritmo de reparación 0,08 s en lugar de 1/60. Regresión `disabling_the_batch_switches_to_one_write_and_the_repair_cadence`: el mismo id no puede quedar con transición y verificación a la vez, y un destino idéntico (`near`) sigue sin generar trabajo.
