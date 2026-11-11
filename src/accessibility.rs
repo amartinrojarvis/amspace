@@ -526,7 +526,16 @@ fn finder_info_identifier(bundle: Option<&str>, identifier: Cf) -> bool {
             .any(|name| equals_text(identifier, name))
 }
 fn always_floating_bundle(bundle: Option<&str>) -> bool {
-    bundle == Some("com.apple.archiveutility")
+    // System-owned progress and panel services keep their own geometry: the
+    // mosaic must never claim their slots.
+    [
+        "com.apple.archiveutility",
+        "com.apple.CoreServicesUIAgent",
+        "com.apple.appkit.xpc.openAndSavePanelService",
+        "com.apple.SafariViewService",
+    ]
+    .iter()
+    .any(|name| bundle.is_some_and(|id| id == *name))
 }
 fn system_utility_window(window: Cf) -> bool {
     let mut pid = 0;

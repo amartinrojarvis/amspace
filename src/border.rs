@@ -15,6 +15,27 @@ impl SpacePause {
     }
 }
 
+/// Bounded lifetime of the full-screen frame drawn when a desktop is reselected.
+/// A repeated click inside the window only extends it, so the overlay does not
+/// restart its fade and flicker.
+#[derive(Default)]
+pub struct Flash(Option<std::time::Instant>);
+impl Flash {
+    pub const HOLD: std::time::Duration = std::time::Duration::from_millis(460);
+    pub const FADE_IN: f64 = 0.1;
+    pub const FADE_OUT: f64 = 0.16;
+    pub const RGB: [f64; 3] = [0.94, 0.47, 0.46];
+    pub const WIDTH: f64 = 2.;
+    /// Slight rounding so the frame reads as one soft figure, not four rules.
+    pub const CORNER: f64 = 8.;
+    pub fn begin(&mut self, now: std::time::Instant) {
+        self.0 = Some(now + Self::HOLD);
+    }
+    pub fn pending(&self, now: std::time::Instant) -> bool {
+        self.0.is_some_and(|until| now < until)
+    }
+}
+
 fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
     let x = a.origin.x.max(b.origin.x);
     let y = a.origin.y.max(b.origin.y);
@@ -91,6 +112,23 @@ mod tests {
         assert!(pause.pending(now + SpacePause::DELAY));
         assert!(pause.pending(now + Duration::from_millis(999)));
         assert!(!pause.pending(now + Duration::from_millis(1000)));
+    }
+    #[test]
+    fn flash_frame_expires_once_and_a_repeat_extends_it_without_restarting() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let mut flash = Flash::default();
+        assert!(!flash.pending(now));
+        flash.begin(now);
+        assert!(flash.pending(now));
+        assert!(flash.pending(now + Duration::from_millis(459)));
+        assert!(!flash.pending(now + Flash::HOLD));
+        // A second click inside the window only extends the same frame.
+        flash.begin(now + Duration::from_millis(300));
+        assert!(flash.pending(now + Flash::HOLD));
+        assert!(!flash.pending(now + Duration::from_millis(760)));
+        // The fade must finish inside the held window, or the panel lingers.
+        assert!(Flash::HOLD.as_secs_f64() - Flash::FADE_OUT > 0.3);
     }
     #[test]
     fn overlapping_occluders_cannot_reveal_a_covered_border() {

@@ -635,6 +635,9 @@ pub struct Manager {
     space_quiet_until: Option<Instant>,
     space_reentry: Option<SpaceReentry>,
     reentry_preserved: Vec<(Workspace, NSRect)>,
+    /// `Some(false)` selects the single-write commit; `None`/`Some(true)` keeps
+    /// the eased 160 ms batch. `tick_mode_input` refreshes it from preferences.
+    animated: Option<bool>,
     pub last_error: Option<String>,
 }
 pub struct KeyboardTransfer {
@@ -1543,6 +1546,18 @@ impl Manager {
             self.transitions.remove(&id);
             return;
         }
+        if self.animated == Some(false) {
+            // One write per window: the eased batch is off, so the destination
+            // commits directly and is verified like any other final frame.
+            self.transitions.remove(&id);
+            if let Some(w) = self.windows.get(&id) {
+                let element = w.element.0;
+                let mut verification = Verification::new(to);
+                verification.accepted = ax::set_frame(element, to);
+                self.verifications.insert(id, verification);
+            }
+            return;
+        }
         self.transitions.insert(
             id,
             Transition {
@@ -2010,13 +2025,15 @@ impl Manager {
         // idle. The internal 500 ms scan gate is unchanged, so the coarser idle
         // cadence cannot postpone a scan, and every notification, gesture or
         // dirty flag still resumes a fast timer on the very tick it is set.
+        let animated = self.animated.unwrap_or(true);
         if self.space_reentry.is_some() && self.drag.is_none()
             || self.space_quiet_until.is_some()
             || self.dirty
             || !self.verifications.is_empty()
+            || (!animated && !self.transitions.is_empty())
         {
             0.08
-        } else if !self.transitions.is_empty()
+        } else if animated && !self.transitions.is_empty()
             || self.drag.is_some()
             || !self.gesture_candidates.is_empty()
             || self.pending_drop.is_some()
@@ -2085,6 +2102,8 @@ impl Manager {
         if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
             return;
         }
+        // Read once per tick: absent keeps the eased batch, 0 commits directly.
+        self.animated = Some(pref_or(defaults, "tile.animate", 1) != 0);
         let resuming_space = self.space_quiet_until.is_some();
         if self.waiting_for_space(Instant::now()) {
             return;
@@ -4603,6 +4622,46 @@ mod tests {
             transition.sample(now + Duration::from_millis(160)),
             (ax::integral_frame(target), true)
         );
+    }
+    #[test]
+    fn disabling_the_batch_switches_to_one_write_and_the_repair_cadence() {
+        let from = rect(10., 41., 1600., 900.);
+        let target = rect(-890., -390., 880., 1580.);
+        let mut animated = Manager {
+            animated: Some(true),
+            ..Default::default()
+        };
+        animated.transition_from(1, from, target);
+        assert_eq!(animated.tick_interval(), 1. / 60.);
+        assert!(animated.transitions.contains_key(&1));
+        assert!(animated.verifications.is_empty());
+        let element = ax::application(std::process::id() as i32).unwrap();
+        let mut instant = Manager {
+            animated: Some(false),
+            windows: [(
+                1,
+                Managed {
+                    pid: 9,
+                    space: (1, 7),
+                    original: from,
+                    original_area: from,
+                    element: element.clone(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        instant.transition_from(1, from, target);
+        // The eased batch is gone: the destination is the pending verification
+        // instead, so no second frame is ever written for the same window.
+        assert!(instant.transitions.is_empty());
+        assert_eq!(instant.verifications[&1].target, target);
+        assert_eq!(instant.tick_interval(), 0.08);
+        // An identical destination still needs no work at all.
+        instant.transition_from(2, target, target);
+        assert!(!instant.verifications.contains_key(&2));
+        assert!(instant.transitions.is_empty());
     }
 
     #[test]

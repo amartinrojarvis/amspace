@@ -179,6 +179,11 @@ struct App {
     space_ids: Vec<u64>,
     space_controls: Vec<Obj>,
     border_enabled: bool,
+    flash_enabled: bool,
+    flash: crate::border::Flash,
+    flash_panel: Option<Retained<AnyObject>>,
+    flash_switch: Obj,
+    animate_switch: Obj,
     hover_enabled: bool,
     raise_enabled: bool,
     pending_focus: Option<PendingFocus>,
@@ -499,6 +504,15 @@ impl App {
                 screen_configuration: screen_configuration(),
                 border_clip: None,
                 border_retry_pending: false,
+                flash_enabled: crate::tile_manager::pref_or(
+                    Retained::as_ptr(&defaults) as Obj,
+                    "flash",
+                    1,
+                ) != 0,
+                flash_switch: ptr::null_mut(),
+                animate_switch: ptr::null_mut(),
+                flash: Default::default(),
+                flash_panel: None,
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
                 tile_manager: Default::default(),
@@ -610,6 +624,7 @@ impl App {
                 ("border", self.border_enabled),
                 ("hover", self.hover_enabled),
                 ("raise", self.raise_enabled),
+                ("flash", self.flash_enabled),
             ] {
                 let _: () = msg_send![&self.defaults, setBool:v, forKey:&*NSString::from_str(k)];
             }
@@ -805,6 +820,8 @@ impl App {
             return;
         }
         if spaces::destination(id).is_some_and(|d| d.current == id) {
+            // No native slide happens, so the indicator is the only feedback.
+            self.flash_desktop();
             return;
         }
         match space_switch::Switch::start(id) {
@@ -867,6 +884,92 @@ impl App {
     fn hide_border(&self) {
         unsafe {
             let _: () = msg_send![&self.border, orderOut:ptr::null::<AnyObject>()];
+        }
+    }
+    /// Soft full-screen frame for a reselected desktop. One lazily created
+    /// panel, two replaceable one-shot deliveries and no polling timer.
+    fn flash_desktop(&mut self) {
+        if !self.flash_enabled {
+            return;
+        }
+        let now = Instant::now();
+        let fresh = !self.flash.pending(now);
+        self.flash.begin(now);
+        unsafe {
+            let screen: Obj = msg_send![class!(NSScreen), mainScreen];
+            // visibleFrame leaves the stroke below the system menu bar, so all
+            // four sides are visible instead of the top one being clipped.
+            let frame: NSRect = if screen.is_null() {
+                rect(0., 0., 1440., 900.)
+            } else {
+                msg_send![screen, visibleFrame]
+            };
+            let panel = self.flash_panel.get_or_insert_with(|| {
+                let panel: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
+                let panel: Retained<AnyObject> = msg_send![panel, initWithContentRect:frame, styleMask:128usize, backing:2usize, defer:false];
+                let _: () = msg_send![&panel, setReleasedWhenClosed:false];
+                let _: () = msg_send![&panel, setOpaque:false];
+                let clear: Obj = msg_send![class!(NSColor), clearColor];
+                let _: () = msg_send![&panel, setBackgroundColor:clear];
+                let _: () = msg_send![&panel, setLevel:3isize];
+                let _: () = msg_send![&panel, setCollectionBehavior:BORDER_COLLECTION_BEHAVIOR];
+                let _: () = msg_send![&panel, setIgnoresMouseEvents:true];
+                let _: () = msg_send![&panel, setHasShadow:false];
+                let _: () = msg_send![&panel, setHidesOnDeactivate:false];
+                let v: Obj = msg_send![&panel, contentView];
+                let _: () = msg_send![v, setWantsLayer:true];
+                let layer: Obj = msg_send![v, layer];
+                let rgb = crate::border::Flash::RGB;
+                let c = color(rgb[0], rgb[1], rgb[2], 0.9);
+                let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+                let _: () = msg_send![layer, setBorderColor:cg];
+                let _: () = msg_send![layer, setBorderWidth:crate::border::Flash::WIDTH];
+                let _: () = msg_send![layer, setCornerRadius:crate::border::Flash::CORNER];
+                panel
+            });
+            let _: () = msg_send![class!(CATransaction), begin];
+            let _: () = msg_send![class!(CATransaction), setDisableActions:true];
+            let _: () = msg_send![&**panel, setFrame:frame, display:true];
+            let _: () = msg_send![class!(CATransaction), commit];
+            let _: () = msg_send![class!(CATransaction), flush];
+            let target = Retained::as_ptr(&self.target) as Obj;
+            for selector in [sel!(fadeFlash:), sel!(hideFlash:)] {
+                let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:selector, object:ptr::null::<AnyObject>()];
+            }
+            if fresh {
+                let _: () = msg_send![&**panel, setAlphaValue:0f64];
+                let _: () = msg_send![&**panel, orderFrontRegardless];
+                let _: () = msg_send![class!(NSAnimationContext), beginGrouping];
+                let context: Obj = msg_send![class!(NSAnimationContext), currentContext];
+                let _: () = msg_send![context, setDuration:crate::border::Flash::FADE_IN];
+                let animator: Obj = msg_send![&**panel, animator];
+                let _: () = msg_send![animator, setAlphaValue:1f64];
+                let _: () = msg_send![class!(NSAnimationContext), endGrouping];
+            }
+            let fade_at = crate::border::Flash::HOLD.as_secs_f64() - crate::border::Flash::FADE_OUT;
+            let _: () = msg_send![target, performSelector:sel!(fadeFlash:), withObject:ptr::null::<AnyObject>(), afterDelay:fade_at];
+            let _: () = msg_send![target, performSelector:sel!(hideFlash:), withObject:ptr::null::<AnyObject>(), afterDelay:crate::border::Flash::HOLD.as_secs_f64()];
+        }
+    }
+    fn fade_flash(&self) {
+        let Some(panel) = &self.flash_panel else {
+            return;
+        };
+        unsafe {
+            let _: () = msg_send![class!(NSAnimationContext), beginGrouping];
+            let context: Obj = msg_send![class!(NSAnimationContext), currentContext];
+            let _: () = msg_send![context, setDuration:crate::border::Flash::FADE_OUT];
+            let animator: Obj = msg_send![&**panel, animator];
+            let _: () = msg_send![animator, setAlphaValue:0f64];
+            let _: () = msg_send![class!(NSAnimationContext), endGrouping];
+        }
+    }
+    fn hide_flash(&mut self) {
+        if let Some(panel) = &self.flash_panel {
+            unsafe {
+                let _: () = msg_send![&**panel, setAlphaValue:0f64];
+                let _: () = msg_send![&**panel, orderOut:ptr::null::<AnyObject>()];
+            }
         }
     }
     fn update_window(&mut self) {
@@ -2096,9 +2199,33 @@ impl App {
                 let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("Plantilla: {}",layout.name()))];
                 self.tile_choices.push(b);
             }
+            // The lower rows start under the last template row, whatever its
+            // position for the current column count, so nothing overlaps.
+            let last_row = cards.last().map_or(245., |card| card.origin.y);
+            let animation_row = last_row - 37.;
+            let simple_row = animation_row - 40.;
+            let preview_row = simple_row - 40.;
+            let actions_row = preview_row - 44.;
             label(
                 root,
-                rect(18., 194., width - 90., 22.),
+                rect(18., animation_row, width - 90., 22.),
+                "Animar colocaciones",
+                13.,
+                0.,
+                false,
+            );
+            self.animate_switch = toggle(
+                root,
+                width - 58.,
+                animation_row,
+                "Animar colocaciones",
+                target,
+                63,
+                crate::tile_manager::pref_or(defaults, "tile.animate", 1) != 0,
+            );
+            label(
+                root,
+                rect(18., simple_row, width - 90., 22.),
                 "Colocación inteligente",
                 13.,
                 0.,
@@ -2107,7 +2234,7 @@ impl App {
             toggle(
                 root,
                 width - 58.,
-                194.,
+                simple_row,
                 "Colocación inteligente",
                 target,
                 43,
@@ -2115,7 +2242,7 @@ impl App {
             );
             label(
                 root,
-                rect(18., 154., width - 90., 22.),
+                rect(18., preview_row, width - 90., 22.),
                 "Previsualizar al redimensionar",
                 13.,
                 0.,
@@ -2124,7 +2251,7 @@ impl App {
             toggle(
                 root,
                 width - 58.,
-                154.,
+                preview_row,
                 "Previsualizar al redimensionar",
                 target,
                 61,
@@ -2132,14 +2259,14 @@ impl App {
             );
             button(
                 root,
-                rect(15., 110., (width - 36.) / 2., 28.),
+                rect(15., actions_row, (width - 36.) / 2., 28.),
                 "Rejilla y plantillas…",
                 target,
                 49,
             );
             button(
                 root,
-                rect(width / 2. + 3., 110., (width - 36.) / 2., 28.),
+                rect(width / 2. + 3., actions_row, (width - 36.) / 2., 28.),
                 "Selector de plantillas",
                 target,
                 57,
@@ -2969,7 +3096,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 frame.origin.y += 70.;
                 let _: () = msg_send![child, setFrame:frame];
             }
-            let scroll = alloc_view(class!(NSScrollView), rect(0., 52., 432., 168.));
+            let scroll = alloc_view(class!(NSScrollView), rect(0., 68., 432., 148.));
             let _: () = msg_send![&scroll, setHasVerticalScroller:true];
             let _: () = msg_send![&scroll, setAutohidesScrollers:true];
             let _: () = msg_send![&scroll, setDrawsBackground:false];
@@ -2977,7 +3104,7 @@ Otras apps pueden tener atajos propios no detectables.",
             self.space_scroll = Retained::as_ptr(&scroll) as Obj;
             label(
                 root,
-                rect(18., 15., 330., 22.),
+                rect(18., 40., 330., 22.),
                 "Preview al pasar por un escritorio",
                 12.,
                 0.,
@@ -2990,11 +3117,28 @@ Otras apps pueden tener atajos propios no detectables.",
             toggle(
                 root,
                 374.,
-                15.,
+                40.,
                 "Preview al pasar por un escritorio",
                 target,
                 62,
                 !disabled,
+            );
+            label(
+                root,
+                rect(18., 12., 330., 22.),
+                "Borde al reelegir el escritorio",
+                12.,
+                0.,
+                false,
+            );
+            self.flash_switch = toggle(
+                root,
+                374.,
+                12.,
+                "Borde al reelegir el escritorio",
+                target,
+                64,
+                self.flash_enabled,
             );
             self.rebuild_space_rows();
         }
@@ -3360,6 +3504,24 @@ Otras apps pueden tener atajos propios no detectables.",
                     }
                     self.tile_manager.invalidate();
                     self.refresh_tile_controls();
+                }
+                63 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "tile.animate",
+                        state,
+                    );
+                    // The next tick re-reads the flag and picks its own cadence.
+                    self.tile_manager.invalidate();
+                    self.update_tile_timer();
+                }
+                64 => {
+                    let state: isize = msg_send![sender, state];
+                    self.flash_enabled = state == 1;
+                    if !self.flash_enabled {
+                        self.hide_flash();
+                    }
                 }
                 95..=98 => self.custom_action(tag),
                 99 => self.copy_diagnostic(),
@@ -4081,6 +4243,12 @@ extern "C-unwind" fn resume_space_border(_: Obj, _: Sel, _: Obj) {
         }
     });
 }
+extern "C-unwind" fn fade_flash(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.fade_flash());
+}
+extern "C-unwind" fn hide_flash(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.hide_flash());
+}
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
     with_app(|a| {
         a.desktop_preview.hide();
@@ -4257,6 +4425,8 @@ pub fn run() {
             (sel!(mouseEntered:), preview_enter),
             (sel!(mouseExited:), preview_exit),
             (sel!(showDesktopPreview:), preview_show),
+            (sel!(fadeFlash:), fade_flash),
+            (sel!(hideFlash:), hide_flash),
         ] {
             builder.add_method(s, f);
         }

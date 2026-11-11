@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.8.9](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.9/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.0](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.0/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -87,6 +87,8 @@ El borde sigue la ventana enfocada por AMSpace y respeta su posición en la pila
 
 Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la app activa: `⌘,` abre ajustes, `⌘W` cierra su ventana y `⌘Q` sale. Cerrar los ajustes deja el indicador en funcionamiento.
 
+Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escritura por atributo cambiado en cada fotograma). Puedes desactivar esa interpolación con **Animar colocaciones** en Mosaico: cada ventana pasa a su destino con una única escritura AX y el temporizador vuelve al ritmo de reparación. Al reelegir el escritorio ya activo no hay deslizamiento nativo, así que AMSpace dibuja un marco rojo suave a pantalla completa como confirmación; se apaga con **Borde al reelegir el escritorio** en Barra de menús. Ambos interruptores guardan su valor en `tile.animate` y `flash`.
+
 ## Eficiencia
 
 - Sin sondeo de ventanas con el foco automático desactivado. La búsqueda automática de versiones, opcional y desactivada inicialmente, se programa una vez al día.
@@ -94,7 +96,8 @@ Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la
 - El borde identifica la ventana por su ID de WindowServer. El movimiento se aplica directamente desde la notificación del compositor, sin redibujar ni esperar a Accesibilidad. El tamaño se actualiza en el siguiente turno del hilo principal, sin demora artificial; no hay un bucle de animación permanente.
 - El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX y de WindowServer después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
 - «Mostrar escritorio», incluida la esquina activa, suspende tiling, foco y borde. Las ventanas nuevas quedan flotantes al volver; los mosaicos anteriores conservan su distribución por pantalla/escritorio. En macOS reciente se detecta la presentación de WindowManager desde los metadatos del compositor, con comprobación de salida solo mientras está activa.
-- Los menús abiertos conservan el seguimiento de teclado aunque el cursor salga de su área. Modales, Obtener información/Inspector de Finder y la Utilidad de Compresión quedan fuera del mosaico.
+- Los menús abiertos conservan el seguimiento de teclado aunque el cursor salga de su área. Modales, Obtener información/Inspector de Finder, la Utilidad de Compresión y los paneles de servicio del sistema (progreso de copia, Abrir/Guardar, Vista de Safari) quedan fuera del mosaico: conservan su propia geometría.
+- La animación del mosaico y el marco de confirmación no añaden sondeo: los fotogramas los produce el temporizador ya existente y el marco usa dos entregas diferidas únicos, reemplazables con un nuevo clic.
 - El foco bajo el cursor se pausa durante la entrada segura de macOS y respeta los campos de contraseña, diálogos modales y hojas de la aplicación activa, también al completar una activación diferida.
 - Los segmentos de la barra conservan los botones y acciones accesibles nativos, con dibujo directo de sus títulos para evitar que las instantáneas de AppKit provoquen repintados continuos. La lectura de metadatos reutiliza claves constantes y recorre las listas nativas sin copiarlas a vectores temporales.
 - Se suspende el foco y se oculta el borde al dormir la pantalla, suspender el equipo o desactivar la sesión.
@@ -215,12 +218,14 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.8.9](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.8.9/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.8.9). También disponible mediante Buscar ahora en General.
+[Descargar 0.9.0](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.0/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.0). También disponible mediante Buscar ahora en General.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
 La versión 0.8.1 extiende el selector de ⌃⌥Espacio a esas plantillas guardadas: cada una ocupa una tarjeta con su nombre y su miniatura, se previsualiza con las ventanas reales y se aplica con Intro o clic. Solo se habilitan las que tienen el mismo número de huecos que el mosaico de esa pantalla y caben en su área útil.
 
 La versión 0.8.2 hace que el indicador y los atajos ⌘1–9 sigan la numeración del monitor que contiene el puntero; 0.8.3, 0.8.4 y 0.8.5 dejan el mosaico asentado con una única escritura por ventana al volver a un escritorio: cada ventana conserva su hueco desde el primer escaneo, sin el doble ajuste visible anterior. 0.8.6 baja el temporizador a 0,25 s en reposo con una sola lista del compositor por cuadro; 0.8.7 cubre también las listas transitorias con hueco en el medio o id extra provisional tras varios gestos; 0.8.8 comparte una única lectura nativa de pertenencia por cuadro, acota la ráfaga de lecturas incompletas y hace converger el mínimo aprendido, y 0.8.9 extiende ese memo al grupo de pestañas nativa.
+
+La versión 0.9.0 hace conmutable el lote interpolado del mosaico (**Animar colocaciones**, `tile.animate`: con 0 queda una única escritura por ventana y el temporizador de reparación), dibuja el marco de reelección con esquinas suavemente redondeadas sobre el `visibleFrame` para que se vean sus cuatro lados bajo la barra de menús (**Borde al reelegir el escritorio**, `flash`) y suma los paneles de servicio del sistema —progreso de copia, Abrir/Guardar y Vista de Safari— a las aplicaciones flotantes permanentes, que conservan su propia geometría.
 
 La versión también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).
