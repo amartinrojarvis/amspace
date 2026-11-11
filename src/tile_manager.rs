@@ -478,7 +478,7 @@ impl Verification {
     fn new(target: NSRect) -> Self {
         Self {
             target,
-            due: Instant::now() + Duration::from_millis(120),
+            due: Instant::now() + Duration::from_millis(60),
             retried: false,
             accepted: false,
         }
@@ -498,7 +498,7 @@ impl Verification {
             };
         }
         self.retried = true;
-        self.due = now + Duration::from_millis(120);
+        self.due = now + Duration::from_millis(60);
         VerificationStep::Retry
     }
 }
@@ -551,7 +551,7 @@ impl SpaceReentry {
         self.incomplete = 0;
         if let Some((previous, since)) = &self.anchor {
             if previous.agrees(&sample) {
-                return now.duration_since(*since) >= Duration::from_millis(160);
+                return now.duration_since(*since) >= Duration::from_millis(60);
             }
         }
         self.anchor = Some((sample, now));
@@ -863,7 +863,9 @@ impl Manager {
         self.invalidate();
         // During the native slide both visibility and global bounds are transient.
         // Retain the trees without sampling/reconciling or writing any geometry.
-        let until = now + Duration::from_millis(600);
+        // One slide is ~300 ms; the reentry barrier still needs two agreeing
+        // samples, so this floor only skips the pre-slide list.
+        let until = now + Duration::from_millis(400);
         self.space_quiet_until = Some(until);
         self.space_settle = Some(until + Duration::from_millis(600));
         self.membership_grace.since.clear();
@@ -3873,13 +3875,7 @@ mod tests {
                         )
                     );
                     assert!(
-                        !manager.observe_reentry(
-                            Some(sample.clone()),
-                            now + Duration::from_millis(3180)
-                        )
-                    );
-                    assert!(
-                        manager.observe_reentry(Some(sample), now + Duration::from_millis(3260))
+                        manager.observe_reentry(Some(sample), now + Duration::from_millis(3160))
                     );
                     assert_eq!(manager.desktops[&key].frames(area, 10.), frames);
                     for (id, r) in &frames {
@@ -3909,18 +3905,24 @@ mod tests {
         );
         let mut barrier = SpaceReentry::default();
         assert!(!barrier.observe(Some(sample.clone()), now));
+        // Agreement needs one bounded step, not the old 160 ms hold.
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(59)));
+        assert!(barrier.observe(Some(sample.clone()), now + Duration::from_millis(60)));
+        // A resized frame restarts the anchor from its own instant.
         let mut resizing = sample.clone();
         resizing.windows[0].4.as_mut().unwrap().size.width += 80.;
         assert!(!barrier.observe(Some(resizing), now + Duration::from_millis(80)));
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(160)));
-        assert!(!barrier.observe(None, now + Duration::from_millis(240)));
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(400)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(150)));
+        assert!(barrier.observe(Some(sample.clone()), now + Duration::from_millis(210)));
+        // A closed window restarts it again, and a failed read cannot resume
+        // the previous agreement.
         let mut closing = sample.clone();
         closing.windows.pop();
         closing.absent.push((42, 2));
-        assert!(!barrier.observe(Some(closing.clone()), now + Duration::from_millis(480)));
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(560)));
-        assert!(barrier.observe(Some(sample), now + Duration::from_millis(720)));
+        assert!(!barrier.observe(Some(closing), now + Duration::from_millis(280)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(350)));
+        assert!(barrier.observe(Some(sample.clone()), now + Duration::from_millis(410)));
+        assert!(!barrier.observe(None, now + Duration::from_millis(480)));
     }
     #[test]
     fn a_burst_of_incomplete_reads_still_releases_the_fast_timer() {
@@ -3937,8 +3939,8 @@ mod tests {
         assert!(!barrier.observe(Some(sample.clone()), now));
         assert!(!barrier.observe(None, now));
         assert!(!barrier.observe(Some(sample.clone()), now));
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(159)));
-        assert!(barrier.observe(Some(sample), now + Duration::from_millis(160)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(59)));
+        assert!(barrier.observe(Some(sample), now + Duration::from_millis(60)));
     }
     #[test]
     fn a_settled_frame_clamps_a_grown_minimum_without_losing_the_floor() {
@@ -3965,21 +3967,20 @@ mod tests {
         assert!(!barrier.observe(Some(sample.clone()), now));
         // Consecutive steps are below tolerance, but their total is not.
         sample.windows[0].3.origin.x += 2.;
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(80)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(40)));
         sample.windows[0].3.origin.x += 2.;
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(160)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(100)));
         sample.areas[0].1.size.height -= 100.;
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(320)));
-        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(400)));
-        assert!(barrier.observe(Some(sample), now + Duration::from_millis(480)));
+        assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(160)));
+        assert!(barrier.observe(Some(sample.clone()), now + Duration::from_millis(220)));
         // A first visit to an empty desktop is a valid stable state too.
         let empty = ReentrySample {
             areas: Vec::new(),
             windows: Vec::new(),
             absent: Vec::new(),
         };
-        assert!(!barrier.observe(Some(empty.clone()), now + Duration::from_millis(560)));
-        assert!(barrier.observe(Some(empty), now + Duration::from_millis(720)));
+        assert!(!barrier.observe(Some(empty.clone()), now + Duration::from_millis(280)));
+        assert!(barrier.observe(Some(empty), now + Duration::from_millis(344)));
     }
     #[test]
     fn reentry_refreshes_pending_writes_without_changing_other_workspace_layouts() {
@@ -4180,8 +4181,8 @@ mod tests {
         );
         manager.tick_mode(ptr::null_mut(), true);
         manager.set_presentation_at(Mode::Normal, now, None);
-        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
-        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(399)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(400)));
         assert_eq!(manager.desktops[&workspace].frames(area, 10.), before);
         assert_eq!(manager.desktop_floating.len(), 3);
         assert!(!manager.desktop_floating.contains(&(7, 30)));
@@ -4287,8 +4288,8 @@ mod tests {
                 let mut after_ids = before_ids;
                 after_ids.extend([(8, 100), (9, 101)]);
                 manager.set_presentation_at(Mode::Normal, now, Some(after_ids));
-                assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
-                assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+                assert!(manager.waiting_for_space(now + Duration::from_millis(399)));
+                assert!(!manager.waiting_for_space(now + Duration::from_millis(400)));
                 for (key, area) in contexts {
                     let desktop = manager.desktops.get_mut(&key).unwrap();
                     let ids = desktop.order.clone();
@@ -4774,8 +4775,8 @@ mod tests {
             manager.desktops[&(1, 7)].frames(rect(0., 30., 1600., 900.), 10.),
             original
         );
-        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
-        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(399)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(400)));
         assert!(manager.last_scan.is_none());
         assert!(manager.last_area_update.is_none());
     }
@@ -4789,9 +4790,9 @@ mod tests {
         let now = Instant::now();
         manager.space_changed_at(now);
         manager.space_changed_at(now + Duration::from_millis(400));
-        assert!(manager.waiting_for_space(now + Duration::from_millis(600)));
-        assert!(manager.waiting_for_space(now + Duration::from_millis(999)));
-        assert!(!manager.waiting_for_space(now + Duration::from_millis(1000)));
+        // The second notification restarts the shorter floor from its own instant.
+        assert!(manager.waiting_for_space(now + Duration::from_millis(799)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(800)));
         assert_eq!(manager.desktops[&drag.space].frames(drag.area, 10.), before);
     }
 
@@ -4820,13 +4821,14 @@ mod tests {
             .insert(1, Verification::new(rect(0., 30., 800., 600.)));
         manager.space_changed_at(now);
         assert!(manager.verifications.is_empty());
+        // The shorter quiet floor shifts both bounded windows by the same 200 ms.
         assert_eq!(
             manager.pending_drop.as_ref().unwrap().expires,
-            now + Duration::from_millis(1300)
+            now + Duration::from_millis(1100)
         );
         assert_eq!(
             manager.handoffs[&1].expires,
-            now + Duration::from_millis(1800)
+            now + Duration::from_millis(1600)
         );
         assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
         assert!(manager.pending_drop.is_some());
@@ -5027,11 +5029,11 @@ mod tests {
         );
         assert_eq!(verification.step(old, due), VerificationStep::Retry);
         assert_eq!(
-            verification.step(old, due + Duration::from_millis(80)),
+            verification.step(old, due + Duration::from_millis(30)),
             VerificationStep::Wait
         );
         assert_eq!(
-            verification.step(target, due + Duration::from_millis(120)),
+            verification.step(target, due + Duration::from_millis(60)),
             VerificationStep::Complete
         );
     }
@@ -5941,8 +5943,8 @@ mod tests {
         manager.applied.insert(42, target);
         let now = Instant::now();
         manager.space_changed_with_visible_at(now, &[key]);
-        assert!(manager.waiting_for_space(now + Duration::from_millis(599)));
-        assert!(!manager.waiting_for_space(now + Duration::from_millis(600)));
+        assert!(manager.waiting_for_space(now + Duration::from_millis(399)));
+        assert!(!manager.waiting_for_space(now + Duration::from_millis(400)));
         let sample = ReentrySample {
             areas: vec![(key, area)],
             windows: vec![(9, 42, key.1, target, Some(target))],

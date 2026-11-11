@@ -234,7 +234,7 @@ impl Switch {
         }
         if self
             .settled
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(180))
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(120))
         {
             return Ok(Progress::Waiting);
         }

@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.1/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.2](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.2/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -218,7 +218,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.9.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.1/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.1). También disponible mediante Buscar ahora en General.
+[Descargar 0.9.2](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.2/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.2). También disponible mediante Buscar ahora en General.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
@@ -229,5 +229,7 @@ La versión 0.8.2 hace que el indicador y los atajos ⌘1–9 sigan la numeraci�
 La versión 0.9.0 hace conmutable el lote interpolado del mosaico (**Animar colocaciones**, `tile.animate`: con 0 queda una única escritura por ventana y el temporizador de reparación), dibuja el marco de reelección con esquinas suavemente redondeadas sobre el `visibleFrame` para que se vean sus cuatro lados bajo la barra de menús (**Borde al reelegir el escritorio**, `flash`) y suma los paneles de servicio del sistema —progreso de copia, Abrir/Guardar y Vista de Safari— a las aplicaciones flotantes permanentes, que conservan su propia geometría.
 
 La versión 0.9.1 también dibuja ese marco cuando el traslado de una ventana no cambia de destino (la ventana ya estaba en ese escritorio), de modo que la ausencia de deslizamiento nativo sigue teniendo confirmación visible. Las demás incidencias de traslado muestran solo su texto.
+
+La versión 0.9.2 acorta los plazos fijos que marcan la latencia visible, sin añadir sondeos: la verificación de una escritura final y su único reintento pasan a 60 ms, la barrera de reentrada admite dos muestras coincidentes durante 60 ms, la pausa tras el aviso de escritorio baja a 400 ms y con ella la del borde, y el asentamiento por salto y el reintento de colocación oculta quedan en 120 ms. El ritmo del temporizador no cambia (1/60 s con movimiento, 80 ms con verificación o asentamiento en vuelo, 250 ms en reposo).
 
 La versión también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).

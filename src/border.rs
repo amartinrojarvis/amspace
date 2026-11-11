@@ -6,7 +6,9 @@ use objc2_foundation::NSRect;
 #[derive(Default)]
 pub struct SpacePause(Option<std::time::Instant>);
 impl SpacePause {
-    pub const DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+    /// Matches the model's quiet floor, so the border returns with the first
+    /// authoritative scan instead of waiting an extra window.
+    pub const DELAY: std::time::Duration = std::time::Duration::from_millis(400);
     pub fn begin(&mut self, now: std::time::Instant) {
         self.0 = Some(now + Self::DELAY);
     }
@@ -107,11 +109,11 @@ mod tests {
         assert!(!pause.pending(now));
         pause.begin(now);
         assert!(pause.pending(now));
-        assert!(pause.pending(now + Duration::from_millis(599)));
-        pause.begin(now + Duration::from_millis(400));
+        assert!(pause.pending(now + Duration::from_millis(399)));
+        pause.begin(now + Duration::from_millis(200));
+        assert!(pause.pending(now + Duration::from_millis(500)));
         assert!(pause.pending(now + SpacePause::DELAY));
-        assert!(pause.pending(now + Duration::from_millis(999)));
-        assert!(!pause.pending(now + Duration::from_millis(1000)));
+        assert!(!pause.pending(now + Duration::from_millis(601)));
     }
     #[test]
     fn flash_frame_expires_once_and_a_repeat_extends_it_without_restarting() {

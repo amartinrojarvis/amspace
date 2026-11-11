@@ -38,7 +38,7 @@ Primero se preparaba el modelo oculto y se aplicaba geometría al entrar; el usu
 
 Las referencias AX se retienen antes de trasladar: algunas apps omiten ventanas ocultas de `AXWindows`. Retener una referencia no autoriza escribir indefinidamente: comprobar propietario, ID, Space y flags antes de cada colocación. No activar, elevar ni seleccionar el escritorio para conseguir el tamaño deseado.
 
-La colocación oculta tiene dos intentos separados al menos 180 ms y un límite de 600 ms; si el destino se hace visible se detiene esa ruta. Las apps que no aceptan geometría oculta se ajustan mediante la reconciliación habitual al entrar. Es una alternativa deliberada, no permiso para reintentar permanentemente.
+La colocación oculta tiene dos intentos separados al menos 120 ms y un límite de 600 ms; si el destino se hace visible se detiene esa ruta. Las apps que no aceptan geometría oculta se ajustan mediante la reconciliación habitual al entrar. Es una alternativa deliberada, no permiso para reintentar permanentemente.
 
 Otro fallo real bloqueaba el envío al escritorio 1 con «Una ventana del destino no responde; no se ha movido nada». La causa era tratar una entrada nativa sin AX verificable como un veto de toda la preparación. Se omiten entradas no verificables nuevas, se conservan las ranuras conocidas cuando corresponde y no se escriben geometrías de ventanas no comprobadas. No lo arregles reasignando el número 1 a otro Space ni eliminando todas las validaciones.
 

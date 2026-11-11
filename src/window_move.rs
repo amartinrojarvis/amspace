@@ -83,7 +83,7 @@ impl Confirmation {
 fn geometry_retry_due(attempts: u8, elapsed: Option<Duration>) -> bool {
     attempts < 2
         && (elapsed.is_none()
-            || (attempts == 1 && elapsed.is_some_and(|t| t >= Duration::from_millis(180))))
+            || (attempts == 1 && elapsed.is_some_and(|t| t >= Duration::from_millis(120))))
 }
 pub struct Pending {
     pub pid: i32,
@@ -859,8 +859,8 @@ mod tests {
     #[test]
     fn geometry_retries_are_delayed_and_strictly_bounded() {
         assert!(geometry_retry_due(0, None));
-        assert!(!geometry_retry_due(1, Some(Duration::from_millis(179))));
-        assert!(geometry_retry_due(1, Some(Duration::from_millis(180))));
+        assert!(!geometry_retry_due(1, Some(Duration::from_millis(119))));
+        assert!(geometry_retry_due(1, Some(Duration::from_millis(120))));
         assert!(!geometry_retry_due(2, None));
         assert!(!geometry_retry_due(2, Some(Duration::from_secs(5))));
     }

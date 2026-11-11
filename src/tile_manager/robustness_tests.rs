@@ -48,27 +48,27 @@ fn placement_faults_are_bounded_and_repeated_notifications_do_not_restart_limits
     let limited = rect(-1080., -300., 1060., 680.);
     let mut cases = 0;
     for accepted in [false, true] {
-        for delay in [0, 1, 119, 120, 121, 600, 5000] {
+        for delay in [0, 1, 59, 60, 61, 600, 5000] {
             let mut verification = Verification {
                 target,
-                due: start + Duration::from_millis(120),
+                due: start + Duration::from_millis(60),
                 retried: false,
                 accepted,
             };
             let now = start + Duration::from_millis(delay);
             assert_eq!(
                 verification.step(limited, now),
-                if delay < 120 {
+                if delay < 60 {
                     VerificationStep::Wait
                 } else {
                     VerificationStep::Retry
                 }
             );
             assert_eq!(verification.step(target, now), VerificationStep::Complete);
-            let retry = start + Duration::from_millis(delay.max(120));
+            let retry = start + Duration::from_millis(delay.max(60));
             verification.step(limited, retry);
             assert_eq!(
-                verification.step(limited, retry + Duration::from_millis(119)),
+                verification.step(limited, retry + Duration::from_millis(59)),
                 VerificationStep::Wait
             );
             let final_step = if accepted {
@@ -76,7 +76,7 @@ fn placement_faults_are_bounded_and_repeated_notifications_do_not_restart_limits
             } else {
                 VerificationStep::Rejected
             };
-            for later in [120, 121, 1000, 60000] {
+            for later in [60, 61, 1000, 60000] {
                 assert_eq!(
                     verification.step(limited, retry + Duration::from_millis(later)),
                     final_step
