@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.0](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.0/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.1/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -218,7 +218,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.9.0](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.0/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.0). También disponible mediante Buscar ahora en General.
+[Descargar 0.9.1](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.1/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.1). También disponible mediante Buscar ahora en General.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
@@ -227,5 +227,7 @@ La versión 0.8.1 extiende el selector de ⌃⌥Espacio a esas plantillas guarda
 La versión 0.8.2 hace que el indicador y los atajos ⌘1–9 sigan la numeración del monitor que contiene el puntero; 0.8.3, 0.8.4 y 0.8.5 dejan el mosaico asentado con una única escritura por ventana al volver a un escritorio: cada ventana conserva su hueco desde el primer escaneo, sin el doble ajuste visible anterior. 0.8.6 baja el temporizador a 0,25 s en reposo con una sola lista del compositor por cuadro; 0.8.7 cubre también las listas transitorias con hueco en el medio o id extra provisional tras varios gestos; 0.8.8 comparte una única lectura nativa de pertenencia por cuadro, acota la ráfaga de lecturas incompletas y hace converger el mínimo aprendido, y 0.8.9 extiende ese memo al grupo de pestañas nativa.
 
 La versión 0.9.0 hace conmutable el lote interpolado del mosaico (**Animar colocaciones**, `tile.animate`: con 0 queda una única escritura por ventana y el temporizador de reparación), dibuja el marco de reelección con esquinas suavemente redondeadas sobre el `visibleFrame` para que se vean sus cuatro lados bajo la barra de menús (**Borde al reelegir el escritorio**, `flash`) y suma los paneles de servicio del sistema —progreso de copia, Abrir/Guardar y Vista de Safari— a las aplicaciones flotantes permanentes, que conservan su propia geometría.
+
+La versión 0.9.1 también dibuja ese marco cuando el traslado de una ventana no cambia de destino (la ventana ya estaba en ese escritorio), de modo que la ausencia de deslizamiento nativo sigue teniendo confirmación visible. Las demás incidencias de traslado muestran solo su texto.
 
 La versión también protege los diseños editados al cambiar de Space en otro monitor y cuando una app tarda en responder a AX. Cuando no se ha configurado otro modificador, el envío usa **⌃⌘1–9**; el grupo debe estar activado en Atajos. General incluye **Copiar diagnóstico** de la instancia abierta. El estado de las comprobaciones físicas está en [VALIDATION.md](docs/VALIDATION.md).
