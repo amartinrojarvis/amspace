@@ -1599,6 +1599,7 @@ impl Manager {
         frames: &[(u32, NSRect)],
         primary: f64,
         start: usize,
+        centered: bool,
     ) -> usize {
         let mut used = start;
         let groups: &[Group] = desktop.groups();
@@ -1620,9 +1621,8 @@ impl Manager {
                     .unwrap_or((0, ptr::null()));
                 tabs.push((window_label(element as Obj, pid), app_icon(pid)));
             }
-            let widths: Vec<f64> = tabs.iter().map(|(name, _)| tab_width(name)).collect();
-            let total = strip_width(&widths);
-            let panel = tab_bar_frame(*slot, total);
+            let total = strip_width(tabs.iter().map(|(name, _)| tab_width(name)));
+            let panel = tab_bar_frame(*slot, total, centered);
             match self.strips.get_mut(used) {
                 Some(strip) => {
                     if strip.frame != panel {
@@ -1662,6 +1662,7 @@ impl Manager {
                         };
                         unsafe {
                             let _: () = msg_send![&*strip.panel,setContentView:&*root];
+                            sync_strip_hover(&root);
                         }
                         strip.signature = tabs;
                         strip.members.clone_from(&group.members);
@@ -1672,6 +1673,8 @@ impl Manager {
                         let visible: bool = msg_send![&*strip.panel, isVisible];
                         if !visible {
                             let _: () = msg_send![&*strip.panel, orderFrontRegardless];
+                            let root: Obj = msg_send![&*strip.panel, contentView];
+                            sync_strip_hover(&*root);
                         }
                     }
                 }
@@ -1688,8 +1691,11 @@ impl Manager {
                     };
                     unsafe {
                         let _: () = msg_send![&panel_obj,setIgnoresMouseEvents:false];
+                        // The compositor supplies the strip's compact native shadow.
+                        let _: () = msg_send![&panel_obj,setHasShadow:true];
                         let _: () = msg_send![&panel_obj,setContentView:&*root];
                         let _: () = msg_send![&panel_obj, orderFrontRegardless];
+                        sync_strip_hover(&root);
                     }
                     self.strips.push(TabStrip {
                         panel: panel_obj,
@@ -3061,11 +3067,13 @@ impl Manager {
                 let primary = primary_height();
                 // One owner updates overlay visibility once per tick. Resize
                 // preference changes cannot hide a move destination afterwards.
+                // The alignment is read once per tick alongside the other prefs.
+                let centered = pref(defaults, "tile.groups.centered") == 1;
                 let mut strips = 0;
                 for (key, area) in active.iter().map(|(k, r)| (*k, *r)) {
                     if let Some(desktop) = self.desktops.get(&key).cloned() {
                         let frames = desktop.window_frames(area, 10.);
-                        strips = self.draw_strips(&desktop, &frames, primary, strips);
+                        strips = self.draw_strips(&desktop, &frames, primary, strips, centered);
                     }
                 }
                 if let Some(frames) = resize_preview {
@@ -3548,6 +3556,8 @@ impl Manager {
         }
         // The settle flag was read once for this tick, above.
         let primary = primary_height();
+        // Absent or invalid is 0, i.e. the left inset; 1 is centered.
+        let centered = pref(defaults, "tile.groups.centered") == 1;
         let mut strips_drawn = 0usize;
         for (space, r) in active {
             let d = self.desktops.entry(space).or_default();
@@ -3603,7 +3613,7 @@ impl Manager {
             }
             let hidden = hidden_tab_frames(d, &frames);
             let snapshot = d.clone();
-            strips_drawn = self.draw_strips(&snapshot, &frames, primary, strips_drawn);
+            strips_drawn = self.draw_strips(&snapshot, &frames, primary, strips_drawn, centered);
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
                     return;
@@ -3907,10 +3917,19 @@ fn committed_during_settling(settling: bool, applied: Option<NSRect>, target: NS
 
 const BADGE_SIZE: f64 = 34.;
 
-fn tab_bar_frame(window: NSRect, content_width: f64) -> NSRect {
+/// Strip geometry inside a logical slot: left-aligned with an 8 pt inset by
+/// default, symmetric when `centered`. Both edges stay inside the slot, so a
+/// narrow window clamps the strip instead of overflowing it. Left alignment
+/// keeps a stable origin as the tab content changes.
+fn tab_bar_frame(window: NSRect, content_width: f64, centered: bool) -> NSRect {
     let width = content_width.min((window.size.width - 12.).max(1.));
+    let inset = if centered {
+        (window.size.width - width) / 2.
+    } else {
+        8f64.min((window.size.width - width).max(0.))
+    };
     rect(
-        window.origin.x + (window.size.width - width) / 2.,
+        window.origin.x + inset,
         window.origin.y - TAB_BAR_HEIGHT - TAB_BAR_GAP,
         width,
         TAB_BAR_HEIGHT,
@@ -4095,12 +4114,7 @@ unsafe fn strip_content(
     target: Option<&AnyObject>,
 ) -> Retained<AnyObject> {
     unsafe {
-        let total = strip_width(
-            &tabs
-                .iter()
-                .map(|(name, _)| tab_width(name))
-                .collect::<Vec<_>>(),
-        );
+        let total = strip_width(tabs.iter().map(|(name, _)| tab_width(name)));
         let root = translucent_card(rect(0., 0., total, TAB_BAR_HEIGHT));
         let appearance: Obj = msg_send![class!(NSAppearance), appearanceNamed:&*NSString::from_str("NSAppearanceNameVibrantDark")];
         let _: () = msg_send![&root,setAppearance:appearance];
@@ -4109,12 +4123,25 @@ unsafe fn strip_content(
         let mut selected = NSRect::ZERO;
         for (index, ((name, icon), id)) in tabs.iter().zip(members).enumerate() {
             let width = tab_width(name);
-            let plate = rect(x, 3., width, TAB_BAR_HEIGHT - 6.);
-            if index == active {
+            let plate = rect(x, 0., width, TAB_BAR_HEIGHT);
+            let is_active = index == active;
+            if is_active {
                 selected = plate;
-                rounded_plate(parent, plate, [0.48, 0.60, 1.], 0.30, 6.);
+                rounded_plate(
+                    parent,
+                    rect(x, 3., width, TAB_BAR_HEIGHT - 6.),
+                    [0.48, 0.60, 1.],
+                    0.34,
+                    6.,
+                );
             } else {
-                rounded_plate(parent, plate, [1., 1., 1.], 0.06, 6.);
+                rounded_plate(
+                    parent,
+                    rect(x, 3., width, TAB_BAR_HEIGHT - 6.),
+                    [1., 1., 1.],
+                    0.05,
+                    6.,
+                );
             }
             let inner = x + 6.;
             let mut text_x = inner;
@@ -4129,9 +4156,15 @@ unsafe fn strip_content(
                 parent,
                 rect(text_x, 4., (x + width - 28. - text_x).max(8.), 14.),
                 name,
-                index == active,
+                is_active,
             );
-            let button = alloc_view(tab_button_class(), rect(x, 0., width - 22., TAB_BAR_HEIGHT));
+            // One container per tab owns the tracking area, so the glyph state
+            // and both hit areas move together and never reflow on hover.
+            let tab = alloc_view(tab_container_class(), plate);
+            let button = alloc_view(
+                tab_button_class(),
+                rect(0., 0., width - 22., TAB_BAR_HEIGHT),
+            );
             let _: () = msg_send![&button,setTransparent:true];
             let _: () = msg_send![&button,setTitle:&*NSString::from_str(name)];
             let _: () = msg_send![&button,setToolTip:&*NSString::from_str(name)];
@@ -4145,12 +4178,9 @@ unsafe fn strip_content(
             let _: () = msg_send![&gesture,setDelaysPrimaryMouseButtonEvents:true];
             let _: () = msg_send![&gesture,setAllowedTouchTypes:0usize];
             let _: () = msg_send![&button,addGestureRecognizer:&*gesture];
-            let _: () = msg_send![&root,addSubview:&*button];
-            // A sibling control, not a child of the draggable/selectable button.
-            let close = alloc_view(
-                class!(NSButton),
-                rect(x + width - 22., 0., 22., TAB_BAR_HEIGHT),
-            );
+            // A sibling control inside the tracked container, not a child of the
+            // draggable/selectable button. The 22 pt column is always reserved.
+            let close = alloc_view(class!(NSButton), rect(width - 22., 0., 22., TAB_BAR_HEIGHT));
             let _: () = msg_send![&close,setBordered:false];
             let _: () = msg_send![&close,setTitle:&*NSString::from_str("×")];
             let font: Obj = msg_send![class!(NSFont),systemFontOfSize:14f64];
@@ -4162,17 +4192,130 @@ unsafe fn strip_content(
             let _: () = msg_send![&close,setTag:-(*id as isize) - 2];
             let _: () = msg_send![&close,setTarget:target];
             let _: () = msg_send![&close,setAction:sel!(closeTileTab:)];
-            let _: () = msg_send![&root,addSubview:&*close];
+            let _: () = msg_send![&tab,addSubview:&*button];
+            let _: () = msg_send![&tab,addSubview:&*close];
+            let close_ivar = (*tab).class().instance_variable(c"close").unwrap();
+            close_ivar
+                .load_ptr::<*mut AnyObject>(&tab)
+                .write(Retained::as_ptr(&close) as Obj);
+            let active_ivar = (*tab).class().instance_variable(c"active").unwrap();
+            active_ivar
+                .load_ptr::<u8>(&tab)
+                .write(if is_active { 1 } else { 0 });
+            let area: Allocated<AnyObject> = msg_send![class!(NSTrackingArea), alloc];
+            // Enter/exit + active always + during drag + visible rect.
+            // Do not assume the pointer starts inside newly created views.
+            let area: Retained<AnyObject> = msg_send![area,initWithRect:NSRect::ZERO,options:(1usize | 128 | 256 | 512),owner:&*tab,userInfo:ptr::null::<AnyObject>()];
+            let _: () = msg_send![&tab,addTrackingArea:&*area];
+            set_close_transparent(&tab, !is_active);
+            let _: () = msg_send![&root,addSubview:&*tab];
             x = plate.origin.x + plate.size.width + 4.;
         }
         let scroll = alloc_view(class!(NSScrollView), rect(0., 0., width, TAB_BAR_HEIGHT));
         let _: () = msg_send![&scroll,setDrawsBackground:false];
+        let _: () = msg_send![&scroll,setWantsLayer:true];
+        let viewport: Obj = msg_send![&scroll, layer];
+        let _: () = msg_send![viewport,setCornerRadius:9f64];
+        let _: () = msg_send![viewport,setMasksToBounds:true];
+        let edge: Obj = msg_send![class!(NSColor), colorWithSRGBRed:1.,green:1.,blue:1.,alpha:0.10];
+        let edge_cg: *const crate::native::CgColor = msg_send![edge, CGColor];
+        let _: () = msg_send![viewport,setBorderColor:edge_cg];
+        let _: () = msg_send![viewport,setBorderWidth:1f64];
         let _: () = msg_send![&scroll,setHasHorizontalScroller:total > width];
         let _: () = msg_send![&scroll,setAutohidesScrollers:true];
         let _: () = msg_send![&scroll,setScrollerStyle:1isize];
         let _: () = msg_send![&scroll,setDocumentView:&*root];
         let _: bool = msg_send![&root,scrollRectToVisible:selected];
         scroll
+    }
+}
+
+/// The per-tab `NSView` that owns the tracking area and remembers whether it is
+/// the selected tab, so leaving the hover restores the right glyph state.
+fn tab_container_class() -> &'static AnyClass {
+    static CLASS: LazyLock<&'static AnyClass> = LazyLock::new(|| unsafe {
+        let mut builder = ClassBuilder::new(c"AMSpaceTabContainer", class!(NSView)).unwrap();
+        builder.add_ivar::<*mut AnyObject>(c"close");
+        builder.add_ivar::<u8>(c"active");
+        builder.add_method(
+            sel!(mouseEntered:),
+            tab_hover_entered as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(mouseExited:),
+            tab_hover_exited as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.register()
+    });
+    *CLASS
+}
+
+unsafe fn set_close_transparent(tab: &AnyObject, transparent: bool) {
+    unsafe {
+        let close = (*tab)
+            .class()
+            .instance_variable(c"close")
+            .unwrap()
+            .load_ptr::<*mut AnyObject>(tab)
+            .read();
+        if close.is_null() {
+            return;
+        }
+        // Only write when it differs, so repeated events stay free.
+        let current: bool = msg_send![&*close, isTransparent];
+        if current != transparent {
+            let _: () = msg_send![&*close, setTransparent:transparent];
+        }
+    }
+}
+
+extern "C-unwind" fn tab_hover_entered(tab: Obj, _: Sel, _: Obj) {
+    unsafe { set_close_transparent(&*tab, false) }
+}
+
+extern "C-unwind" fn tab_hover_exited(tab: Obj, _: Sel, _: Obj) {
+    unsafe {
+        let active = (*tab)
+            .class()
+            .instance_variable(c"active")
+            .unwrap()
+            .load_ptr::<u8>(&*tab)
+            .read();
+        set_close_transparent(&*tab, active == 0);
+    }
+}
+
+/// Seed the glyph state right after a rebuild, so a strip created under the
+/// pointer does not wait for the next mouse move. One native read per rebuild.
+unsafe fn sync_strip_hover(scroll: &AnyObject) {
+    unsafe {
+        let window: Obj = msg_send![scroll, window];
+        if window.is_null() {
+            return;
+        }
+        let point: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let local: NSPoint = msg_send![window, convertPointFromScreen:point];
+        let document: Obj = msg_send![scroll, documentView];
+        let tabs: Obj = msg_send![document, subviews];
+        let count: usize = msg_send![tabs, count];
+        for index in 0..count {
+            let tab: Obj = msg_send![tabs, objectAtIndex:index];
+            let tracked: bool = msg_send![tab, isKindOfClass:tab_container_class()];
+            if !tracked {
+                continue;
+            }
+            let point: NSPoint =
+                msg_send![tab,convertPoint:local,fromView:ptr::null::<AnyObject>()];
+            let visible: NSRect = msg_send![tab, visibleRect];
+            let inside = contains(visible, point);
+            let active = (*tab)
+                .class()
+                .instance_variable(c"active")
+                .unwrap()
+                .load_ptr::<u8>(&*tab)
+                .read();
+            set_close_transparent(&*tab, !inside && active == 0);
+        }
     }
 }
 
@@ -4214,12 +4357,17 @@ fn tab_width(name: &str) -> f64 {
     (name.chars().count() as f64 * 6.4 + 56.).clamp(52., 242.)
 }
 
-fn strip_width(widths: &[f64]) -> f64 {
-    let count = widths.len();
+fn strip_width(widths: impl Iterator<Item = f64>) -> f64 {
+    let mut total = 0.;
+    let mut count = 0usize;
+    for width in widths {
+        total += width;
+        count += 1;
+    }
     if count == 0 {
         return 0.;
     }
-    widths.iter().sum::<f64>() + 4. * (count - 1) as f64 + 8.
+    total + 4. * (count - 1) as f64 + 8.
 }
 
 /// The window's own title when AX has one, otherwise its application name.
@@ -4283,19 +4431,47 @@ fn strip_sits_above_window_without_overflowing_its_logical_slot() {
         .tab_strip(3)
         .map(|(members, _)| members.iter().map(|id| format!("v{id}")).collect())
         .unwrap();
-    let widths: Vec<f64> = names.iter().map(|n| tab_width(n)).collect();
-    let total = strip_width(&widths);
+    let total = strip_width(names.iter().map(|n| tab_width(n)));
     // Two tabs: their own widths plus one inner gap and the two margins.
-    assert_eq!(total, widths.iter().sum::<f64>() + 12.);
-    let panel = tab_bar_frame(window, total);
-    assert!(panel.origin.x >= slot.origin.x);
-    assert!(panel.origin.x + panel.size.width <= slot.origin.x + slot.size.width);
-    assert!(panel.origin.y >= slot.origin.y);
-    assert!(panel.origin.y + panel.size.height <= slot.origin.y + slot.size.height);
-    assert!(panel.origin.y + panel.size.height + TAB_BAR_GAP <= window.origin.y);
+    assert_eq!(total, names.iter().map(|n| tab_width(n)).sum::<f64>() + 12.);
+    let left = tab_bar_frame(window, total, false);
+    for panel in [left, tab_bar_frame(window, total, true)] {
+        assert!(panel.origin.x >= slot.origin.x);
+        assert!(panel.origin.x + panel.size.width <= slot.origin.x + slot.size.width);
+        assert!(panel.origin.y >= slot.origin.y);
+        assert!(panel.origin.y + panel.size.height <= slot.origin.y + slot.size.height);
+        assert!(panel.origin.y + panel.size.height + TAB_BAR_GAP <= window.origin.y);
+    }
+    // Default: 8 pt inset from the slot's left edge.
+    assert_eq!(left.origin.x, slot.origin.x + 8.);
+    // Centered: symmetric inside the same slot.
+    let centered = tab_bar_frame(window, total, true);
     assert_eq!(
-        panel.origin.x + panel.size.width / 2.,
+        centered.origin.x + centered.size.width / 2.,
         window.origin.x + window.size.width / 2.
+    );
+    let leading = centered.origin.x - slot.origin.x;
+    let trailing = slot.origin.x + slot.size.width - (centered.origin.x + centered.size.width);
+    assert!((leading - trailing).abs() < 1e-9);
+    // The left inset is a function of the slot alone, so renaming a tab keeps
+    // the strip at the same x while its width still tracks the content.
+    let mut longer = names.clone();
+    longer[0] = "una ventana con un titulo mucho mas largo".into();
+    let wider = strip_width(longer.iter().map(|n| tab_width(n)));
+    assert_eq!(tab_bar_frame(window, wider, false).origin.x, left.origin.x);
+    assert!(wider > total);
+    // A narrow window clamps both edges instead of overflowing the slot.
+    let narrow = rect(window.origin.x, window.origin.y, 120., window.size.height);
+    let tight_left = tab_bar_frame(narrow, wider, false);
+    let tight_centered = tab_bar_frame(narrow, wider, true);
+    for panel in [tight_left, tight_centered] {
+        assert!(panel.origin.x >= narrow.origin.x);
+        assert!(panel.origin.x + panel.size.width <= narrow.origin.x + narrow.size.width + 0.001);
+    }
+    assert_eq!(tight_left.origin.x, narrow.origin.x + 8.);
+    assert_eq!(
+        tight_centered.origin.x - narrow.origin.x,
+        (narrow.size.width - tight_centered.size.width) / 2.
     );
     // The badge is centered on the same slot and never overflows it.
     let badge = rect(
@@ -4311,7 +4487,7 @@ fn strip_sits_above_window_without_overflowing_its_logical_slot() {
     // The y-flip uses the primary height, not the slot's own height.
     let flipped = appkit(badge, 1000.);
     assert_eq!(flipped.origin.y, 1000. - badge.origin.y - BADGE_SIZE);
-    assert_eq!(strip_width(&[]), 0.);
+    assert_eq!(strip_width(std::iter::empty()), 0.);
 }
 #[cfg(test)]
 mod tests {

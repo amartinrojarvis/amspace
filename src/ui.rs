@@ -429,7 +429,7 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = 610. + rows.saturating_sub(2) as f64 * 108.;
+    let height = 650. + rows.saturating_sub(2) as f64 * 108.;
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
@@ -2214,7 +2214,8 @@ impl App {
             let preview_row = simple_row - 40.;
             let groups_row = preview_row - 40.;
             let max_row = groups_row - 40.;
-            let actions_row = max_row - 44.;
+            let alignment_row = max_row - 40.;
+            let actions_row = alignment_row - 44.;
             label(
                 root,
                 rect(18., animation_row, width - 90., 22.),
@@ -2301,6 +2302,25 @@ impl App {
             let _: () = msg_send![&max_field,setAction:sel!(change:)];
             let _: () = msg_send![&max_field,setTag:66isize];
             let _: () = msg_send![root,addSubview:&*max_field];
+            label(
+                root,
+                rect(18., alignment_row, width - 210., 22.),
+                "Alineación de pestañas",
+                13.,
+                0.,
+                false,
+            );
+            let alignment = popup(
+                root,
+                rect(width - 178., alignment_row - 2., 160., 26.),
+                &["Izquierda", "Centro"],
+                target,
+                67,
+            );
+            let selected =
+                isize::from(crate::tile_manager::pref(defaults, "tile.groups.centered") == 1);
+            let _: () = msg_send![alignment,selectItemAtIndex:selected];
+            let _: () = msg_send![alignment,setAccessibilityLabel:&*NSString::from_str("Alineación de pestañas")];
             button(
                 root,
                 rect(15., actions_row, (width - 36.) / 2., 28.),
@@ -3588,6 +3608,18 @@ Otras apps pueden tener atajos propios no detectables.",
                     } else {
                         self.feedback("El máximo de pestañas admite valores enteros entre 2 y 20.");
                     }
+                }
+                67 => {
+                    let selected: isize = msg_send![sender, indexOfSelectedItem];
+                    if matches!(selected, 0 | 1) {
+                        crate::tile_manager::save(
+                            Retained::as_ptr(&self.defaults) as Obj,
+                            "tile.groups.centered",
+                            selected,
+                        );
+                        self.tile_manager.invalidate();
+                    }
+                    return;
                 }
                 64 => {
                     let state: isize = msg_send![sender, state];

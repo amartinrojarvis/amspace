@@ -1,11 +1,11 @@
-AMSpace 0.9.9 — cerrar ventanas desde las pestañas.
+AMSpace 0.9.10 — pestañas integradas y alineación configurable.
 
-- Cada pestaña incorpora una × para solicitar el cierre de su ventana mediante el botón nativo de la aplicación.
-- El cierre no fuerza la salida ni descarta documentos. La pestaña permanece hasta confirmar que la ventana se ha cerrado; los avisos de guardar quedan bajo control de la aplicación.
-- Una pestaña oculta se selecciona antes de solicitar el cierre para mostrar cualquier confirmación. Los diálogos protegidos conservan el foco.
-- Cerrar, seleccionar y arrastrar tienen áreas independientes. Soltar fuera de la × cancela sin ejecutar otra acción.
-- Se mantienen la barra exterior, la separación por arrastre y el máximo de pestañas configurable de 0.9.8.
+- Pestañas alineadas a la izquierda por defecto, con 8 puntos de margen. Puedes centrarlas desde Ajustes → Mosaico → Alineación de pestañas.
+- Fondo oscuro translúcido limitado a la tira, borde redondeado tenue, sombra nativa y mayor contraste para la pestaña activa.
+- La × permanece visible en la activa y aparece al pasar el cursor por las demás, sin desplazar títulos ni cambiar el área de cierre.
+- Se mantienen la barra exterior de 22 puntos, la separación por arrastre, el cierre normal de ventanas y el máximo de pestañas configurable.
+- Seguimiento del cursor mediante eventos nativos, sin nuevos sondeos, temporizadores ni animaciones continuas. Se reutilizan las vistas y se eliminan vectores temporales de anchos.
 
-Verificación: 224 pruebas correctas, controles AppKit y compilación universal. El cierre AX real y los diálogos de guardar de otras aplicaciones siguen pendientes de prueba física con Accesibilidad autorizada.
+Verificación: 224 pruebas correctas, controles AppKit, ajustes claros/oscuros y compilación universal. Una muestra aislada de 20,5 s en reposo registró 0,0 % de CPU a la resolución de muestreo; no acredita coste cero ni mide GPU/WindowServer o múltiples grupos. Sigue pendiente el cierre AX y los avisos de guardar de aplicaciones ajenas.
 
-Las agrupaciones son estado de sesión. Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las ideas de reordenación, menú contextual, atajos y pestañas fijadas no forman parte de esta versión.
+Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior.

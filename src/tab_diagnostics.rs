@@ -105,13 +105,15 @@ pub fn check_controls() -> Result<(), String> {
             control_close as extern "C-unwind" fn(Obj, Sel, Obj),
         );
         let target: Retained<AnyObject> = msg_send![builder.register(), new];
-        let names = [
+        let names: [(String, Option<Retained<AnyObject>>); 3] = [
             ("Primera ventana".into(), None),
             ("Segunda ventana".into(), None),
             ("Tercera ventana".into(), None),
         ];
-        let frame = tab_bar_frame(rect(300., 330., 620., 400.), 620.);
+        let total = names.iter().map(|(name, _)| tab_width(name)).sum::<f64>() + 16.;
+        let frame = tab_bar_frame(rect(300., 330., 620., 400.), total, false);
         let panel = new_overlay(frame, primary_height());
+        let _: () = msg_send![&panel,setHasShadow:true];
         let content = strip_content(&names, &[1, 2, 3], 1, frame.size.width, Some(&target));
         let _: () = msg_send![&panel,setIgnoresMouseEvents:false];
         let _: () = msg_send![&panel,setContentView:&*content];
@@ -190,6 +192,26 @@ pub fn check_controls() -> Result<(), String> {
         }
         for id in 1..=3isize {
             let close: Retained<AnyObject> = msg_send![document,viewWithTag:-id - 2];
+            // Exercise the native tracking callbacks without moving the user's cursor.
+            let tab: Obj = msg_send![&close, superview];
+            let areas: Obj = msg_send![tab, trackingAreas];
+            let tracking: Obj = msg_send![areas, firstObject];
+            if tracking.is_null() {
+                return Err("La pestaña no tiene seguimiento nativo del cursor".into());
+            }
+            let owner: Obj = msg_send![tracking, owner];
+            let original: NSRect = msg_send![&close, frame];
+            let _: () = msg_send![owner,mouseExited:ptr::null::<AnyObject>()];
+            let hidden: bool = msg_send![&close, isTransparent];
+            if hidden != (id != 2) {
+                return Err(format!("Visibilidad de cierre incorrecta sin hover: {id}"));
+            }
+            let _: () = msg_send![owner,mouseEntered:ptr::null::<AnyObject>()];
+            let hidden: bool = msg_send![&close, isTransparent];
+            let hovered: NSRect = msg_send![&close, frame];
+            if hidden || hovered != original {
+                return Err(format!("El hover oculta o desplaza el cierre: {id}"));
+            }
             let bounds: NSRect = msg_send![&close, bounds];
             let point: NSPoint = msg_send![&close,convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.),toView:ptr::null::<AnyObject>()];
             let x = point.x - center.x;
@@ -210,26 +232,115 @@ pub fn check_controls() -> Result<(), String> {
                     "Soltar fuera de cerrar ejecutó una acción: {events:?}"
                 ));
             }
+            let _: () = msg_send![owner,mouseExited:ptr::null::<AnyObject>()];
         }
-        let bounds: NSRect = msg_send![&content, bounds];
+        capture_control(Retained::as_ptr(&content) as Obj, ".cache/tab-controls.png")?;
+        render_tab_presentation(&names, &target)?;
+        if let Some(seconds) = std::env::var("AMSPACE_TAB_IDLE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| (1..=60).contains(seconds))
+        {
+            println!("IDLE: tira visible; muestra de recursos durante {seconds} s");
+            let _ = std::io::stdout().flush();
+            let deadline = Instant::now() + Duration::from_secs(seconds);
+            while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+                autoreleasepool(|_| {
+                    let date: Obj = msg_send![class!(NSDate),dateWithTimeIntervalSinceNow:remaining.as_secs_f64()];
+                    let event: Option<Retained<AnyObject>> = msg_send![app,nextEventMatchingMask:usize::MAX,untilDate:date,inMode:objc2_foundation::NSDefaultRunLoopMode,dequeue:true];
+                    if let Some(event) = event {
+                        let _: () = msg_send![app,sendEvent:&*event];
+                    }
+                    let _: () = msg_send![app, updateWindows];
+                });
+            }
+        }
+        let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
+        println!(
+            "PASS: selección, arrastre/cancelación, cierre individual y hover sin desplazamientos ni acciones cruzadas; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+        );
+        Ok(())
+    }
+}
+
+unsafe fn capture_control(view: Obj, path: &str) -> Result<(), String> {
+    unsafe {
+        let bounds: NSRect = msg_send![view, bounds];
         let bitmap: Option<Retained<AnyObject>> =
-            msg_send![&content,bitmapImageRepForCachingDisplayInRect:bounds];
-        let bitmap = bitmap.ok_or("Sin bitmap de la tira")?;
-        let _: () = msg_send![&content,cacheDisplayInRect:bounds,toBitmapImageRep:&*bitmap];
+            msg_send![view,bitmapImageRepForCachingDisplayInRect:bounds];
+        let bitmap = bitmap.ok_or("Sin bitmap del control")?;
+        let _: () = msg_send![view,cacheDisplayInRect:bounds,toBitmapImageRep:&*bitmap];
         let properties: Obj = msg_send![class!(NSDictionary), dictionary];
         let data: Option<Retained<AnyObject>> =
             msg_send![&bitmap,representationUsingType:4usize,properties:properties];
-        let data = data.ok_or("Sin PNG de la tira")?;
+        let data = data.ok_or("Sin PNG del control")?;
         std::fs::create_dir_all(".cache").map_err(|error| error.to_string())?;
-        let saved: bool = msg_send![&data,writeToFile:&*NSString::from_str(".cache/tab-controls.png"),atomically:true];
-        let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
-        if !saved {
-            return Err("No se pudo guardar la captura".into());
+        let saved: bool = msg_send![&data,writeToFile:&*NSString::from_str(path),atomically:true];
+        if saved {
+            Ok(())
+        } else {
+            Err("No se pudo guardar la captura".into())
         }
-        println!(
-            "PASS: selección, arrastre/cancelación y cierre individual sin acciones cruzadas; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+    }
+}
+
+/// Show the real strip against disposable window surfaces, without foreign AX.
+unsafe fn render_tab_presentation(
+    names: &[(String, Option<Retained<AnyObject>>)],
+    target: &AnyObject,
+) -> Result<(), String> {
+    unsafe {
+        let panel = new_overlay(rect(200., 180., 720., 330.), primary_height());
+        let canvas = alloc_view(class!(NSView), rect(0., 0., 720., 330.));
+        let appearance: Obj = msg_send![class!(NSAppearance),appearanceNamed:&*NSString::from_str("NSAppearanceNameDarkAqua")];
+        let _: () = msg_send![&canvas,setAppearance:appearance];
+        let _: () = msg_send![&canvas,setWantsLayer:true];
+        let layer: Obj = msg_send![&canvas, layer];
+        let background: *const crate::native::CgColor =
+            msg_send![color(0.15, 0.16, 0.18, 1.), CGColor];
+        let _: () = msg_send![layer,setBackgroundColor:background];
+        let total = names.iter().map(|(name, _)| tab_width(name)).sum::<f64>()
+            + 4. * names.len().saturating_sub(1) as f64
+            + 8.;
+        for (index, (centered, width, title)) in [
+            (false, 680., "Izquierda · predeterminado"),
+            (true, 680., "Centro"),
+            (false, 260., "Ventana estrecha · desplazamiento horizontal"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let window = rect(20., 45. + index as f64 * 105., width, 58.);
+            let surface = alloc_view(class!(NSView), appkit(window, 330.));
+            let _: () = msg_send![&surface,setWantsLayer:true];
+            let layer: Obj = msg_send![&surface, layer];
+            let background: *const crate::native::CgColor =
+                msg_send![color(0.23, 0.24, 0.27, 1.), CGColor];
+            let _: () = msg_send![layer,setBackgroundColor:background];
+            let _: () = msg_send![layer,setCornerRadius:8f64];
+            crate::native::label(
+                Retained::as_ptr(&surface) as Obj,
+                rect(12., 18., width - 24., 22.),
+                title,
+                12.,
+                0.,
+                false,
+            );
+            let _: () = msg_send![&canvas,addSubview:&*surface];
+            let frame = tab_bar_frame(window, total, centered);
+            let strip = strip_content(names, &[1, 2, 3], 1, frame.size.width, Some(target));
+            let _: () = msg_send![&strip,setFrame:appkit(frame,330.)];
+            let _: () = msg_send![&canvas,addSubview:&*strip];
+        }
+        let _: () = msg_send![&panel,setContentView:&*canvas];
+        let _: () = msg_send![&panel, orderFrontRegardless];
+        pump(0.1);
+        let result = capture_control(
+            Retained::as_ptr(&canvas) as Obj,
+            ".cache/tab-presentation.png",
         );
-        Ok(())
+        let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
+        result
     }
 }
 
@@ -423,7 +534,7 @@ pub fn check() -> Result<(), String> {
         manager.place_hidden_tab(id, frame);
     }
     manager.desktops.insert(space, desktop.clone());
-    manager.draw_strips(&desktop, &frames, primary_height(), 0);
+    manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
     STATE.with(|state| *state.borrow_mut() = Some(manager));
     let _panels = Panels;
     pump(0.2);
@@ -477,7 +588,7 @@ pub fn check() -> Result<(), String> {
                 let manager = state.as_mut().unwrap();
                 let desktop = manager.desktops[&space].clone();
                 let frames = desktop.window_frames(area, 10.);
-                manager.draw_strips(&desktop, &frames, primary_height(), 0);
+                manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
             })
         });
     }
@@ -557,7 +668,7 @@ pub fn check() -> Result<(), String> {
             }
         }
         manager.desktops.insert(space, desktop.clone());
-        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0);
+        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         Ok(logical_slot)
     })?;
@@ -607,7 +718,7 @@ pub fn check() -> Result<(), String> {
         {
             return Err("Cerrar la activa no conservó el hueco de su hermana".into());
         }
-        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0);
+        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         if manager
             .strips
