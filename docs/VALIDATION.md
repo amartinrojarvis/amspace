@@ -1,4 +1,4 @@
-## Candidata 0.9.11/build 66: estabilidad y eficiencia del flujo de ventanas
+## Publicación 0.9.11/build 66: estabilidad y eficiencia del flujo de ventanas
 
 - Sustituir/restaurar una distribución o confirmar un redimensionado cancela también las transiciones y verificaciones de pestañas ocultas. La regresión usa la restauración real, comprueba la geometría nueva y conserva intacto el trabajo pendiente de otro escritorio.
 - Restaurar geometría al desactivar exige PID/ID presentes en WindowServer, ID AX coincidente, Space nativo original y pantalla disponible. Las referencias retenidas no autorizan escribir sobre una identidad reciclada o una ventana trasladada.
@@ -10,6 +10,7 @@
 - Muestra final con la tira visible, **20,46 s**: CPU **0,0 % de un núcleo** a la resolución del muestreo; RSS **96,72–99,28 MiB**. El selector de prueba usa un pool de autorelease propio antes de medir, para no retener sus objetos temporales hasta el cierre del diagnóstico. El resultado incluye capturas y cachés AppKit: no mide memoria exclusiva de las pestañas, coste de arrastre continuo ni mejora porcentual frente a 0.9.10.
 - Alcance físico: controles y paneles propios en Apple Silicon. No se alteraron permisos, documentos, preferencias funcionales ni la app instalada. La comprobación AX con otras apps sigue pendiente del permiso documentado; tampoco se demuestra compatibilidad física Intel/multipantalla ni coste GPU/WindowServer.
 - Candidata con identidad **0.9.11/build 66**: `check.sh` correcto (227 pruebas, ocho ignoradas), bundle universal y diagnóstico AppKit desde el release correctos. `prepare-release.py` firmó y verificó ZIP y catálogo usando el Llavero, sin exportar claves. SHA-256 del ZIP: `8b790c6555755cc0790f4855bf2f3d539d3823f298e324ba1eb372b46a616145`. Las versiones publicadas anteriores permanecen inmutables.
+- [Release 0.9.11](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.11) sobre `a30fba7`, con [CI macOS correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43251811086). Descargas HTTPS sin autenticación desde GitHub Releases y `updates/0.9.11/AMSpace-universal.zip` idénticas al ZIP firmado.
 
 ## Publicación 0.9.10/build 65: alineación y presentación ligera de pestañas
 

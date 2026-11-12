@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.10](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.10/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Incluye separación por arrastre, cierre individual, barra exterior y alineación configurable; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.11](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.11/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Corrige la gestión de distribuciones y pestañas ocultas, valida las previews con las ventanas actuales y reduce trabajo innecesario; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -231,7 +231,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Última publicada: 0.9.10](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.10/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.10).
+[Última publicada: 0.9.11](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.11/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.11).
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
