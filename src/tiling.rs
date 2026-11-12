@@ -659,11 +659,21 @@ impl Desktop {
     }
     /// Selecting an AppKit tab changes its NSWindow ID, not its layout slot.
     pub fn replace_window(&mut self, old: u32, new: u32) -> bool {
-        if !self.order.contains(&old) || self.order.contains(&new) {
+        if !self.order.contains(&old)
+            || self.order.contains(&new)
+            || self.groups.iter().any(|group| group.members.contains(&new))
+        {
             return false;
         }
         if let Some(minimum) = self.minimums.remove(&old) {
             self.minimums.insert(new, minimum);
+        }
+        for group in &mut self.groups {
+            for member in &mut group.members {
+                if *member == old {
+                    *member = new;
+                }
+            }
         }
         for id in &mut self.order {
             if *id == old {
@@ -697,6 +707,9 @@ impl Desktop {
             .iter_mut()
             .find(|group| group.members.contains(&id))
             .and_then(|group| group.take(id));
+        // A strip that lost its last tab is inert; drop it so no stale index
+        // or phantom member survives the closure.
+        self.groups.retain(|group| !group.members.is_empty());
         if let Some(next) = promoted {
             self.order.insert(position, next);
             self.remap_resized(&old);
@@ -720,12 +733,11 @@ impl Desktop {
     }
     fn prune_member(&mut self, id: u32) {
         for group in &mut self.groups {
-            if let Some(index) = group.members.iter().position(|w| *w == id) {
-                let was_active = group.active == index;
-                group.members.remove(index);
-                if was_active {
-                    group.active = group.active.min(group.members.len().saturating_sub(1));
-                }
+            if group.members.contains(&id) {
+                // Same index arithmetic as `Group::take`: removing a member
+                // before the visible one shifts `active` down, so the leaf
+                // keeps naming the id that really owns the slot.
+                group.take(id);
                 break;
             }
         }
@@ -787,13 +799,12 @@ impl Desktop {
         if index == group.active {
             return Some(id);
         }
-        let previous = group.members[group.active];
+        let previous = group.leaf()?;
+        let position = self.order.iter().position(|w| *w == previous)?;
         group.active = index;
-        if let Some(position) = self.order.iter().position(|w| *w == previous) {
-            let old = self.order.clone();
-            self.order[position] = id;
-            self.remap_resized(&old);
-        }
+        let old = self.order.clone();
+        self.order[position] = id;
+        self.remap_resized(&old);
         Some(previous)
     }
     /// Attach `id` to `target`'s strip, or start a new two-tab group. The
@@ -807,26 +818,12 @@ impl Desktop {
             .resized
             .as_ref()
             .is_some_and(|(layout, order, _)| *layout == self.layout && *order == old);
-        if let Some(index) = self
+        if self
             .groups
             .iter()
-            .position(|group| group.members.contains(&id) && group.members.contains(&target))
+            .any(|group| group.members.contains(&id) && group.members.contains(&target))
         {
-            // Already one strip: the drop only promotes that tab into the slot.
-            let previous = self.groups[index].members[self.groups[index].active];
-            self.groups[index].active = self.groups[index]
-                .members
-                .iter()
-                .position(|w| *w == id)
-                .unwrap();
-            if let Some(position) = self.order.iter().position(|w| *w == previous) {
-                self.order[position] = id;
-                if valid {
-                    if let Some((_, _, tree)) = &mut self.resized {
-                        tree.rename(previous, id);
-                    }
-                }
-            }
+            self.select_tab(id);
             return;
         }
         let owned_slot = self.order.contains(&id);
@@ -888,6 +885,9 @@ impl Desktop {
             }
         }
         self.order = order;
+        if valid && let Some((_, order, _)) = &mut self.resized {
+            order.clone_from(&self.order);
+        }
     }
     fn remap_resized(&mut self, old: &[u32]) {
         if let Some((layout, order, tree)) = &mut self.resized
@@ -908,11 +908,20 @@ impl Desktop {
         self.layout != Layout::Spiral
             && self.layout.primary_center_axis().is_none()
             && self.resized.is_some()
-            && ids.iter().any(|id| !self.order.contains(id))
+            && ids
+                .iter()
+                .any(|id| !self.order.contains(id) && self.tab_role(*id).is_none())
     }
     pub fn reconcile_at(&mut self, ids: &[u32], area: NSRect, gap: f64, focused: Option<u32>) {
-        for id in self.order.clone() {
-            if !ids.contains(&id) {
+        self.sync_tabs(ids);
+        let mut index = 0;
+        while index < self.order.len() {
+            let id = self.order[index];
+            if ids.contains(&id) {
+                index += 1;
+            } else {
+                // Removal can promote another absent member into this index.
+                // Recheck it instead of leaving a phantom leaf for another scan.
                 self.remove(id);
             }
         }
@@ -1000,6 +1009,23 @@ impl Desktop {
         gap: f64,
     ) -> Option<Self> {
         let mut result = self.clone();
+        if !matches!(intent, DropIntent::Group(_)) && self.tab_role(id).is_some() {
+            let minimum = result.minimums.get(&id).copied();
+            if result
+                .tab_strip(id)
+                .is_some_and(|(members, _)| members.len() > 1)
+            {
+                result.remove(id);
+            } else {
+                result.prune_member(id);
+            }
+            if let Some(minimum) = minimum {
+                result.minimums.insert(id, minimum);
+            }
+            // This member is no longer grouped. Treat its new independent slot
+            // exactly like an arrival; reconciliation must not skip it forever.
+            return result.proposed_drop(id, intent, area, gap);
+        }
         if self.order.contains(&id) {
             let frames = self.frames(area, gap);
             if frames.len() != self.order.len() {
@@ -1011,6 +1037,8 @@ impl Desktop {
                     if !self.order.contains(&target) || target == id {
                         return None;
                     }
+                    result.resized =
+                        Some((self.layout, self.order.clone(), self.frame_tree(area, gap)?));
                     result.join_group(id, target);
                     return (result.frames(area, gap).len() == result.order.len())
                         .then_some(result);
@@ -1060,6 +1088,7 @@ impl Desktop {
             if !self.order.contains(&target) || target == id {
                 return None;
             }
+            result.resized = Some((self.layout, self.order.clone(), self.frame_tree(area, gap)?));
             result.join_group(id, target);
             return (result.frames(area, gap).len() == result.order.len()).then_some(result);
         }
@@ -1217,18 +1246,32 @@ impl Desktop {
     }
     fn window_minimum(&self, id: u32, vertical: bool) -> f64 {
         let fallback: f64 = if vertical { 120. } else { 90. };
-        self.minimums.get(&id).map_or(fallback, |size| {
-            fallback.max(if vertical { size.width } else { size.height })
-        })
+        let minimum = |member| {
+            self.minimums.get(&member).map_or(fallback, |size| {
+                fallback.max(if vertical { size.width } else { size.height })
+            })
+        };
+        self.tab_strip(id).map_or_else(
+            || minimum(id),
+            |(members, _)| {
+                members
+                    .iter()
+                    .map(|id| minimum(*id))
+                    .fold(fallback, f64::max)
+            },
+        )
     }
     pub fn set_minimum_sizes(
         &mut self,
         minimums: &std::collections::HashMap<u32, objc2_foundation::NSSize>,
     ) {
+        let tracked = |id: &u32| {
+            self.order.contains(id) || self.groups.iter().any(|group| group.members.contains(id))
+        };
         self.minimums
-            .retain(|id, _| self.order.contains(id) && minimums.contains_key(id));
-        for id in &self.order {
-            if let Some(size) = minimums.get(id) {
+            .retain(|id, _| tracked(id) && minimums.contains_key(id));
+        for (id, size) in minimums {
+            if tracked(id) {
                 self.minimums.insert(*id, *size);
             }
         }
@@ -3742,5 +3785,189 @@ mod tests {
         // An already-visible leaf is left untouched.
         adopted.sync_tabs(&[1, 2, 3]);
         assert_eq!(adopted.order, vec![1, 2, 3]);
+    }
+    #[test]
+    fn closing_hidden_members_preserves_active_identity_and_slot_in_every_layout() {
+        let area = rect(0., 30., 2000., 1200.);
+        for layout in Layout::ALL {
+            let mut desktop = Desktop::configured(layout, None);
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            desktop = desktop
+                .proposed_drop(4, DropIntent::Group(2), area, 10.)
+                .unwrap();
+            desktop = desktop
+                .proposed_drop(5, DropIntent::Group(4), area, 10.)
+                .unwrap();
+            let before = desktop.frames(area, 10.);
+            for hidden in [2, 4] {
+                assert_eq!(desktop.remove(hidden), None);
+                assert_eq!(desktop.groups()[0].leaf(), Some(5));
+                assert_eq!(desktop.tab_role(5), Some(true));
+                assert_eq!(desktop.frames(area, 10.), before);
+                assert_layout_invariants(&desktop, area);
+            }
+            desktop.remove(5);
+            assert!(desktop.groups().is_empty());
+            assert_eq!(desktop.order, vec![1, 3]);
+            assert_layout_invariants(&desktop, area);
+        }
+    }
+
+    #[test]
+    fn native_tab_replacement_renames_the_mosaic_member_without_duplicate_ownership() {
+        let area = rect(0., 0., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        desktop = desktop
+            .proposed_drop(4, DropIntent::Group(2), area, 10.)
+            .unwrap();
+        let slot = desktop
+            .frames(area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == 4)
+            .unwrap()
+            .1;
+        assert!(desktop.replace_window(4, 7));
+        assert_eq!(desktop.tab_strip(7), Some((&[2, 7][..], 1)));
+        assert_eq!(desktop.tab_role(4), None);
+        assert!(!desktop.replace_window(7, 2));
+        assert_eq!(desktop.select_tab(2), Some(7));
+        assert_eq!(
+            desktop
+                .frames(area, 10.)
+                .into_iter()
+                .find(|(id, _)| *id == 2)
+                .unwrap()
+                .1,
+            slot
+        );
+        assert_eq!(desktop.select_tab(7), Some(2));
+        assert_layout_invariants(&desktop, area);
+    }
+
+    #[test]
+    fn group_arrivals_and_merges_preserve_customized_slots() {
+        for area in [
+            rect(0., 30., 2200., 1300.),
+            rect(-900., -400., 1000., 1900.),
+        ] {
+            for layout in Layout::ALL {
+                let mut desktop = Desktop::configured(layout, None);
+                desktop.reconcile(&[1, 2, 3, 4], area, 10.);
+                let from = desktop.frames(area, 10.)[0].1;
+                let mut to = from;
+                to.size.width *= 0.9;
+                to.size.height *= 0.9;
+                desktop.resize(1, from, to, area, 10.);
+                let before = desktop.frames(area, 10.);
+                for (id, target) in [(5, 1), (6, 2), (6, 5)] {
+                    desktop = desktop
+                        .proposed_drop(id, DropIntent::Group(target), area, 10.)
+                        .unwrap();
+                    let frames = desktop.frames(area, 10.);
+                    assert_eq!(frames.len(), before.len());
+                    for ((_, actual), (_, expected)) in frames.iter().zip(&before) {
+                        assert!(
+                            (actual.origin.x - expected.origin.x).abs() < 0.001,
+                            "{layout:?}"
+                        );
+                        assert!(
+                            (actual.origin.y - expected.origin.y).abs() < 0.001,
+                            "{layout:?}"
+                        );
+                        assert!(
+                            (actual.size.width - expected.size.width).abs() < 0.001,
+                            "{layout:?}"
+                        );
+                        assert!(
+                            (actual.size.height - expected.size.height).abs() < 0.001,
+                            "{layout:?}"
+                        );
+                    }
+                    assert_layout_invariants(&desktop, area);
+                }
+                assert_eq!(desktop.order, vec![6, 2, 3, 4]);
+                assert_eq!(desktop.select_tab(1), Some(6));
+                assert_layout_invariants(&desktop, area);
+            }
+        }
+    }
+
+    #[test]
+    fn dragging_active_or_hidden_group_members_out_creates_an_independent_slot() {
+        for area in [
+            rect(0., 30., 2000., 1200.),
+            rect(-900., -400., 1000., 1900.),
+        ] {
+            for layout in Layout::ALL {
+                let mut desktop = Desktop::configured(layout, None);
+                desktop.reconcile(&[1, 2, 3], area, 10.);
+                let grouped = desktop
+                    .proposed_drop(4, DropIntent::Group(2), area, 10.)
+                    .unwrap();
+                for id in [2, 4] {
+                    for intent in [
+                        DropIntent::Window(3, Zone::Center),
+                        DropIntent::Screen(Zone::Left),
+                        DropIntent::Screen(Zone::Bottom),
+                    ] {
+                        let detached = grouped.proposed_drop(id, intent, area, 10.).unwrap();
+                        assert_eq!(detached.tab_role(id), None);
+                        let mut members = detached.order.clone();
+                        members.sort_unstable();
+                        assert_eq!(members, vec![1, 2, 3, 4]);
+                        assert_layout_invariants(&detached, area);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reconciliation_removes_all_absent_promotions_but_keeps_a_visible_sibling() {
+        let area = rect(0., 0., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2], area, 10.);
+        desktop = desktop
+            .proposed_drop(3, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let mut visible = desktop.clone();
+        visible.reconcile(&[1, 2], area, 10.);
+        assert_eq!(visible.order, vec![1, 2]);
+        assert_eq!(visible.tab_role(3), Some(false));
+        desktop.reconcile(&[2], area, 10.);
+        assert_eq!(desktop.order, vec![2]);
+        assert!(desktop.groups().is_empty());
+        assert_eq!(desktop.frames(area, 10.), vec![(2, area)]);
+    }
+
+    #[test]
+    fn a_group_respects_hidden_minimums_without_reflow_on_selection() {
+        use objc2_foundation::NSSize;
+        let area = rect(0., 0., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        desktop = desktop
+            .proposed_drop(4, DropIntent::Group(2), area, 10.)
+            .unwrap();
+        let minimums = std::collections::HashMap::from([
+            (2, NSSize::new(900., 300.)),
+            (4, NSSize::new(180., 100.)),
+        ]);
+        desktop.set_minimum_sizes(&minimums);
+        desktop.fit(area, 10.);
+        let before = desktop.frames(area, 10.);
+        let slot = before.iter().find(|(id, _)| *id == 4).unwrap().1;
+        assert!(slot.size.width >= 900. && slot.size.height >= 300.);
+        desktop.select_tab(2);
+        desktop.set_minimum_sizes(&minimums);
+        desktop.fit(area, 10.);
+        let selected = desktop.frames(area, 10.);
+        assert_eq!(
+            selected.iter().map(|(_, frame)| frame).collect::<Vec<_>>(),
+            before.iter().map(|(_, frame)| frame).collect::<Vec<_>>()
+        );
+        assert_eq!(desktop.minimums[&4], minimums[&4]);
+        assert_layout_invariants(&desktop, area);
     }
 }

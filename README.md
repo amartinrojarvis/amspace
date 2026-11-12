@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. Descarga el [ZIP universal firmado de la 0.9.2](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.2/AMSpace-universal.zip) o consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímelo y mueve **AMSpace.app** a **Aplicaciones** antes de abrirlo.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.6/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. La candidata 0.9.7 corrige errores de las pestañas, pero su publicación está retenida hasta completar la prueba nativa con Accesibilidad.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -155,6 +155,8 @@ Con **Agrupar como pestañas** activo, soltar en el tercio superior de un hueco 
 
 Sobre el hueco se dibuja la tira de ese grupo: una tarjeta oscura translúcida con esquinas redondeadas, una píldora por pestaña con el icono de la app y su título, y la pestaña activa resaltada. Mientras arrastras, el destino pendiente muestra un símbolo sobreimpreso: cuadro con la franja superior llena si vas a apilar como pestaña, dos flechas si vas a intercambiar huecos.
 
+Haz clic en una pestaña para activar y elevar esa ventana. Si no caben todas, desplaza horizontalmente la tira; queda limitada al ancho del hueco. Puedes sacar la ventana activa arrastrando su barra de título a otro hueco o borde. Las agrupaciones duran la sesión, no se guardan como parte de las plantillas.
+
 Puedes arrastrar entre monitores visibles, incluso con orientaciones, resoluciones y escalas distintas. Cada pareja monitor/escritorio mantiene su propio árbol; se usa el área útil en puntos de macOS y se respetan Dock, menú y márgenes. Espiral y Principal comienzan apiladas en pantallas verticales. También se separan las distribuciones cuando macOS comparte un Space entre monitores. También puedes enviar la ventana activa a otro escritorio desde Atajos, cuando macOS admite el puente nativo. Las flotantes permanecen fuera de esta colocación hasta usar su atajo.
 
 **⌃⌥Espacio** abre el selector semitransparente en el monitor del cursor. Muestra las ocho plantillas con miniaturas adaptadas a esa pantalla, más una tarjeta por cada plantilla guardada, y una previsualización a tamaño real con las ventanas actuales. Pasa el ratón, usa las flechas o pulsa 1–8 (9 y 0 para las dos primeras guardadas) para previsualizar; haz clic o pulsa Intro para aplicar. Esc, otro toque del atajo o un clic fuera del panel cancelan. Las miniaturas de las integradas son ejemplos, mientras que la previsualización grande usa las ventanas reales. Las opciones que no cumplen el tamaño mínimo o el número de ventanas aparecen deshabilitadas. Configura la combinación en **Atajos → Selector de plantillas**. La elección se guarda por monitor y escritorio, también si varios monitores comparten un Space. Ahora hay 54 teclas (letras, números, F1–F12, flechas, Espacio y Retorno) y 12 combinaciones de modificadores. En **Atajos → Sugerencias… → Buscar atajos libres**, AMSpace consulta los atajos de sistema y prueba reservas globales exclusivas en ese Mac. Elige una sugerencia y pulsa **Usar sugerido**; vuelve a reservarse al aplicarla. La comprobación no puede enumerar todos los atajos internos de otras apps. Las sugerencias deben buscarse en el ordenador donde se usarán.
@@ -223,7 +225,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Descargar 0.9.3](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.3/AMSpace-universal.zip) · [Notas de la versión](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.3). También disponible mediante Buscar ahora en General.
+[Última publicada: 0.9.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.6/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.6). La candidata 0.9.7 no se anuncia en el catálogo.
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
@@ -245,4 +247,4 @@ La versión 0.9.4 dibuja esas tiras y los iconos de intención. Cada grupo muest
 
 La versión 0.9.5 refresca la línea de permiso de Accesibilidad en cada cuadro del temporizador de la ventana de Ajustes, de modo que el círculo se pone lleno nada más conceder el permiso en Preferencias del Sistema, sin tocar ningún control.
 
-La versión 0.9.6 endurece dos caminos sin cambiar el aspecto: `Updater::new()` devuelve `None` cuando falta cualquiera de los objetos intermedios del `Sparkle.framework` (el arranque directo del ejecutable ya no aborta) y la firma de cada tira conserva el icono retenido, no el puntero autoreleased, así que el temporizador del mosaico no reutiliza memoria liberada.
+La versión 0.9.6 añadió comprobaciones de objetos ausentes en Sparkle, pero no resolvió correctamente la propiedad del icono. La candidata 0.9.7 retiene el resultado prestado de `icon` y convierte `AXTitle` mientras su objeto sigue vivo; añade selección desde la tira y corrige la geometría compartida y las transiciones del modelo de grupos. La validación y sus límites se registran en [VALIDATION.md](docs/VALIDATION.md). No está publicada: falta completar la comprobación nativa AX.

@@ -18,7 +18,7 @@ La búsqueda diaria es opcional. Nunca se instala automáticamente. El feed y el
 6. Solo después, copiar `dist/appcast.xml` a `appcast.xml` en la raíz, hacer commit y push. **No editar manualmente el feed firmado.**
 7. Probar Buscar… desde la versión anterior, instalar y verificar versión y preferencias después del reinicio.
 
-La clave se creó con `.cache/sparkle/bin/generate_keys --account io.github.amartinrojarvis.amspace`. Mantener una copia de seguridad protegida del Llavero; perder esa clave impide firmar actualizaciones compatibles con las instalaciones existentes. No incluir claves privadas en el repositorio, argumentos de proceso ni artefactos.
+La clave compatible con `generate_keys --account io.github.amartinrojarvis.amspace` debe estar en el Llavero con servicio `https://sparkle-project.org` y protocolo SSH, que forman parte de la consulta de Sparkle. `prepare-release.py` usa únicamente `--account` y comprueba con `generate_keys -p` que la clave pública coincide con `SUPublicEDKey` antes de firmar. No crea ni rota claves. No usar archivos de respaldo como fallback ni extraer el secreto con `security -w`. Mantener una copia de seguridad protegida del Llavero; perder esa clave impide firmar actualizaciones compatibles. No incluir claves privadas en el repositorio, argumentos de proceso ni artefactos.
 
 ## Firma de Apple
 

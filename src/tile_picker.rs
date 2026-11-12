@@ -124,7 +124,7 @@ unsafe fn plate(parent: Obj, frame: NSRect, alpha: f64, accent: bool, radius: f6
         } else {
             color(0.10, 0.12, 0.18, alpha)
         };
-        let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+        let cg: *const crate::native::CgColor = msg_send![c, CGColor];
         let _: () = msg_send![layer, setBackgroundColor:cg];
         let _: () = msg_send![layer, setCornerRadius:radius];
         let _: () = msg_send![parent, addSubview:&*view];
@@ -546,7 +546,7 @@ impl Picker {
                     1.,
                     if index == self.selected { 0.32 } else { 0.10 },
                 );
-                let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+                let cg: *const crate::native::CgColor = msg_send![c, CGColor];
                 let _: () = msg_send![layer,setBackgroundColor:cg];
                 let _: () = msg_send![self.buttons[index],setState:if index==self.selected {1isize}else{0isize}];
             }

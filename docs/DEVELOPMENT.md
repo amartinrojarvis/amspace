@@ -85,10 +85,11 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | `target/debug/amspace --check-transfer-preflight` | Planifica llegadas con caché vacía y mosaico habilitado en preferencias de registro aisladas; no mueve ventanas ni escribe preferencias persistentes. Necesita AX, una ventana normal visible y destinos reales para cubrirlos |
 | `target/debug/amspace --check-priority-shortcuts` | Instala y retira veinte taps con una combinación temporal; no inyecta teclas. Necesita AX y verifica ciclo de vida, no que el teclado físico venza a todas las apps |
 | `target/debug/amspace --check-space-transfer` | Crea otro proceso con ventana temporal, la envía a los demás escritorios y de vuelta, y verifica geometría oculta. Necesita AX y al menos dos escritorios. Modifica la ventana fixture, no documentos del usuario |
+| `dist/AMSpace.app/Contents/MacOS/amspace --check-tab-groups` | Con la app normal cerrada y AX autorizado: crea tres ventanas desechables en otro proceso, agrupa mediante la propuesta de producción, comprueba geometría y ejecuta 40 selecciones AppKit (la primera con clic CGEvent, las restantes con `performClick:`), drenando autorelease pools. Muestra la tira tres segundos y cierra la activa para verificar promoción y retirada del overlay. Solo mueve/activa/cierra fixtures, restaura el cursor y no toca preferencias. No sustituye una prueba de arrastre físico ni de varios monitores |
 | `target/debug/amspace --render-desktop-previews` | Lee geometría/iconos y escribe `.cache/desktop-preview-<SpaceID>.png`. Crea `.cache/` antes; no captura contenido de las ventanas |
 | `python3 scripts/benchmark.py <PID> --seconds 20` | Mide CPU y RSS del proceso; ajustes cerrados y ratón en reposo para una muestra comparable |
 
-`--space-transfer-fixture` es una entrada interna del diagnóstico: no es una segunda app de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.
+`--space-transfer-fixture` y `--tab-group-fixture` son entradas internas de diagnósticos, no segundas apps de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.
 
 Trazas optativas disponibles: `AMSPACE_TRACE_SPACES`, `AMSPACE_TRACE_FOCUS`, `AMSPACE_TRACE_TILING` y `AMSPACE_TRACE_TRANSFERS`. Por ejemplo, con la instancia normal cerrada:
 

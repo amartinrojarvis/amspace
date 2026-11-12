@@ -103,7 +103,7 @@ unsafe fn apply_border_clip(layer: Obj, target: NSRect, regions: &[NSRect]) {
         let _: () = msg_send![mask, setFrame:rect(0.,0.,target.size.width,target.size.height)];
         let _: () = msg_send![mask, setPath:path];
         let black = color(0., 0., 0., 1.);
-        let cg: *const std::ffi::c_void = msg_send![black, CGColor];
+        let cg: *const crate::native::CgColor = msg_send![black, CGColor];
         let _: () = msg_send![mask, setFillColor:cg];
         let _: () = msg_send![layer, setMask:mask];
         CGPathRelease(path);
@@ -515,7 +515,7 @@ impl App {
                 flash_panel: None,
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
-                tile_manager: Default::default(),
+                tile_manager: crate::tile_manager::Manager::with_tab_target(target.clone()),
                 tile_timer: None,
                 tile_mouse: None,
                 tile_interval: 0.,
@@ -921,7 +921,7 @@ impl App {
                 let layer: Obj = msg_send![v, layer];
                 let rgb = crate::border::Flash::RGB;
                 let c = color(rgb[0], rgb[1], rgb[2], 0.9);
-                let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+                let cg: *const crate::native::CgColor = msg_send![c, CGColor];
                 let _: () = msg_send![layer, setBorderColor:cg];
                 let _: () = msg_send![layer, setBorderWidth:crate::border::Flash::WIDTH];
                 let _: () = msg_send![layer, setCornerRadius:crate::border::Flash::CORNER];
@@ -1149,7 +1149,7 @@ impl App {
                 let view: Obj = msg_send![&self.border, contentView];
                 let layer: Obj = msg_send![view, layer];
                 let c = color(self.rgb[0], self.rgb[1], self.rgb[2], 0.95);
-                let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+                let cg: *const crate::native::CgColor = msg_send![c, CGColor];
                 let _: () = msg_send![layer, setBorderColor:cg];
                 let _: () = msg_send![layer, setBorderWidth:self.width];
                 let _: () = msg_send![layer, setCornerRadius:target.radius];
@@ -2129,8 +2129,8 @@ impl App {
                 } else {
                     msg_send![class!(NSColor), separatorColor]
                 };
-                let cg: *const std::ffi::c_void = msg_send![background, CGColor];
-                let border: *const std::ffi::c_void = msg_send![stroke, CGColor];
+                let cg: *const crate::native::CgColor = msg_send![background, CGColor];
+                let border: *const crate::native::CgColor = msg_send![stroke, CGColor];
                 let _: () = msg_send![layer, setBackgroundColor:cg];
                 let _: () = msg_send![layer, setBorderColor:border];
                 let _: () =
@@ -3046,8 +3046,8 @@ Otras apps pueden tener atajos propios no detectables.",
                 } else {
                     msg_send![class!(NSColor), separatorColor]
                 };
-                let bg: *const std::ffi::c_void = msg_send![background, CGColor];
-                let stroke: *const std::ffi::c_void = msg_send![border, CGColor];
+                let bg: *const crate::native::CgColor = msg_send![background, CGColor];
+                let stroke: *const crate::native::CgColor = msg_send![border, CGColor];
                 let _: () = msg_send![layer, setBackgroundColor:bg];
                 let _: () = msg_send![layer, setBorderColor:stroke];
                 let _: () = msg_send![*button, setAccessibilityValue:&*NSString::from_str(if i == index {"Seleccionado"} else {""})];
@@ -4242,6 +4242,21 @@ extern "C-unwind" fn desktop_distributed(_: Obj, _: Sel, notification: Obj) {
         }
     }
 }
+extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
+    let id: isize = unsafe { msg_send![sender, tag] };
+    with_app(|a| {
+        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+            return;
+        }
+        if let Ok(id) = u32::try_from(id)
+            && a.tile_manager.activate_tab(id)
+        {
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            a.update_tile_timer();
+            a.settle_focus();
+        }
+    });
+}
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
@@ -4440,6 +4455,7 @@ pub fn run() {
             (sel!(change:), change),
             (sel!(hover:), hover),
             (sel!(tileTick:), tile_tick),
+            (sel!(selectTileTab:), select_tile_tab),
             (sel!(layoutChoice:), layout_choice),
             (sel!(screensChanged:), screens_changed),
             (sel!(desktopLifecycle:), desktop_lifecycle),

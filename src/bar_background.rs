@@ -23,19 +23,18 @@ pub unsafe fn apply(button: Obj, index: usize) {
     unsafe {
         let _: () = msg_send![button, setWantsLayer:true];
         let layer: Obj = msg_send![button, layer];
-        let cg: *const std::ffi::c_void =
-            OPTIONS
-                .get(index)
-                .and_then(|(_, rgb)| *rgb)
-                .map_or(std::ptr::null(), |rgb| {
-                    let c = color(
-                        rgb[0] as f64 / 255.,
-                        rgb[1] as f64 / 255.,
-                        rgb[2] as f64 / 255.,
-                        0.24,
-                    );
-                    msg_send![c, CGColor]
-                });
+        let cg: *const crate::native::CgColor = OPTIONS
+            .get(index)
+            .and_then(|(_, rgb)| *rgb)
+            .map_or(std::ptr::null(), |rgb| {
+                let c = color(
+                    rgb[0] as f64 / 255.,
+                    rgb[1] as f64 / 255.,
+                    rgb[2] as f64 / 255.,
+                    0.24,
+                );
+                msg_send![c, CGColor]
+            });
         let _: () = msg_send![layer, setBackgroundColor:cg];
         let _: () = msg_send![layer, setCornerRadius:6f64];
         // Keep AppKit's native highlight, hit testing and accessibility intact.

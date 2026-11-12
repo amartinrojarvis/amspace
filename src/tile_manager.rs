@@ -10,6 +10,7 @@ use objc2::{
     class, msg_send,
     rc::{Allocated, Retained},
     runtime::AnyObject,
+    sel,
 };
 use objc2_foundation::{NSPoint, NSRect, NSString};
 use std::{
@@ -17,6 +18,9 @@ use std::{
     ptr,
     time::{Duration, Instant},
 };
+
+#[path = "tab_diagnostics.rs"]
+pub mod diagnostics;
 
 fn centered_resize_request(
     from: NSRect,
@@ -606,6 +610,7 @@ impl MembershipGrace {
 struct TabStrip {
     panel: Retained<AnyObject>,
     signature: Vec<(String, Option<Retained<AnyObject>>)>,
+    members: Vec<u32>,
     active: usize,
     built: NSRect,
     frame: NSRect,
@@ -644,6 +649,7 @@ pub struct Manager {
     preview: Vec<Retained<AnyObject>>,
     /// One rounded strip per tabbed group, reused across ticks.
     strips: Vec<TabStrip>,
+    tab_target: Option<Retained<AnyObject>>,
     /// Transient SF Symbol hints over the resolved drop destination.
     badges: Vec<HintBadge>,
     last_scan: Option<Instant>,
@@ -685,6 +691,65 @@ impl KeyboardTransfer {
     }
 }
 impl Manager {
+    pub fn with_tab_target(target: Retained<AnyObject>) -> Self {
+        Self {
+            tab_target: Some(target),
+            ..Self::default()
+        }
+    }
+
+    /// Only an explicit tab click activates/raises a foreign window.
+    pub fn activate_tab(&mut self, id: u32) -> bool {
+        if self.presentation_blocks_input()
+            || !ax::trusted()
+            || crate::focus::secure_input()
+            || self.drag.is_some()
+            || self.pending_drop.is_some()
+        {
+            return false;
+        }
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        if self.floating.contains(&id)
+            || !self
+                .active_areas
+                .iter()
+                .any(|(key, _)| *key == window.space)
+            || spaces::window_space(id) != Some(window.space.1)
+            || ax::window_id(window.element.0) != Some(id)
+            || !ax::tileable(window.element.0)
+            || !ws::all_window_ids().is_some_and(|ids| ids.contains(&(window.pid, id)))
+            || !self
+                .desktops
+                .get(&window.space)
+                .is_some_and(|d| d.tab_role(id).is_some())
+        {
+            return false;
+        }
+        if !ax::focus(window.element.0, window.pid) {
+            return false;
+        }
+        self.select_tab_model(id);
+        true
+    }
+
+    fn select_tab_model(&mut self, id: u32) {
+        let Some(space) = self.windows.get(&id).map(|w| w.space) else {
+            return;
+        };
+        let Some(desktop) = self.desktops.get_mut(&space) else {
+            return;
+        };
+        if desktop.tab_role(id) != Some(false) {
+            return;
+        }
+        if let Some(previous) = desktop.select_tab(id) {
+            self.cancel_window_placement(previous);
+            self.cancel_window_placement(id);
+            self.invalidate();
+        }
+    }
     pub fn diagnostic_report(&self) -> String {
         let mut report = format!(
             "\nMosaic paused={:?} reentry={} quiet={}\n",
@@ -1265,6 +1330,9 @@ impl Manager {
         let mut used = start;
         let groups: &[Group] = desktop.groups();
         for group in groups {
+            if group.members.len() < 2 {
+                continue;
+            }
             let Some(leaf) = group.leaf() else { continue };
             let Some((_, slot)) = frames.iter().find(|(id, _)| *id == leaf) else {
                 continue;
@@ -1281,10 +1349,11 @@ impl Manager {
             }
             let widths: Vec<f64> = tabs.iter().map(|(name, _)| tab_width(name)).collect();
             let total = strip_width(&widths);
+            let width = total.min((slot.size.width - 12.).max(1.));
             let panel = rect(
-                slot.origin.x + (slot.size.width - total) / 2.,
+                slot.origin.x + (slot.size.width - width) / 2.,
                 slot.origin.y + 6.,
-                total,
+                width,
                 STRIP_HEIGHT,
             );
             match self.strips.get_mut(used) {
@@ -1310,12 +1379,25 @@ impl Manager {
                                         _ => false,
                                     }
                             });
-                    if !same || strip.active != group.active || strip.built != panel {
-                        let root = unsafe { strip_content(&tabs, group.active, total) };
+                    if !same
+                        || strip.members != group.members
+                        || strip.active != group.active
+                        || strip.built.size != panel.size
+                    {
+                        let root = unsafe {
+                            strip_content(
+                                &tabs,
+                                &group.members,
+                                group.active,
+                                panel.size.width,
+                                self.tab_target.as_deref(),
+                            )
+                        };
                         unsafe {
                             let _: () = msg_send![&*strip.panel,setContentView:&*root];
                         }
                         strip.signature = tabs;
+                        strip.members.clone_from(&group.members);
                         strip.active = group.active;
                         strip.built = panel;
                     }
@@ -1328,14 +1410,24 @@ impl Manager {
                 }
                 None => {
                     let panel_obj = unsafe { new_overlay(panel, primary) };
-                    let root = unsafe { strip_content(&tabs, group.active, total) };
+                    let root = unsafe {
+                        strip_content(
+                            &tabs,
+                            &group.members,
+                            group.active,
+                            panel.size.width,
+                            self.tab_target.as_deref(),
+                        )
+                    };
                     unsafe {
+                        let _: () = msg_send![&panel_obj,setIgnoresMouseEvents:false];
                         let _: () = msg_send![&panel_obj,setContentView:&*root];
                         let _: () = msg_send![&panel_obj, orderFrontRegardless];
                     }
                     self.strips.push(TabStrip {
                         panel: panel_obj,
                         signature: tabs,
+                        members: group.members.clone(),
                         active: group.active,
                         built: panel,
                         frame: panel,
@@ -1742,22 +1834,24 @@ impl Manager {
         // because `dirty` was set by a workspace callback.
         needs_placement(target, actual, pending, self.constrained.get(&id).copied())
     }
-    /// Hidden tabs share their strip's slot. Write the same destination once so
-    /// a later native tab switch needs no second placement.
+    /// Group members share their slot even when the active member is already
+    /// there. Reuse bounded verification and learned native size constraints.
     fn place_hidden_tab(&mut self, id: u32, frame: NSRect) {
-        if self.transitions.contains_key(&id) || self.verifications.contains_key(&id) {
-            return;
-        }
-        if self
-            .applied
-            .get(&id)
-            .is_some_and(|cached| near(*cached, frame))
-        {
-            return;
-        }
         let Some(w) = self.windows.get(&id) else {
             return;
         };
+        if ax::window_id(w.element.0) != Some(id)
+            || !self.active_areas.iter().any(|(key, _)| *key == w.space)
+            || spaces::window_space(id) != Some(w.space.1)
+        {
+            return;
+        }
+        let actual = ax::geometry(w.element.0).map(|(p, s)| NSRect::new(p, s));
+        if !self.needs_placement(id, frame, actual, self.settling_space()) {
+            return;
+        }
+        self.transitions.remove(&id);
+        self.constrained.remove(&id);
         let element = w.element.0;
         let mut verification = Verification::new(frame);
         verification.accepted = ax::set_frame(element, frame);
@@ -2448,6 +2542,16 @@ impl Manager {
             self.cancel_drag();
             return;
         };
+        // Native strip buttons own these clicks, not the titlebar below them.
+        if down
+            && self.drag.is_none()
+            && self.strips.iter().any(|strip| {
+                contains(strip.frame, p) && unsafe { msg_send![&*strip.panel, isVisible] }
+            })
+        {
+            self.pressed = true;
+            return;
+        }
         // Display hit-testing matters only while capturing/releasing a gesture.
         let pointer_workspace =
             (down || self.drag.is_some() || !self.gesture_candidates.is_empty())
@@ -2465,6 +2569,13 @@ impl Manager {
         });
         if down && !self.pressed {
             self.pending_drop = None;
+            // A grouped sibling may have been raised outside AMSpace since the
+            // last scan. Adopt that real hit before deciding if it owns a slot.
+            if let Some((pid, id)) = ws::window_at(p)
+                && self.windows.get(&id).is_some_and(|w| w.pid == pid)
+            {
+                self.select_tab_model(id);
+            }
             // A click inside content is not a drag until native window geometry moves.
             self.drag = ws::window_at(p)
                 .or_else(|| {
@@ -2837,8 +2948,13 @@ impl Manager {
         let focused = std::cell::LazyCell::new(|| unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
+            if app.is_null() {
+                return None;
+            }
             let pid: i32 = msg_send![app, processIdentifier];
-            ax::focused_id(pid)
+            ws::front_window(pid)
+                .map(|w| w.id)
+                .or_else(|| ax::focused_id(pid))
         });
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
         let all_ids = if self.windows.keys().any(|id| !visible_ids.contains(id)) {
@@ -3179,6 +3295,11 @@ impl Manager {
             // A native tab switch changes the visible id without a model event:
             // adopt it before geometry so the slot keeps a live leaf.
             d.sync_tabs(ids);
+            if let Some(id) = *focused
+                && ids.contains(&id)
+            {
+                d.select_tab(id);
+            }
             let insertion_focus = if d.needs_insertion_focus(ids) {
                 *focused
             } else {
@@ -3201,7 +3322,7 @@ impl Manager {
                     Some("Demasiadas ventanas para esta plantilla; usa Cuadrícula.".into());
                 continue;
             }
-            let mut hidden: Vec<(u32, NSRect)> = Vec::new();
+            let hidden = hidden_tab_frames(d, &frames);
             let snapshot = d.clone();
             strips_drawn = self.draw_strips(&snapshot, &frames, primary, strips_drawn);
             for (id, frame) in frames {
@@ -3233,22 +3354,9 @@ impl Manager {
                 }
                 // Cache destinations; animation owns intermediate frames.
                 self.applied.insert(id, frame);
-                hidden.extend(
-                    self.desktops
-                        .get(&space)
-                        .and_then(|d| d.tab_strip(id))
-                        .map(|(members, _)| {
-                            members
-                                .iter()
-                                .filter(|w| **w != id)
-                                .map(|w| (*w, frame))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                );
             }
             for (id, frame) in hidden {
-                if !place_windows || self.floating.contains(&id) {
+                if !place_windows || self.floating.contains(&id) || uncertain.contains(&id) {
                     continue;
                 }
                 self.place_hidden_tab(id, frame);
@@ -3565,7 +3673,7 @@ unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, r
         let _: () = msg_send![&view,setWantsLayer:true];
         let layer: Obj = msg_send![&view, layer];
         let c = color(rgb[0], rgb[1], rgb[2], alpha);
-        let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+        let cg: *const crate::native::CgColor = msg_send![c, CGColor];
         let _: () = msg_send![layer,setBackgroundColor:cg];
         let _: () = msg_send![layer,setCornerRadius:radius];
         let _: () = msg_send![parent,addSubview:&*view];
@@ -3593,21 +3701,30 @@ unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
     }
 }
 
-/// One pill per member: the app's own icon plus its window title, with the
-/// visible tab lit by the accent plate behind it.
+/// One real button per member, clipped to the slot with horizontal scrolling.
 unsafe fn strip_content(
     tabs: &[(String, Option<Retained<AnyObject>>)],
+    members: &[u32],
     active: usize,
-    total: f64,
+    width: f64,
+    target: Option<&AnyObject>,
 ) -> Retained<AnyObject> {
     unsafe {
+        let total = strip_width(
+            &tabs
+                .iter()
+                .map(|(name, _)| tab_width(name))
+                .collect::<Vec<_>>(),
+        );
         let root = translucent_card(rect(0., 0., total, STRIP_HEIGHT));
         let parent = Retained::as_ptr(&root) as Obj;
         let mut x = 4.;
-        for (index, (name, icon)) in tabs.iter().enumerate() {
+        let mut selected = NSRect::ZERO;
+        for (index, ((name, icon), id)) in tabs.iter().zip(members).enumerate() {
             let width = tab_width(name);
             let plate = rect(x, 4., width, STRIP_HEIGHT - 8.);
             if index == active {
+                selected = plate;
                 rounded_plate(parent, plate, [0.48, 0.60, 1.], 0.85, 6.);
             } else {
                 rounded_plate(parent, plate, [1., 1., 1.], 0.10, 6.);
@@ -3615,9 +3732,7 @@ unsafe fn strip_content(
             let inner = x + 6.;
             let mut text_x = inner;
             if let Some(icon) = icon {
-                let image: Allocated<AnyObject> = msg_send![class!(NSImageView), alloc];
-                let image: Retained<AnyObject> =
-                    msg_send![image,initWithFrame:rect(inner, 7., 12., 12.)];
+                let image = alloc_view(class!(NSImageView), rect(inner, 7., 12., 12.));
                 let _: () = msg_send![&image,setImage:&**icon];
                 let _: () = msg_send![&image,setImageScaling:3isize];
                 let _: () = msg_send![&root,addSubview:&*image];
@@ -3629,10 +3744,40 @@ unsafe fn strip_content(
                 name,
                 index == active,
             );
+            let button = alloc_view(class!(NSButton), rect(x, 0., width, STRIP_HEIGHT));
+            let _: () = msg_send![&button,setTransparent:true];
+            let _: () = msg_send![&button,setTitle:&*NSString::from_str(name)];
+            let _: () = msg_send![&button,setToolTip:&*NSString::from_str(name)];
+            let _: () = msg_send![&button,setTag:*id as isize];
+            let _: () = msg_send![&button,setTarget:target];
+            let _: () = msg_send![&button,setAction:sel!(selectTileTab:)];
+            let _: () = msg_send![&root,addSubview:&*button];
             x = plate.origin.x + plate.size.width + 4.;
         }
-        root
+        let scroll = alloc_view(class!(NSScrollView), rect(0., 0., width, STRIP_HEIGHT));
+        let _: () = msg_send![&scroll,setDrawsBackground:false];
+        let _: () = msg_send![&scroll,setHasHorizontalScroller:total > width];
+        let _: () = msg_send![&scroll,setAutohidesScrollers:true];
+        let _: () = msg_send![&scroll,setScrollerStyle:1isize];
+        let _: () = msg_send![&scroll,setDocumentView:&*root];
+        let _: bool = msg_send![&root,scrollRectToVisible:selected];
+        scroll
     }
+}
+
+fn hidden_tab_frames(desktop: &Desktop, frames: &[(u32, NSRect)]) -> Vec<(u32, NSRect)> {
+    let mut hidden = Vec::new();
+    for (id, frame) in frames {
+        if let Some((members, _)) = desktop.tab_strip(*id) {
+            hidden.extend(
+                members
+                    .iter()
+                    .filter(|member| *member != id)
+                    .map(|member| (*member, *frame)),
+            );
+        }
+    }
+    hidden
 }
 
 unsafe fn badge_content(symbol: &str) -> Retained<AnyObject> {
@@ -3669,10 +3814,23 @@ fn strip_width(widths: &[f64]) -> f64 {
 /// The window's own title when AX has one, otherwise its application name.
 fn window_label(element: Obj, pid: i32) -> String {
     let title = ax::attr(element as ax::Cf, "AXTitle")
-        .and_then(|value| unsafe { (value.0 as *const NSString).as_ref() })
-        .map(|s| s.to_string())
+        .and_then(owned_title)
         .filter(|s| !s.is_empty());
     title.or_else(|| app_name(pid)).unwrap_or_default()
+}
+
+fn owned_title(value: ax::Owned) -> Option<String> {
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFGetTypeID(value: ax::Cf) -> usize;
+        fn CFStringGetTypeID() -> usize;
+    }
+    // Convert while the Copy result still owns the CFString. Returning a borrowed
+    // NSString from this scope would outlive `value` and message freed memory.
+    unsafe {
+        (CFGetTypeID(value.0) == CFStringGetTypeID())
+            .then(|| (&*(value.0 as *const NSString)).to_string())
+    }
 }
 
 fn app_name(pid: i32) -> Option<String> {
@@ -3694,8 +3852,9 @@ fn app_icon(pid: i32) -> Option<Retained<AnyObject>> {
         if app.is_null() {
             return None;
         }
-        let icon: *mut AnyObject = msg_send![app, icon];
-        Retained::from_raw(icon)
+        // `icon` is a +0 getter. objc2 retains an optional owned return; adopting
+        // its raw pointer with from_raw would release somebody else's reference.
+        msg_send![app, icon]
     }
 }
 #[test]
@@ -3745,6 +3904,25 @@ fn strip_and_badge_geometry_stays_inside_the_slot_and_matches_its_tabs() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn copied_title_is_owned_before_its_cf_object_is_released_and_checks_type() {
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            fn CFStringCreateWithCString(
+                allocator: ax::Cf,
+                bytes: *const std::ffi::c_char,
+                encoding: u32,
+            ) -> ax::Cf;
+        }
+        let title = c"Título de una ventana suficientemente largo para no ser tagged pointer";
+        let owned = ax::Owned::new(unsafe {
+            CFStringCreateWithCString(ptr::null(), title.as_ptr(), 0x08000100)
+        })
+        .unwrap();
+        let copied = owned_title(owned).unwrap();
+        assert_eq!(copied, title.to_str().unwrap());
+        assert!(owned_title(ax::application(std::process::id() as i32).unwrap()).is_none());
+    }
     #[test]
     fn reading_a_template_does_not_cancel_unrelated_screen_placements() {
         let mut manager = Manager::default();
@@ -5054,44 +5232,45 @@ mod tests {
         assert_eq!(manager.desktops[&space].order, vec![1, 3]);
     }
     #[test]
-    fn hidden_tabs_share_the_slot_frame_and_are_written_once() {
-        let mut manager = Manager::default();
-        let space = (1, 7);
+    fn hidden_members_get_destinations_even_when_the_active_frame_is_settled() {
         let area = rect(10., 41., 1660., 947.);
         let mut desktop = Desktop::configured(Layout::Spiral, None);
         desktop.reconcile(&[1, 2, 3], area, 10.);
         let desktop = desktop
             .proposed_drop(3, DropIntent::Group(1), area, 10.)
             .unwrap();
-        let slot = desktop.frames(area, 10.)[0].1;
-        assert_eq!(desktop.order, vec![3, 2]);
-        manager.desktops.insert(space, desktop);
-        for id in [1, 2, 3] {
-            manager.windows.insert(
-                id,
-                Managed {
-                    pid: std::process::id() as i32,
-                    space,
-                    original: area,
-                    original_area: area,
-                    element: ax::application(std::process::id() as i32).unwrap(),
-                },
-            );
-        }
-        manager.place_hidden_tab(1, slot);
-        assert_eq!(manager.applied[&1], slot);
-        assert!(manager.verifications.contains_key(&1));
-        assert!(!manager.needs_placement(1, slot, Some(slot), manager.settling_space()));
-        // A repeated tick writes nothing new for the same destination.
-        manager.place_hidden_tab(1, slot);
-        assert_eq!(manager.verifications.len(), 1);
-        // A live transition owns the id until it settles.
-        manager.transition_from(3, rect(10., 41., 100., 100.), slot);
-        let transitions = manager.transitions.len();
-        let verifications = manager.verifications.len();
-        manager.place_hidden_tab(3, slot);
-        assert_eq!(manager.transitions.len(), transitions);
-        assert_eq!(manager.verifications.len(), verifications);
+        let frames = desktop.frames(area, 10.);
+        let slot = frames.iter().find(|(id, _)| *id == 3).unwrap().1;
+        let manager = Manager::default();
+        assert!(!manager.needs_placement(3, slot, Some(slot), false));
+        assert_eq!(hidden_tab_frames(&desktop, &frames), vec![(1, slot)]);
+        let mut selected = desktop;
+        selected.select_tab(1);
+        assert_eq!(
+            hidden_tab_frames(&selected, &selected.frames(area, 10.)),
+            vec![(3, slot)]
+        );
+    }
+
+    #[test]
+    fn hidden_placement_rejects_an_element_that_does_not_identify_the_member() {
+        let mut manager = Manager::default();
+        let space = (1, 7);
+        let area = rect(10., 41., 1660., 947.);
+        manager.active_areas.push((space, area));
+        manager.windows.insert(
+            1,
+            Managed {
+                pid: std::process::id() as i32,
+                space,
+                original: area,
+                original_area: area,
+                element: ax::application(std::process::id() as i32).unwrap(),
+            },
+        );
+        manager.place_hidden_tab(1, area);
+        assert!(manager.applied.is_empty());
+        assert!(manager.verifications.is_empty());
     }
 
     #[test]

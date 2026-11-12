@@ -15,27 +15,12 @@ DIST = ROOT / "dist"
 APP = DIST / "AMSpace.app"
 ACCOUNT = "io.github.amartinrojarvis.amspace"
 SIGNER = ROOT / ".cache/sparkle/bin/sign_update"
+KEY_LOOKUP = ROOT / ".cache/sparkle/bin/generate_keys"
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
 
 def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True).strip()
-
-
-def signer_key_args():
-    """Prefer el archivo de clave local; el Llavero solo admite el formato de generate_keys."""
-    try:
-        key = run("security", "find-generic-password", "-a", ACCOUNT, "-w")
-    except subprocess.CalledProcessError:
-        key = ""
-    if not key:
-        candidate = ROOT / ".cache" / "sparkle" / "ed_keys"
-        key = candidate.read_text().strip() if candidate.exists() else ""
-    if not key:
-        return ["--account", ACCOUNT]
-    key_file = DIST / "ed25519.key"
-    key_file.write_text(key)
-    return ["--ed-key-file", key_file]
 
 
 def prepare(*, feed_only=False):
@@ -46,6 +31,11 @@ def prepare(*, feed_only=False):
     if built != expected or version != cargo or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise SystemExit("Versiones desincronizadas: vuelve a compilar el paquete.")
     run("codesign", "--verify", "--deep", "--strict", APP)
+    # Lookup-only mode cannot create or rotate a key. Refuse incompatible
+    # signatures before packaging; the private material stays in the Keychain.
+    key_args = ["--account", ACCOUNT]
+    if run(KEY_LOOKUP, *key_args, "-p") != built["SUPublicEDKey"]:
+        raise SystemExit("La clave pública del Llavero no coincide con SUPublicEDKey.")
     archive = DIST / "AMSpace-universal.zip"
     if feed_only:
         with zipfile.ZipFile(archive) as existing:
@@ -57,7 +47,6 @@ def prepare(*, feed_only=False):
                 raise SystemExit("El ZIP existente no corresponde al paquete compilado.")
     else:
         run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, archive)
-    key_args = signer_key_args()
     signature = run(SIGNER, *key_args, "-p", archive)
     run(SIGNER, *key_args, "--verify", archive, signature)
     ET.register_namespace("sparkle", SPARKLE)

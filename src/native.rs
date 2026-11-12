@@ -6,6 +6,16 @@ use objc2::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 pub type Obj = *mut AnyObject;
+
+/// Opaque CoreGraphics color, with its real Objective-C pointer encoding.
+#[repr(C)]
+pub struct CgColor {
+    _private: [u8; 0],
+}
+unsafe impl objc2::encode::RefEncode for CgColor {
+    const ENCODING_REF: objc2::encode::Encoding =
+        objc2::encode::Encoding::Pointer(&objc2::encode::Encoding::Struct("CGColor", &[]));
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenGeometry {
     pub id: u32,
@@ -121,6 +131,25 @@ mod tests {
     static FIRED: AtomicUsize = AtomicUsize::new(0);
     extern "C-unwind" fn tick(_: Obj, _: Sel, _: Obj) {
         FIRED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn appkit_color_preserves_rgba_through_the_typed_coregraphics_bridge() {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGColorGetNumberOfComponents(color: *const CgColor) -> usize;
+            fn CGColorGetComponents(color: *const CgColor) -> *const f64;
+        }
+        autoreleasepool(|_| unsafe {
+            let source = color(0.2, 0.4, 0.6, 0.8);
+            let native: *const CgColor = msg_send![source, CGColor];
+            assert!(!native.is_null());
+            assert_eq!(CGColorGetNumberOfComponents(native), 4);
+            let rgba = std::slice::from_raw_parts(CGColorGetComponents(native), 4);
+            for (actual, expected) in rgba.iter().zip([0.2, 0.4, 0.6, 0.8]) {
+                assert!((actual - expected).abs() < 0.000001);
+            }
+        });
     }
 
     #[test]
