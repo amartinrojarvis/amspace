@@ -13,6 +13,8 @@ use std::{
 thread_local! {
     static STATE: RefCell<Option<Manager>> = const { RefCell::new(None) };
     static SELECTED: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static CONTROL_EVENTS: RefCell<Vec<(u32, isize)>> = const { RefCell::new(Vec::new()) };
+    static DETACHED: RefCell<Option<u32>> = const { RefCell::new(None) };
 }
 
 extern "C-unwind" fn select(_: Obj, _: Sel, sender: Obj) {
@@ -25,6 +27,161 @@ extern "C-unwind" fn select(_: Obj, _: Sel, sender: Obj) {
             SELECTED.with(|selected| *selected.borrow_mut() = Some(id));
         }
     });
+}
+
+extern "C-unwind" fn drag(_: Obj, _: Sel, recognizer: Obj) {
+    unsafe {
+        let phase: isize = msg_send![recognizer, state];
+        let button: Option<Retained<AnyObject>> = msg_send![recognizer, view];
+        STATE.with(|state| {
+            if let Some(manager) = state.borrow_mut().as_mut() {
+                if let Some(button) = button {
+                    let id: isize = msg_send![&button, tag];
+                    if manager.tab_drag(Retained::as_ptr(&button) as Obj, phase) && phase == 3 {
+                        DETACHED.with(|detached| *detached.borrow_mut() = u32::try_from(id).ok());
+                    }
+                } else {
+                    manager.cancel_tab_drag();
+                }
+            }
+        });
+    }
+}
+
+extern "C-unwind" fn control_click(_: Obj, _: Sel, button: Obj) {
+    let id: isize = unsafe { msg_send![button, tag] };
+    CONTROL_EVENTS.with(|events| events.borrow_mut().push((id as u32, 0)));
+}
+extern "C-unwind" fn control_drag(_: Obj, _: Sel, recognizer: Obj) {
+    unsafe {
+        let phase: isize = msg_send![recognizer, state];
+        let button: Obj = msg_send![recognizer, view];
+        let id: isize = msg_send![button, tag];
+        CONTROL_EVENTS.with(|events| events.borrow_mut().push((id as u32, phase)));
+    }
+}
+
+/// Exercise the actual strip controls with app-local mouse events: no AX,
+/// global input injection, foreign windows, or preference changes.
+pub fn check_controls() -> Result<(), String> {
+    unsafe {
+        let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![app,setActivationPolicy:1isize];
+        let _: () = msg_send![app, finishLaunching];
+        let mut builder = ClassBuilder::new(c"AMSpaceTabControlDiagnostic", class!(NSObject))
+            .ok_or("Clase de diagnóstico duplicada")?;
+        builder.add_method(
+            sel!(selectTileTab:),
+            control_click as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(dragTileTab:),
+            control_drag as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        let target: Retained<AnyObject> = msg_send![builder.register(), new];
+        let names = [
+            ("Primera ventana".into(), None),
+            ("Segunda ventana".into(), None),
+            ("Tercera ventana".into(), None),
+        ];
+        let frame = tab_bar_frame(rect(300., 330., 620., 400.), 620.);
+        let panel = new_overlay(frame, primary_height());
+        let content = strip_content(&names, &[1, 2, 3], 1, frame.size.width, Some(&target));
+        let _: () = msg_send![&panel,setIgnoresMouseEvents:false];
+        let _: () = msg_send![&panel,setContentView:&*content];
+        let _: () = msg_send![&panel, orderFrontRegardless];
+        pump(0.1);
+        let document: Obj = msg_send![&content, documentView];
+        let button: Retained<AnyObject> = msg_send![document,viewWithTag:2isize];
+        let bounds: NSRect = msg_send![&button, bounds];
+        let center: NSPoint = msg_send![&button,convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.),toView:ptr::null::<AnyObject>()];
+        let number: isize = msg_send![&panel, windowNumber];
+        let queue = |events: &[(usize, f64, f64)]| -> Result<(), String> {
+            for (index, (kind, x, y)) in events.iter().enumerate() {
+                let process: Obj = msg_send![class!(NSProcessInfo), processInfo];
+                let uptime: f64 = msg_send![process, systemUptime];
+                let event: Option<Retained<AnyObject>> = msg_send![class!(NSEvent),
+                    mouseEventWithType:*kind,
+                    location:NSPoint::new(center.x + x, center.y + y),
+                    modifierFlags:0usize, timestamp:uptime + index as f64 * 0.01,
+                    windowNumber:number, context:ptr::null::<AnyObject>(),
+                    eventNumber:index as isize, clickCount:1isize, pressure:if *kind == 2 { 0f32 } else { 1f32 }];
+                let event = event.ok_or("No se pudo crear el evento local")?;
+                let _: () = msg_send![app,postEvent:&*event,atStart:false];
+            }
+            Ok(())
+        };
+        queue(&[(1, 0., 0.), (2, 0., 0.)])?;
+        pump(0.15);
+        let click = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if click != [(2, 0)] {
+            return Err(format!("El clic no seleccionó una sola vez: {click:?}"));
+        }
+        queue(&[(1, 0., 0.), (6, 1., 1.), (2, 1., 1.)])?;
+        pump(0.15);
+        let jitter = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if jitter != [(2, 0)] {
+            return Err(format!("Un movimiento mínimo dejó de ser clic: {jitter:?}"));
+        }
+        queue(&[(1, 0., 0.), (6, 15., -8.), (6, 45., -28.), (2, 45., -28.)])?;
+        pump(0.2);
+        let dragged = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if dragged.iter().any(|(id, phase)| *id != 2 || *phase == 0)
+            || dragged.iter().filter(|(_, phase)| *phase == 1).count() != 1
+            || dragged.iter().filter(|(_, phase)| *phase == 3).count() != 1
+        {
+            return Err(format!(
+                "Arrastre sin comienzo/fin único o con clic espurio: {dragged:?}"
+            ));
+        }
+        let _: () = msg_send![&button,performClick:ptr::null::<AnyObject>()];
+        let programmatic = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if programmatic != [(2, 0)] {
+            return Err(format!(
+                "La selección quedó bloqueada tras arrastrar: {programmatic:?}"
+            ));
+        }
+        queue(&[(1, 0., 0.), (6, 15., -8.)])?;
+        pump(0.1);
+        let gestures: Obj = msg_send![&button, gestureRecognizers];
+        let gesture: Obj = msg_send![gestures,objectAtIndex:0usize];
+        let _: () = msg_send![gesture,setEnabled:false];
+        queue(&[(2, 15., -8.)])?;
+        pump(0.1);
+        let cancelled = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if !cancelled.contains(&(2, 4)) || cancelled.iter().any(|(_, phase)| matches!(phase, 0 | 3))
+        {
+            return Err(format!("Cancelación nativa incorrecta: {cancelled:?}"));
+        }
+        let _: () = msg_send![gesture,setEnabled:true];
+        queue(&[(1, 0., 0.), (2, 0., 0.)])?;
+        pump(0.15);
+        let next_click = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        if next_click != [(2, 0)] {
+            return Err(format!(
+                "El clic posterior a cancelar quedó bloqueado: {next_click:?}"
+            ));
+        }
+        let bounds: NSRect = msg_send![&content, bounds];
+        let bitmap: Option<Retained<AnyObject>> =
+            msg_send![&content,bitmapImageRepForCachingDisplayInRect:bounds];
+        let bitmap = bitmap.ok_or("Sin bitmap de la tira")?;
+        let _: () = msg_send![&content,cacheDisplayInRect:bounds,toBitmapImageRep:&*bitmap];
+        let properties: Obj = msg_send![class!(NSDictionary), dictionary];
+        let data: Option<Retained<AnyObject>> =
+            msg_send![&bitmap,representationUsingType:4usize,properties:properties];
+        let data = data.ok_or("Sin PNG de la tira")?;
+        std::fs::create_dir_all(".cache").map_err(|error| error.to_string())?;
+        let saved: bool = msg_send![&data,writeToFile:&*NSString::from_str(".cache/tab-controls.png"),atomically:true];
+        let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
+        if !saved {
+            return Err("No se pudo guardar la captura".into());
+        }
+        println!(
+            "PASS: clic, umbral de arrastre, inicio/fin único y cancelación AppKit; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+        );
+        Ok(())
+    }
 }
 
 struct Fixture(Child);
@@ -161,6 +318,10 @@ pub fn check() -> Result<(), String> {
             sel!(selectTileTab:),
             select as extern "C-unwind" fn(Obj, Sel, Obj),
         );
+        builder.add_method(
+            sel!(dragTileTab:),
+            drag as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
         msg_send![builder.register(), new]
     };
     let mut manager = Manager::with_tab_target(target);
@@ -199,7 +360,7 @@ pub fn check() -> Result<(), String> {
     }
     desktop = arrival_proposal(&desktop, ids[2], Some(intent), area, None)
         .ok_or("Agrupación rechazada")?;
-    let frames = desktop.frames(area, 10.);
+    let frames = desktop.window_frames(area, 10.);
     for (id, frame) in &frames {
         if !ax::set_frame(manager.windows[id].element.0, *frame) {
             return Err("AX rechazó el destino activo".into());
@@ -262,11 +423,94 @@ pub fn check() -> Result<(), String> {
                 let mut state = state.borrow_mut();
                 let manager = state.as_mut().unwrap();
                 let desktop = manager.desktops[&space].clone();
-                let frames = desktop.frames(area, 10.);
+                let frames = desktop.window_frames(area, 10.);
                 manager.draw_strips(&desktop, &frames, primary_height(), 0);
             })
         });
     }
+    let detached = ids[0];
+    let button: Retained<AnyObject> = STATE.with(|state| unsafe {
+        let state = state.borrow();
+        let manager = state.as_ref().unwrap();
+        let scroll: Obj = msg_send![&*manager.strips[0].panel, contentView];
+        let document: Obj = msg_send![scroll, documentView];
+        let button: Option<Retained<AnyObject>> = msg_send![document,viewWithTag:detached as isize];
+        button.ok_or("Sin botón para arrastrar")
+    })?;
+    let point = unsafe {
+        let bounds: NSRect = msg_send![&button, bounds];
+        let local: NSPoint = msg_send![&button,convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.),toView:ptr::null::<AnyObject>()];
+        let window: Obj = msg_send![&button, window];
+        let screen: NSPoint = msg_send![window,convertPointToScreen:local];
+        NSPoint::new(screen.x, primary_height() - screen.y)
+    };
+    post_mouse(1, point)?;
+    post_mouse(6, NSPoint::new(point.x + 20., point.y + 12.))?;
+    post_mouse(6, NSPoint::new(point.x + 80., point.y + 40.))?;
+    post_mouse(2, NSPoint::new(point.x + 80., point.y + 40.))?;
+    pump(0.2);
+    if DETACHED.with(|value| *value.borrow()) != Some(detached) {
+        return Err("Arrastrar la pestaña no confirmó su separación".into());
+    }
+    let detached_frames = STATE.with(|state| -> Result<Vec<(u32, NSRect)>, String> {
+        let state = state.borrow();
+        let manager = state.as_ref().unwrap();
+        let desktop = &manager.desktops[&space];
+        if desktop.tab_role(detached).is_some() || desktop.order.len() != 3 {
+            return Err("La pestaña arrastrada no tiene un hueco independiente".into());
+        }
+        let frames = desktop.window_frames(area, 10.);
+        for (id, frame) in &frames {
+            if !ax::set_frame(manager.windows[id].element.0, *frame) {
+                return Err("AX rechazó el hueco independiente".into());
+            }
+        }
+        Ok(frames)
+    })?;
+    pump(0.15);
+    for (id, frame) in detached_frames {
+        let element = ax::window_for_id(pid, id).ok_or("Fixture separado desaparecido")?;
+        let (position, size) = ax::geometry(element.0).ok_or("Sin geometría separada")?;
+        if !near(NSRect::new(position, size), frame) {
+            return Err(format!("La ventana separada {id} no llegó a su hueco"));
+        }
+    }
+    let logical_slot = STATE.with(|state| -> Result<NSRect, String> {
+        let mut state = state.borrow_mut();
+        let manager = state.as_mut().unwrap();
+        let mut desktop = arrival_proposal(
+            &manager.desktops[&space],
+            detached,
+            Some(DropIntent::Group(ids[2])),
+            area,
+            None,
+        )
+        .ok_or("No se pudo restaurar el grupo para comprobar cierre")?;
+        desktop.select_tab(ids[2]);
+        let frames = desktop.window_frames(area, 10.);
+        let logical_slot = desktop
+            .frames(area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == ids[2])
+            .unwrap()
+            .1;
+        for (id, frame) in frames
+            .iter()
+            .copied()
+            .chain(hidden_tab_frames(&desktop, &frames))
+        {
+            if !ax::set_frame(manager.windows[&id].element.0, frame) {
+                return Err("No se pudo restaurar la geometría agrupada".into());
+            }
+        }
+        manager.desktops.insert(space, desktop.clone());
+        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0);
+        manager.trim_overlays(count, 0);
+        Ok(logical_slot)
+    })?;
+    println!(
+        "PASS: arrastre de pestaña con CGEvent, separación y geometría independiente verificadas."
+    );
     STATE.with(|state| {
         let state = state.borrow();
         let manager = state.as_ref().unwrap();
@@ -298,10 +542,10 @@ pub fn check() -> Result<(), String> {
         let manager = state.as_mut().unwrap();
         manager.forget_window(closing);
         let desktop = manager.desktops[&space].clone();
-        let frames = desktop.frames(area, 10.);
+        let frames = desktop.window_frames(area, 10.);
         if !frames
             .iter()
-            .any(|(id, frame)| *id == ids[0] && near(*frame, slot))
+            .any(|(id, frame)| *id == ids[0] && near(*frame, logical_slot))
         {
             return Err("Cerrar la activa no conservó el hueco de su hermana".into());
         }

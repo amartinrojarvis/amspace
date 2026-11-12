@@ -1,12 +1,11 @@
-AMSpace 0.9.7 — correcciones de agrupación en pestañas.
+AMSpace 0.9.8 — separar pestañas y barra exterior.
 
-- Corrige dos errores de propiedad de memoria en títulos e iconos de las tiras: el texto AX se copia antes de liberar su objeto y el icono prestado se retiene correctamente.
-- Corrige el tipo Objective-C del puente `CGColor`, que provocaba un panic al dibujar la tira en compilaciones de depuración.
-- Las pestañas ya son botones: seleccionan, enfocan y elevan su ventana tras comprobar su identidad y escritorio. Las tiras largas se desplazan horizontalmente sin desbordar el hueco.
-- Los miembros del grupo reciben su geometría aunque la ventana activa ya esté colocada. Las selecciones externas se reflejan en el modelo sin crear otro hueco.
-- Corrige el mantenimiento de grupos al separar, cerrar, intercambiar y sustituir pestañas nativas, preservando las divisiones ajustadas.
-- La preparación de actualizaciones usa exclusivamente el Llavero, sin exportar la clave privada a archivos.
+- Arrastra cualquier pestaña y suelta para convertirla en una ventana independiente dentro del mosaico. La previsualización muestra el destino; cancelar conserva la agrupación.
+- Barra fina de 22 puntos, centrada por encima de la ventana, con fondo oscuro translúcido y separación de 4 puntos. Reserva su espacio sin tapar controles de las aplicaciones.
+- Máximo de pestañas por grupo configurable en Ajustes → Mosaico: 5 por defecto, entre 2 y 20. Reducirlo no deshace los grupos existentes.
+- Los movimientos menores de 6 puntos siguen siendo clics. Cancelar un arrastre no genera una selección accidental ni bloquea los clics posteriores.
+- Cambiar de plantilla conserva los grupos y su pestaña activa. Al quedar una sola ventana se recupera el espacio de la barra.
 
-Publicada por autorización del usuario con una limitación pendiente: completar la prueba de interacción nativa con Accesibilidad. El render y las regresiones del modelo no demuestran la selección AX ni el arrastre físico.
+Verificación: 222 pruebas correctas, controles AppKit y ajustes comprobados, compilación universal. Sigue pendiente la prueba completa sobre ventanas de otras aplicaciones con Accesibilidad autorizada; no se acredita arrastre físico ni varios monitores reales.
 
-Las agrupaciones son estado de sesión. El paquete es universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las funciones privadas dependen de su disponibilidad real. La evidencia ejecutada y los límites físicos están en docs/VALIDATION.md del repositorio.
+Las agrupaciones son estado de sesión. Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las funciones privadas dependen de su disponibilidad real.

@@ -29,7 +29,7 @@ pub enum Selection {
 }
 /// Mirror of the acceptance test used by `apply_custom_distribution`.
 fn fits_area(desktop: &Desktop, area: NSRect) -> bool {
-    let frames = desktop.frames(area, 10.);
+    let frames = desktop.window_frames(area, 10.);
     !frames.is_empty()
         && frames.len() == desktop.order.len()
         && frames.iter().all(|(_, r)| {
@@ -418,7 +418,7 @@ impl Picker {
                 plate(root, thumb, 0.75, false, 4.);
                 if let Some(desktop) = template.preview() {
                     let scale = thumb.size.width / area.size.width;
-                    for (_, frame) in desktop.frames(area, 10.) {
+                    for (_, frame) in desktop.window_frames(area, 10.) {
                         plate(
                             root,
                             rect(
@@ -562,7 +562,7 @@ impl Picker {
             };
             if let Some(desktop) = proposed {
                 let area = self.context.area;
-                for (index, (_, frame)) in desktop.frames(area, 10.).iter().enumerate() {
+                for (index, (_, frame)) in desktop.window_frames(area, 10.).iter().enumerate() {
                     let r = rect(
                         frame.origin.x - area.origin.x,
                         area.size.height - (frame.origin.y - area.origin.y) - frame.size.height,

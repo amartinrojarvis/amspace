@@ -429,7 +429,7 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = 570. + rows.saturating_sub(2) as f64 * 108.;
+    let height = 610. + rows.saturating_sub(2) as f64 * 108.;
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
@@ -2213,7 +2213,8 @@ impl App {
             let simple_row = animation_row - 40.;
             let preview_row = simple_row - 40.;
             let groups_row = preview_row - 40.;
-            let actions_row = groups_row - 44.;
+            let max_row = groups_row - 40.;
+            let actions_row = max_row - 44.;
             label(
                 root,
                 rect(18., animation_row, width - 90., 22.),
@@ -2282,6 +2283,24 @@ impl App {
                 65,
                 crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0,
             );
+            label(
+                root,
+                rect(18., max_row, width - 300., 22.),
+                "Máximo de pestañas (2–20)",
+                13.,
+                0.,
+                false,
+            );
+            let max_field = alloc_view(
+                class!(NSTextField),
+                rect(width - 118., max_row - 2., 60., 26.),
+            );
+            let _: () = msg_send![&max_field,setStringValue:&*NSString::from_str(&crate::tile_manager::max_group_tabs(defaults).to_string())];
+            let _: () = msg_send![&max_field,setAccessibilityLabel:&*NSString::from_str("Máximo de pestañas")];
+            let _: () = msg_send![&max_field,setTarget:target];
+            let _: () = msg_send![&max_field,setAction:sel!(change:)];
+            let _: () = msg_send![&max_field,setTag:66isize];
+            let _: () = msg_send![root,addSubview:&*max_field];
             button(
                 root,
                 rect(15., actions_row, (width - 36.) / 2., 28.),
@@ -3551,6 +3570,25 @@ Otras apps pueden tener atajos propios no detectables.",
                     // Only future drops consult the flag; live trees keep their strips.
                     self.tile_manager.invalidate();
                 }
+                66 => {
+                    let input: *mut NSString = msg_send![sender, stringValue];
+                    let value = input
+                        .as_ref()
+                        .and_then(|text| text.to_string().trim().parse::<isize>().ok())
+                        .filter(|value| (2..=20).contains(value));
+                    if let Some(value) = value {
+                        self.feedback("");
+                        crate::tile_manager::save(
+                            Retained::as_ptr(&self.defaults) as Obj,
+                            "tile.groups.max",
+                            value,
+                        );
+                        // Only admission changes; existing groups keep their members.
+                        self.tile_manager.invalidate();
+                    } else {
+                        self.feedback("El máximo de pestañas admite valores enteros entre 2 y 20.");
+                    }
+                }
                 64 => {
                     let state: isize = msg_send![sender, state];
                     self.flash_enabled = state == 1;
@@ -4257,6 +4295,34 @@ extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
         }
     });
 }
+/// One pan gesture per tab button: the manager owns validation, the
+/// provisional frame and the final detachment of the dragged leaf.
+extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
+    let state: isize = unsafe { msg_send![sender, state] };
+    let view: Option<Retained<AnyObject>> = unsafe { msg_send![sender, view] };
+    with_app(|a| {
+        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+            a.tile_manager.cancel_tab_drag();
+            return;
+        }
+        let Some(view) = view else {
+            a.tile_manager.cancel_tab_drag();
+            return;
+        };
+        if a.tile_manager
+            .tab_drag(Retained::as_ptr(&view) as Obj, state)
+        {
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            a.update_tile_timer();
+            // Only the released gesture moves focus; the preview keeps it.
+            if state == 3 {
+                a.settle_focus();
+            }
+        } else {
+            a.tile_manager.cancel_tab_drag();
+        }
+    });
+}
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
@@ -4456,6 +4522,7 @@ pub fn run() {
             (sel!(hover:), hover),
             (sel!(tileTick:), tile_tick),
             (sel!(selectTileTab:), select_tile_tab),
+            (sel!(dragTileTab:), drag_tile_tab),
             (sel!(layoutChoice:), layout_choice),
             (sel!(screensChanged:), screens_changed),
             (sel!(desktopLifecycle:), desktop_lifecycle),

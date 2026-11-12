@@ -2,6 +2,9 @@
 use crate::native::rect;
 use objc2_foundation::{NSPoint, NSRect};
 
+pub const TAB_BAR_HEIGHT: f64 = 22.;
+pub const TAB_BAR_GAP: f64 = 4.;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {
     #[default]
@@ -126,6 +129,31 @@ impl Group {
         }
         self.active = self.active.min(self.members.len().saturating_sub(1));
         self.leaf()
+    }
+    /// An AppKit tab keeps its position in the strip when its window id is
+    /// replaced; only the leaf identity in the tree follows. A fresh id that
+    /// repeats its own sibling collapses to the one tab owning the slot.
+    fn rename(&mut self, old: u32, new: u32) {
+        if !self.members.contains(&old) {
+            return;
+        }
+        let mut members: Vec<u32> = Vec::with_capacity(self.members.len());
+        let mut active = self.active.min(self.members.len() - 1);
+        for (index, id) in self.members.iter().copied().enumerate() {
+            let id = if id == old { new } else { id };
+            if let Some(existing) = members.iter().position(|w| *w == id) {
+                if self.active == index {
+                    active = existing;
+                }
+                continue;
+            }
+            if self.active == index {
+                active = members.len();
+            }
+            members.push(id);
+        }
+        self.members = members;
+        self.active = active.min(self.members.len().saturating_sub(1));
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -638,16 +666,30 @@ impl Node {
         }
     }
 }
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Desktop {
     pub layout: Layout,
     pub order: Vec<u32>,
     pub grid: Option<(u32, u32)>,
+    pub max_group_tabs: usize,
     resized: Option<(Layout, Vec<u32>, Node)>,
     minimums: std::collections::HashMap<u32, objc2_foundation::NSSize>,
     /// Tabbed groups, in creation order. Only `members[active]` owns a slot in
     /// `order`, so the tree keeps exactly one leaf per group.
     groups: Vec<Group>,
+}
+impl Default for Desktop {
+    fn default() -> Self {
+        Self {
+            layout: Layout::default(),
+            order: Vec::new(),
+            grid: None,
+            max_group_tabs: 5,
+            resized: None,
+            minimums: Default::default(),
+            groups: Vec::new(),
+        }
+    }
 }
 impl Desktop {
     pub fn configured(layout: Layout, grid: Option<(u32, u32)>) -> Self {
@@ -658,22 +700,35 @@ impl Desktop {
         }
     }
     /// Selecting an AppKit tab changes its NSWindow ID, not its layout slot.
+    /// Both the strip entry and, when the id owned the slot, the tree leaf
+    /// follow the new id, so a native tab switch never leaves a freed id.
     pub fn replace_window(&mut self, old: u32, new: u32) -> bool {
-        if !self.order.contains(&old)
-            || self.order.contains(&new)
-            || self.groups.iter().any(|group| group.members.contains(&new))
-        {
+        let owns_slot = self.order.contains(&old);
+        let grouped = self.groups.iter().any(|group| group.members.contains(&old));
+        if !owns_slot && !grouped {
+            return false;
+        }
+        // Strict identity: any other owner of `new` is another window. Only
+        // the id being replaced may repeat, and then inside its own strip.
+        let clash = new != old
+            && (self.order.contains(&new)
+                || self
+                    .groups
+                    .iter()
+                    .any(|group| group.members.contains(&new) && !group.members.contains(&old)));
+        if clash {
             return false;
         }
         if let Some(minimum) = self.minimums.remove(&old) {
             self.minimums.insert(new, minimum);
         }
         for group in &mut self.groups {
-            for member in &mut group.members {
-                if *member == old {
-                    *member = new;
-                }
-            }
+            group.rename(old, new);
+        }
+        self.groups.retain(|group| !group.members.is_empty());
+        if !owns_slot {
+            // A hidden tab never owned a leaf: the tree is untouched.
+            return true;
         }
         for id in &mut self.order {
             if *id == old {
@@ -1008,6 +1063,25 @@ impl Desktop {
         area: NSRect,
         gap: f64,
     ) -> Option<Self> {
+        if let DropIntent::Group(target) = intent {
+            if !self.order.contains(&target) {
+                return None;
+            }
+            if let Some((members, _)) = self.tab_strip(target) {
+                // Selecting an existing member is not admission, even after
+                // the preference has been lowered below the group's size.
+                if members.contains(&id) {
+                    let mut result = self.clone();
+                    result.select_tab(id)?;
+                    return Some(result);
+                }
+                if members.len() >= self.max_group_tabs {
+                    return None;
+                }
+            } else if self.max_group_tabs < 2 {
+                return None;
+            }
+        }
         let mut result = self.clone();
         if !matches!(intent, DropIntent::Group(_)) && self.tab_role(id).is_some() {
             let minimum = result.minimums.get(&id).copied();
@@ -1141,7 +1215,7 @@ impl Desktop {
         if !self.center_tree(&mut tree, area, gap, None, None) {
             return None;
         }
-        if !self.minimums.is_empty() {
+        if !self.minimums.is_empty() || self.groups.iter().any(|group| group.members.len() > 1) {
             let minimum = |id, vertical| self.window_minimum(id, vertical);
             if tree.minimum_with(true, gap, &minimum) > area.size.width + 0.001
                 || tree.minimum_with(false, gap, &minimum) > area.size.height + 0.001
@@ -1258,6 +1332,11 @@ impl Desktop {
                     .iter()
                     .map(|id| minimum(*id))
                     .fold(fallback, f64::max)
+                    + if !vertical && members.len() > 1 {
+                        TAB_BAR_HEIGHT + TAB_BAR_GAP
+                    } else {
+                        0.
+                    }
             },
         )
     }
@@ -1639,16 +1718,11 @@ impl Desktop {
         self.resized = Some((self.layout, self.order.clone(), tree));
     }
     pub fn reset_template(&mut self, layout: Layout, area: NSRect) {
-        let ids = self.order.clone();
-        let grid = self.grid;
-        let minimums = self.minimums.clone();
-        *self = Self {
-            layout,
-            grid,
-            minimums,
-            ..Default::default()
-        };
-        self.reconcile_at(&ids, area, 10., None);
+        // Reset geometry, not membership: grouped leaves must keep their owner,
+        // and the configured admission limit is independent of the template.
+        self.layout = layout;
+        self.resized = None;
+        self.fit(area, 10.);
     }
     pub fn frames(&self, r: NSRect, gap: f64) -> Vec<(u32, NSRect)> {
         let mut out = vec![];
@@ -1657,10 +1731,42 @@ impl Desktop {
         }
         out
     }
+    fn header_height(&self, id: u32) -> f64 {
+        if self
+            .tab_strip(id)
+            .is_some_and(|(members, _)| members.len() > 1)
+        {
+            TAB_BAR_HEIGHT + TAB_BAR_GAP
+        } else {
+            0.
+        }
+    }
+    /// Physical AX rectangle; the logical slot also contains the tab header.
+    pub fn window_frame(&self, id: u32, mut slot: NSRect) -> NSRect {
+        let header = self.header_height(id);
+        slot.origin.y += header;
+        slot.size.height -= header;
+        slot
+    }
+    /// Convert a native resize back to the tree's logical coordinate space.
+    pub fn slot_frame(&self, id: u32, mut window: NSRect) -> NSRect {
+        let header = self.header_height(id);
+        window.origin.y -= header;
+        window.size.height += header;
+        window
+    }
+    pub fn window_frames(&self, area: NSRect, gap: f64) -> Vec<(u32, NSRect)> {
+        let mut frames = self.frames(area, gap);
+        for (id, frame) in &mut frames {
+            *frame = self.window_frame(*id, *frame);
+        }
+        frames
+    }
     fn frame_tree(&self, r: NSRect, gap: f64) -> Option<Node> {
         let mut tree = self.effective_tree(r, gap)?;
         if let Some((cols, rows)) = self.grid {
-            if self.minimums.is_empty() {
+            if self.minimums.is_empty() && !self.groups.iter().any(|group| group.members.len() > 1)
+            {
                 tree.snap(r, r, cols.clamp(2, 240), rows.clamp(2, 60), gap);
             } else {
                 tree.snap_with(
@@ -3830,7 +3936,7 @@ mod tests {
         assert!(desktop.replace_window(4, 7));
         assert_eq!(desktop.tab_strip(7), Some((&[2, 7][..], 1)));
         assert_eq!(desktop.tab_role(4), None);
-        assert!(!desktop.replace_window(7, 2));
+        assert!(!desktop.replace_window(7, 1));
         assert_eq!(desktop.select_tab(2), Some(7));
         assert_eq!(
             desktop
@@ -3942,6 +4048,115 @@ mod tests {
     }
 
     #[test]
+    fn tab_limit_rejects_admission_atomically_but_keeps_existing_members() {
+        let area = rect(0., 30., 2200., 1400.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 6], area, 10.);
+        for id in 2..=5 {
+            desktop = desktop
+                .proposed_drop(id, DropIntent::Group(id - 1), area, 10.)
+                .unwrap();
+        }
+        desktop = desktop
+            .proposed_drop(7, DropIntent::Group(6), area, 10.)
+            .unwrap();
+        let before = desktop.clone();
+        for id in [6, 7, 8] {
+            assert!(
+                desktop
+                    .proposed_drop(id, DropIntent::Group(5), area, 10.)
+                    .is_none()
+            );
+            assert!(desktop == before);
+        }
+        desktop.max_group_tabs = 2;
+        let selected = desktop
+            .proposed_drop(1, DropIntent::Group(5), area, 10.)
+            .unwrap();
+        assert_eq!(selected.tab_strip(1), Some((&[1, 2, 3, 4, 5][..], 0)));
+        assert_eq!(selected.tab_strip(7), Some((&[6, 7][..], 1)));
+        assert!(
+            selected
+                .proposed_drop(6, DropIntent::Group(1), area, 10.)
+                .is_none()
+        );
+        let detached = selected
+            .proposed_drop(3, DropIntent::Screen(Zone::Right), area, 10.)
+            .unwrap();
+        assert_eq!(detached.tab_role(3), None);
+        assert_eq!(detached.tab_strip(1).unwrap().0, &[1, 2, 4, 5]);
+        desktop.max_group_tabs = 6;
+        let extended = desktop
+            .proposed_drop(8, DropIntent::Group(5), area, 10.)
+            .unwrap();
+        assert_eq!(extended.tab_strip(8).unwrap().0, &[1, 2, 3, 4, 5, 8]);
+        desktop.reset_template(Layout::Grid, area);
+        assert!(
+            desktop
+                .proposed_drop(8, DropIntent::Group(5), area, 10.)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn tab_headers_reserve_physical_space_and_singletons_reclaim_it() {
+        for area in [
+            rect(0., 30., 2200., 1400.),
+            rect(-1000., -400., 1200., 2000.),
+        ] {
+            for layout in Layout::ALL {
+                for grid in [None, Some((18, 12))] {
+                    let mut desktop = Desktop::configured(layout, grid);
+                    desktop.reconcile(&[1, 2, 3], area, 10.);
+                    desktop = desktop
+                        .proposed_drop(4, DropIntent::Group(2), area, 10.)
+                        .unwrap();
+                    let logical = desktop.frames(area, 10.);
+                    let physical = desktop.window_frames(area, 10.);
+                    for ((id, slot), (physical_id, window)) in logical.iter().zip(&physical) {
+                        assert_eq!(id, physical_id);
+                        assert_eq!(desktop.slot_frame(*id, *window), *slot);
+                        assert_eq!(window.origin.x, slot.origin.x);
+                        assert_eq!(window.size.width, slot.size.width);
+                        assert!(window.size.height >= 90.);
+                        if *id == 4 {
+                            assert_eq!(
+                                window.origin.y,
+                                slot.origin.y + TAB_BAR_HEIGHT + TAB_BAR_GAP
+                            );
+                            assert_eq!(desktop.window_frame(2, *slot), *window);
+                        } else {
+                            assert_eq!(window, slot);
+                        }
+                    }
+                    desktop.remove(4);
+                    assert_eq!(desktop.window_frames(area, 10.), desktop.frames(area, 10.));
+                    assert_layout_invariants(&desktop, area);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tab_headers_are_included_in_minimum_height_even_without_app_constraints() {
+        for grid in [None, Some((12, 12))] {
+            let mut desktop = Desktop::configured(Layout::Spiral, grid);
+            let short = rect(-400., 30., 400., 100.);
+            desktop.reconcile(&[1], short, 10.);
+            assert!(
+                desktop
+                    .proposed_drop(2, DropIntent::Group(1), short, 10.)
+                    .is_none()
+            );
+            let exact = rect(-400., 30., 400., 90. + TAB_BAR_HEIGHT + TAB_BAR_GAP);
+            let grouped = desktop
+                .proposed_drop(2, DropIntent::Group(1), exact, 10.)
+                .unwrap();
+            assert_eq!(grouped.window_frames(exact, 10.)[0].1.size.height, 90.);
+        }
+    }
+
+    #[test]
     fn a_group_respects_hidden_minimums_without_reflow_on_selection() {
         use objc2_foundation::NSSize;
         let area = rect(0., 0., 1600., 1000.);
@@ -3956,18 +4171,168 @@ mod tests {
         ]);
         desktop.set_minimum_sizes(&minimums);
         desktop.fit(area, 10.);
-        let before = desktop.frames(area, 10.);
+        let before = desktop.window_frames(area, 10.);
         let slot = before.iter().find(|(id, _)| *id == 4).unwrap().1;
         assert!(slot.size.width >= 900. && slot.size.height >= 300.);
         desktop.select_tab(2);
         desktop.set_minimum_sizes(&minimums);
         desktop.fit(area, 10.);
-        let selected = desktop.frames(area, 10.);
+        let selected = desktop.window_frames(area, 10.);
         assert_eq!(
             selected.iter().map(|(_, frame)| frame).collect::<Vec<_>>(),
             before.iter().map(|(_, frame)| frame).collect::<Vec<_>>()
         );
         assert_eq!(desktop.minimums[&4], minimums[&4]);
         assert_layout_invariants(&desktop, area);
+    }
+
+    #[test]
+    fn replacing_a_hidden_tab_id_renames_only_its_strip_entry() {
+        let area = rect(0., 30., 1800., 1100.);
+        let mut desktop = Desktop::configured(Layout::Grid, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let joined = desktop
+            .proposed_drop(4, DropIntent::Group(2), area, 10.)
+            .unwrap();
+        let before = joined.frames(area, 10.);
+        let mut desktop = joined.clone();
+        // The id of a hidden tab is replaced by AppKit without touching the
+        // slot owner: the strip follows and no new leaf appears.
+        assert!(desktop.replace_window(2, 9));
+        assert_eq!(desktop.tab_strip(9), Some((&[9, 4][..], 1)));
+        assert_eq!(desktop.tab_role(2), None);
+        assert_eq!(desktop.tab_role(9), Some(false));
+        assert_eq!(desktop.tab_role(4), Some(true));
+        assert_eq!(desktop.order, vec![1, 4, 3]);
+        let frames = desktop.frames(area, 10.);
+        assert_eq!(
+            frames.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
+            before.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+        );
+        // The renamed entry still swaps into the very same rect.
+        assert_eq!(desktop.select_tab(9), Some(4));
+        assert_eq!(
+            desktop
+                .frames(area, 10.)
+                .iter()
+                .map(|(_, r)| *r)
+                .collect::<Vec<_>>(),
+            before.iter().map(|(_, r)| *r).collect::<Vec<_>>()
+        );
+        assert_layout_invariants(&desktop, area);
+        // A second native id change follows the same strip entry again.
+        assert!(desktop.replace_window(9, 77));
+        assert_eq!(desktop.tab_strip(4), Some((&[77, 4][..], 0)));
+        assert_eq!(desktop.tab_role(9), None);
+        assert_eq!(desktop.order, vec![1, 77, 3]);
+        // An id unknown to the model changes nothing.
+        assert!(!desktop.replace_window(98, 4));
+        assert_eq!(desktop.order, vec![1, 77, 3]);
+    }
+
+    #[test]
+    fn same_strip_id_swap_collapses_the_duplicate_and_other_strips_stay_exact() {
+        let area = rect(0., 0., 1600., 1000.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let mut desktop = desktop
+            .proposed_drop(4, DropIntent::Group(2), area, 10.)
+            .unwrap();
+        let slot = desktop
+            .frames(area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == 4)
+            .unwrap()
+            .1;
+        assert!(desktop.replace_window(4, 7));
+        assert_eq!(desktop.tab_strip(7), Some((&[2, 7][..], 1)));
+        // The compositor reuses the sibling's id for the same tab: the strip
+        // collapses to one entry and the leaf keeps the same rectangle.
+        assert!(desktop.replace_window(7, 2));
+        assert_eq!(desktop.tab_strip(2), Some((&[2][..], 0)));
+        assert_eq!(desktop.tab_role(7), None);
+        assert_eq!(desktop.tab_role(2), Some(true));
+        assert_eq!(desktop.order, vec![1, 2, 3]);
+        assert_eq!(
+            desktop
+                .frames(area, 10.)
+                .into_iter()
+                .find(|(id, _)| *id == 2)
+                .unwrap()
+                .1,
+            slot
+        );
+        assert_layout_invariants(&desktop, area);
+        // A fresh id owned by another strip belongs to a different window.
+        let mut other = desktop
+            .proposed_drop(5, DropIntent::Group(3), area, 10.)
+            .unwrap();
+        let order_before = other.order.clone();
+        let groups_before: Vec<_> = other
+            .groups()
+            .iter()
+            .map(|g| (g.members.clone(), g.active))
+            .collect();
+        assert!(!other.replace_window(2, 5));
+        assert_eq!(other.order, order_before);
+        let groups_after: Vec<_> = other
+            .groups()
+            .iter()
+            .map(|g| (g.members.clone(), g.active))
+            .collect();
+        assert_eq!(groups_after, groups_before);
+    }
+
+    #[test]
+    fn template_reset_keeps_strips_one_leaf_and_no_reinsertion() {
+        let area = rect(200., -900., 2400., 1400.);
+        for (from_layout, to_layout) in [
+            (Layout::Grid, Layout::Centered),
+            (Layout::CenteredWide, Layout::Spiral),
+            (Layout::Spiral, Layout::VerticalMaster),
+        ] {
+            let mut desktop = Desktop::configured(from_layout, None);
+            desktop.reconcile(&[1, 2, 3, 4], area, 10.);
+            let mut desktop = desktop
+                .proposed_drop(5, DropIntent::Group(3), area, 10.)
+                .unwrap();
+            let order_before = desktop.order.clone();
+            let strip = desktop
+                .tab_strip(5)
+                .map(|(members, active)| (members.to_vec(), active))
+                .unwrap();
+            assert_eq!(strip, (vec![3, 5], 1));
+            desktop.reset_template(to_layout, area);
+            // Same slots: the hidden member was neither reinserted nor lost.
+            assert_eq!(desktop.order, order_before);
+            assert_eq!(
+                desktop
+                    .tab_strip(5)
+                    .map(|(members, active)| (members.to_vec(), active)),
+                Some(strip)
+            );
+            assert_eq!(desktop.tab_role(3), Some(false));
+            assert_eq!(desktop.tab_role(5), Some(true));
+            let after = desktop.frames(area, 10.);
+            assert_layout_invariants(&desktop, area);
+            // The strip's hidden tab still swaps into the rebuilt leaf.
+            let leaf = after.iter().find(|(id, _)| *id == 5).unwrap().1;
+            assert_eq!(desktop.select_tab(3), Some(5));
+            assert_eq!(
+                desktop
+                    .frames(area, 10.)
+                    .into_iter()
+                    .find(|(id, _)| *id == 3)
+                    .unwrap()
+                    .1,
+                leaf
+            );
+            // Closing both tabs frees exactly one slot for the whole strip.
+            assert_eq!(desktop.remove(3), Some(5));
+            assert_eq!(desktop.remove(5), None);
+            assert!(desktop.groups().is_empty());
+            assert_eq!(desktop.order, vec![1, 2, 4]);
+            assert_layout_invariants(&desktop, area);
+        }
     }
 }

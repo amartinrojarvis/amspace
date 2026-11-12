@@ -54,7 +54,7 @@ pub fn custom_image(desktop: &Desktop, size: NSSize) -> Retained<AnyObject> {
         let image: Retained<AnyObject> = msg_send![image,initWithSize:NSSize::new(220.,116.)];
         let _: () = msg_send![&image, lockFocus];
         let blue: *mut AnyObject = msg_send![class!(NSColor), systemBlueColor];
-        for (_, frame) in desktop.frames(screen, 10.) {
+        for (_, frame) in desktop.window_frames(screen, 10.) {
             let fill: *mut AnyObject = msg_send![blue,colorWithAlphaComponent:0.24f64];
             let _: () = msg_send![fill, setFill];
             let _: () = msg_send![blue, setStroke];
