@@ -11,6 +11,8 @@
 - Alcance físico: controles y paneles propios en Apple Silicon. No se alteraron permisos, documentos, preferencias funcionales ni la app instalada. La comprobación AX con otras apps sigue pendiente del permiso documentado; tampoco se demuestra compatibilidad física Intel/multipantalla ni coste GPU/WindowServer.
 - Candidata con identidad **0.9.11/build 66**: `check.sh` correcto (227 pruebas, ocho ignoradas), bundle universal y diagnóstico AppKit desde el release correctos. `prepare-release.py` firmó y verificó ZIP y catálogo usando el Llavero, sin exportar claves. SHA-256 del ZIP: `8b790c6555755cc0790f4855bf2f3d539d3823f298e324ba1eb372b46a616145`. Las versiones publicadas anteriores permanecen inmutables.
 - [Release 0.9.11](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.11) sobre `a30fba7`, con [CI macOS correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43251811086). Descargas HTTPS sin autenticación desde GitHub Releases y `updates/0.9.11/AMSpace-universal.zip` idénticas al ZIP firmado.
+- Catálogo anunciado en `6dcf0db`, copiando el generado sin edición manual. Ambas variantes de la URL exacta de `SUFeedURL` —sin compresión y con las cabeceras comprimidas de Sparkle 0.9.10— coinciden byte a byte con el catálogo firmado de 0.9.11.
+- Una sonda temporal con la API pública de Sparkle 2.10.1 y el `hostBundle` instalado 0.9.10 confirmó «Sparkle detecta actualización: 0.9.11, build 66». Solo cambió `SULastCheckTime`; las preferencias funcionales permanecen intactas. Sonda retirada tras verificar. No se instaló la actualización ni se verificaron la UI de Buscar ahora o el reinicio.
 
 ## Publicación 0.9.10/build 65: alineación y presentación ligera de pestañas
 
