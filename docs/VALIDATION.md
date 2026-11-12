@@ -1,4 +1,4 @@
-## Candidata 0.9.9/build 64: cierre individual desde la pestaña
+## Publicación 0.9.9/build 64: cierre individual desde la pestaña
 
 - Cada pestaña muestra una × con área de 22 pt, tooltip y etiqueta accesible. El control de cierre no comparte el reconocedor de arrastre ni el área de selección.
 - `Manager::close_tab` valida contexto e identidad, respeta foco protegido, selecciona el miembro oculto para mostrar confirmaciones y solicita el cierre normal mediante `AXCloseButton`/`AXPress`. No elimina miembros anticipadamente, fuerza la terminación ni responde a avisos de guardar.
@@ -7,6 +7,9 @@
 - El usuario autoriza publicar el cierre individual como 0.9.9/build 64, manteniendo explícito el límite AX descrito abajo. El ZIP publicado de 0.9.8 permanece inmutable.
 - Límite: el cierre AX real y los diálogos de guardar de aplicaciones ajenas siguen sin prueba física, por el permiso de Accesibilidad pendiente. Se amplió el fixture nativo para pulsar el control real, pero no se ejecutó ese diagnóstico. No se modificaron documentos, permisos ni preferencias del usuario.
 - Verificación de la candidata con identidad 0.9.9/build 64: `check.sh` correcto (224 pruebas, ocho ignoradas), bundle universal arm64/x86_64 y `--check-tab-controls` desde el ejecutable release correctos. `prepare-release.py` firmó y verificó ZIP y catálogo usando el Llavero sin exportar la clave. SHA-256 del ZIP: `17efc1b0ae7e6cf65ddf6bdcd7d62bcc9b62c649295d9f3da0c8280e8df637fa`.
+- [Release 0.9.9](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.9) sobre `e4fbf86`, con [CI macOS correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43210212605). Descargas HTTPS sin autenticación desde GitHub Releases y `updates/0.9.9/AMSpace-universal.zip` idénticas al ZIP firmado.
+- Catálogo anunciado en `6d3932c` copiando el generado, sin edición manual. Ambas variantes de la URL exacta de `SUFeedURL` (sin compresión y con cabeceras comprimidas de Sparkle 0.9.7) coinciden byte a byte con el catálogo firmado.
+- Una sonda temporal con Sparkle 2.10.1 y el `hostBundle` instalado 0.9.7/build 62 confirmó «Sparkle detecta actualización: 0.9.9, build 64». Se retiró tras comprobar que solo cambió `SULastCheckTime`, sin modificar preferencias funcionales. No se sustituyó la app instalada ni se verificó el flujo de instalación/reinicio o la UI de Buscar ahora.
 
 ## Publicación 0.9.8/build 63: separación por arrastre y barra exterior
 
