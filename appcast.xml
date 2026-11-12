@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.9</title><pubDate>Thu, 12 Nov 2026 11:33:28 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.9 — cerrar ventanas desde las pestañas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.10</title><pubDate>Thu, 12 Nov 2026 14:23:41 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.10 — pestañas integradas y alineación configurable.
 
-- Cada pestaña incorpora una × para solicitar el cierre de su ventana mediante el botón nativo de la aplicación.
-- El cierre no fuerza la salida ni descarta documentos. La pestaña permanece hasta confirmar que la ventana se ha cerrado; los avisos de guardar quedan bajo control de la aplicación.
-- Una pestaña oculta se selecciona antes de solicitar el cierre para mostrar cualquier confirmación. Los diálogos protegidos conservan el foco.
-- Cerrar, seleccionar y arrastrar tienen áreas independientes. Soltar fuera de la × cancela sin ejecutar otra acción.
-- Se mantienen la barra exterior, la separación por arrastre y el máximo de pestañas configurable de 0.9.8.
+- Pestañas alineadas a la izquierda por defecto, con 8 puntos de margen. Puedes centrarlas desde Ajustes → Mosaico → Alineación de pestañas.
+- Fondo oscuro translúcido limitado a la tira, borde redondeado tenue, sombra nativa y mayor contraste para la pestaña activa.
+- La × permanece visible en la activa y aparece al pasar el cursor por las demás, sin desplazar títulos ni cambiar el área de cierre.
+- Se mantienen la barra exterior de 22 puntos, la separación por arrastre, el cierre normal de ventanas y el máximo de pestañas configurable.
+- Seguimiento del cursor mediante eventos nativos, sin nuevos sondeos, temporizadores ni animaciones continuas. Se reutilizan las vistas y se eliminan vectores temporales de anchos.
 
-Verificación: 224 pruebas correctas, controles AppKit y compilación universal. El cierre AX real y los diálogos de guardar de otras aplicaciones siguen pendientes de prueba física con Accesibilidad autorizada.
+Verificación: 224 pruebas correctas, controles AppKit, ajustes claros/oscuros y compilación universal. Una muestra aislada de 20,5 s en reposo registró 0,0 % de CPU a la resolución de muestreo; no acredita coste cero ni mide GPU/WindowServer o múltiples grupos. Sigue pendiente el cierre AX y los avisos de guardar de aplicaciones ajenas.
 
-Las agrupaciones son estado de sesión. Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las ideas de reordenación, menú contextual, atajos y pestañas fijadas no forman parte de esta versión.
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.9/AMSpace-universal.zip" length="2745499" type="application/octet-stream" sparkle:version="64" sparkle:shortVersionString="0.9.9" sparkle:edSignature="X8hI9a7AUQou/j9qqHZjN5RPKqowxvDZMTMWQn35zY9Tr4BVaxy699uz2LA1YZFwvqihOyusqwau8UJJyHE6DQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: QctIL86Y83UlEI82/pVaTfvUpWGmDS/Qkn8sjYFQ2w+o89SHtC/kvppF+ERnLlVEpmIvlsLHaFkbIriwL/34Cw==
-length: 2319
+Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior.
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.10/AMSpace-universal.zip" length="2756272" type="application/octet-stream" sparkle:version="65" sparkle:shortVersionString="0.9.10" sparkle:edSignature="erdVQ+kWOc69eKAAImbbyaUZxuFrtyt9emi7NpKU6dN8kcz6Wfc/TearZO2MPiLq7eSb2v7nXvI+JyQjQXQMAg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: U9IUHH48XXTZEsUdz8DPcwcLasjU/+Hwxpopw/pmUlI/y3VDQ5SXjD9eKWybjv1LjNF8ouKr7/CRP2I59bhrBw==
+length: 2379
 -->
