@@ -244,3 +244,5 @@ La versión 0.9.3 añade los **grupos de pestañas del mosaico**: al soltar en e
 La versión 0.9.4 dibuja esas tiras y los iconos de intención. Cada grupo muestra su tarjeta con el icono y el título de cada pestaña, con la activa resaltada, y el destino del arrastre se anuncia con un símbolo del sistema: apilado o intercambio.
 
 La versión 0.9.5 refresca la línea de permiso de Accesibilidad en cada cuadro del temporizador de la ventana de Ajustes, de modo que el círculo se pone lleno nada más conceder el permiso en Preferencias del Sistema, sin tocar ningún control.
+
+La versión 0.9.6 endurece dos caminos sin cambiar el aspecto: `Updater::new()` devuelve `None` cuando falta cualquiera de los objetos intermedios del `Sparkle.framework` (el arranque directo del ejecutable ya no aborta) y la firma de cada tira conserva el icono retenido, no el puntero autoreleased, así que el temporizador del mosaico no reutiliza memoria liberada.

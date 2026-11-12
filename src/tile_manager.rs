@@ -605,7 +605,7 @@ impl MembershipGrace {
 /// A reused strip panel and the content last painted into it.
 struct TabStrip {
     panel: Retained<AnyObject>,
-    signature: Vec<(String, Option<Obj>)>,
+    signature: Vec<(String, Option<Retained<AnyObject>>)>,
     active: usize,
     built: NSRect,
     frame: NSRect,
@@ -1269,7 +1269,8 @@ impl Manager {
             let Some((_, slot)) = frames.iter().find(|(id, _)| *id == leaf) else {
                 continue;
             };
-            let mut tabs: Vec<(String, Option<Obj>)> = Vec::with_capacity(group.members.len());
+            let mut tabs: Vec<(String, Option<Retained<AnyObject>>)> =
+                Vec::with_capacity(group.members.len());
             for id in &group.members {
                 let (pid, element) = self
                     .windows
@@ -1294,10 +1295,22 @@ impl Manager {
                         }
                         strip.frame = panel;
                     }
-                    if strip.signature != tabs
-                        || strip.active != group.active
-                        || strip.built != panel
-                    {
+                    let same = strip.signature.len() == tabs.len()
+                        && strip
+                            .signature
+                            .iter()
+                            .zip(tabs.iter())
+                            .all(|((n, i), (m, j))| {
+                                n == m
+                                    && match (i, j) {
+                                        (None, None) => true,
+                                        (Some(a), Some(b)) => {
+                                            Retained::as_ptr(a) == Retained::as_ptr(b)
+                                        }
+                                        _ => false,
+                                    }
+                            });
+                    if !same || strip.active != group.active || strip.built != panel {
                         let root = unsafe { strip_content(&tabs, group.active, total) };
                         unsafe {
                             let _: () = msg_send![&*strip.panel,setContentView:&*root];
@@ -3583,7 +3596,7 @@ unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
 /// One pill per member: the app's own icon plus its window title, with the
 /// visible tab lit by the accent plate behind it.
 unsafe fn strip_content(
-    tabs: &[(String, Option<Obj>)],
+    tabs: &[(String, Option<Retained<AnyObject>>)],
     active: usize,
     total: f64,
 ) -> Retained<AnyObject> {
@@ -3601,12 +3614,11 @@ unsafe fn strip_content(
             }
             let inner = x + 6.;
             let mut text_x = inner;
-            let icon: Option<Obj> = *icon;
             if let Some(icon) = icon {
                 let image: Allocated<AnyObject> = msg_send![class!(NSImageView), alloc];
                 let image: Retained<AnyObject> =
                     msg_send![image,initWithFrame:rect(inner, 7., 12., 12.)];
-                let _: () = msg_send![&image,setImage:icon];
+                let _: () = msg_send![&image,setImage:&**icon];
                 let _: () = msg_send![&image,setImageScaling:3isize];
                 let _: () = msg_send![&root,addSubview:&*image];
                 text_x = inner + 16.;
@@ -3675,7 +3687,7 @@ fn app_name(pid: i32) -> Option<String> {
     }
 }
 
-fn app_icon(pid: i32) -> Option<Obj> {
+fn app_icon(pid: i32) -> Option<Retained<AnyObject>> {
     unsafe {
         let app: *mut AnyObject =
             msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:pid];
@@ -3683,7 +3695,7 @@ fn app_icon(pid: i32) -> Option<Obj> {
             return None;
         }
         let icon: *mut AnyObject = msg_send![app, icon];
-        (!icon.is_null()).then_some(icon)
+        Retained::from_raw(icon)
     }
 }
 #[test]

@@ -17,12 +17,21 @@ impl Updater {
     pub fn new() -> Option<Self> {
         unsafe {
             let bundle: Obj = msg_send![class!(NSBundle), mainBundle];
+            if bundle.is_null() {
+                return None;
+            }
             let frameworks: Obj = msg_send![bundle, privateFrameworksPath];
             if frameworks.is_null() {
                 return None;
             }
             let path: Obj = msg_send![frameworks, stringByAppendingPathComponent:&*NSString::from_str("Sparkle.framework")];
+            if path.is_null() {
+                return None;
+            }
             let framework: Obj = msg_send![class!(NSBundle), bundleWithPath:path];
+            if framework.is_null() {
+                return None;
+            }
             let mut error: Obj = ptr::null_mut();
             let loaded: bool = msg_send![framework, loadAndReturnError:&mut error];
             if !loaded {
