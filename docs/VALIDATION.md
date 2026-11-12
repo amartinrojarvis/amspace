@@ -1,3 +1,10 @@
+## Revisión 0.9.5/build 60: la etiqueta de Accesibilidad se refresca sola
+
+- `settings_refresh` (temporizador de 1 s de la ventana de Ajustes) llama ahora a `refresh_permission()` sin condición de página, junto a las refrescadas por índice. La etiqueta vive en `root`, fuera del `NSTabView`, así que es visible en las cinco páginas y un solo cálculo por cuadro la deja al día. Concedido el permiso en Preferencias del Sistema, el círculo pasa de `○` a `●` en el siguiente cuadro, sin tocar ningún control.
+- Las otras cuatro llamadas a `refresh_permission()` se conservan: apertura de Ajustes, tras cada cambio de preferencia y los dos casos de la batería de pruebas del modelo. El temporizador sigue siendo uno solo y se invalida al ocultar la ventana, así que no hay sondeo permanente.
+- `./scripts/check.sh`: formato, Clippy sin warnings, plist y **203 pruebas** correctas, ocho diagnósticos/benchmarks excluidos.
+- Límite: monitor único 1680×1050, sin confirmación física del par con pantalla vertical.
+
 ## Revisión 0.9.4/build 59: tiras dibujadas e iconos de intención
 
 - `draw_strips` pinta una `NSVisualEffectView` por tira, con una píldora por miembro: `NSImageView` con `NSRunningApplication.icon` y un `NSTextField` de una sola línea con `AXTitle` (o `localizedName` si ese falta), y la pestaña visible sobre la placa de acento. La lista `strips` se reutiliza por posición; el contenido solo se reconstruye cuando cambia la firma `(título, icono)`, el índice visible o el rect, así que los 60 fotogramas por segundo de un gesto no generan subvistas nuevas. `show_badge` reutiliza un único panel para el símbolo del destino (`square.topthird.inset.filled` en `Group`, `arrow.left.arrow.right` en `Window`/`Screen`) y `trim_overlays` retira, en el mismo cuadro, las tiras y el badge que el modelo ya no usa. `hide_preview` oculta los tres conjuntos; `hide_preview_panels` solo retira los rectángulos de destino, de modo que el símbolo no interrumpe a la tira durante el gesto. Ninguna de las dos listas añade temporizador: siguen el ritmo ya existente de `tick_interval`.

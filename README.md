@@ -242,3 +242,5 @@ La versión también protege los diseños editados al cambiar de Space en otro m
 La versión 0.9.3 añade los **grupos de pestañas del mosaico**: al soltar en el tercio superior de un hueco, la ventana arrastrada pasa a ese hueco como una pestaña más y las dos comparten un único hueco del árbol, sin dividir la pantalla ni perder las proporciones ajustadas. El interruptor **Agrupar como pestañas** (Mosaico, clave `tile.groups`, ausente = 1) activa o desactiva esa intención para los gestos siguientes. Cerrar la pestaña visible promueve a su hermana en el mismo rectángulo, y seleccionar una pestaña nativa sigue reutilizando la hoja ya existente.
 
 La versión 0.9.4 dibuja esas tiras y los iconos de intención. Cada grupo muestra su tarjeta con el icono y el título de cada pestaña, con la activa resaltada, y el destino del arrastre se anuncia con un símbolo del sistema: apilado o intercambio.
+
+La versión 0.9.5 refresca la línea de permiso de Accesibilidad en cada cuadro del temporizador de la ventana de Ajustes, de modo que el círculo se pone lleno nada más conceder el permiso en Preferencias del Sistema, sin tocar ningún control.

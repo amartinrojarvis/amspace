@@ -3901,6 +3901,7 @@ extern "C-unwind" fn settings_refresh(_: Obj, _: Sel, _: Obj) {
         }
         let page: Obj = msg_send![a.tabs, selectedTabViewItem];
         let index: isize = msg_send![a.tabs, indexOfTabViewItem:page];
+        a.refresh_permission();
         if index == 1 {
             a.refresh_spaces();
         }
