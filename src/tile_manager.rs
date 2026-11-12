@@ -779,6 +779,35 @@ impl Manager {
         self.select_tab_model(id);
         true
     }
+    /// Close is a native request, never an optimistic removal from the tree.
+    pub fn close_tab(&mut self, id: u32) -> bool {
+        if self.presentation_blocks_input()
+            || self.space_quiet_until.is_some()
+            || self.space_reentry.is_some()
+            || !ax::trusted()
+            || crate::focus::secure_input()
+            || self.drag.is_some()
+            || self.tab_drag.is_some()
+            || self.pending_drop.is_some()
+        {
+            return false;
+        }
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        // Do not move focus away from a save dialog. Explicitly selecting a
+        // hidden member before closing makes its own confirmation visible.
+        if ax::focus_is_protected(window.pid) || !self.activate_tab(id) {
+            return false;
+        }
+        if !ax::request_close(self.windows[&id].element.0) {
+            self.last_error = Some("La aplicación no ha aceptado cerrar esta ventana.".into());
+            return false;
+        }
+        self.cancel_window_placement(id);
+        self.invalidate();
+        true
+    }
 
     fn select_tab_model(&mut self, id: u32) {
         let Some(space) = self.windows.get(&id).map(|w| w.space) else {
@@ -4098,11 +4127,11 @@ unsafe fn strip_content(
             }
             caption(
                 parent,
-                rect(text_x, 4., (x + width - 6. - text_x).max(8.), 14.),
+                rect(text_x, 4., (x + width - 28. - text_x).max(8.), 14.),
                 name,
                 index == active,
             );
-            let button = alloc_view(tab_button_class(), rect(x, 0., width, TAB_BAR_HEIGHT));
+            let button = alloc_view(tab_button_class(), rect(x, 0., width - 22., TAB_BAR_HEIGHT));
             let _: () = msg_send![&button,setTransparent:true];
             let _: () = msg_send![&button,setTitle:&*NSString::from_str(name)];
             let _: () = msg_send![&button,setToolTip:&*NSString::from_str(name)];
@@ -4117,6 +4146,23 @@ unsafe fn strip_content(
             let _: () = msg_send![&gesture,setAllowedTouchTypes:0usize];
             let _: () = msg_send![&button,addGestureRecognizer:&*gesture];
             let _: () = msg_send![&root,addSubview:&*button];
+            // A sibling control, not a child of the draggable/selectable button.
+            let close = alloc_view(
+                class!(NSButton),
+                rect(x + width - 22., 0., 22., TAB_BAR_HEIGHT),
+            );
+            let _: () = msg_send![&close,setBordered:false];
+            let _: () = msg_send![&close,setTitle:&*NSString::from_str("×")];
+            let font: Obj = msg_send![class!(NSFont),systemFontOfSize:14f64];
+            let _: () = msg_send![&close,setFont:font];
+            let label = NSString::from_str(&format!("Cerrar ventana: {name}"));
+            let _: () = msg_send![&close,setAccessibilityLabel:&*label];
+            let _: () = msg_send![&close,setToolTip:&*label];
+            // Reserve -1 (NSView's default tag); selection tags are positive.
+            let _: () = msg_send![&close,setTag:-(*id as isize) - 2];
+            let _: () = msg_send![&close,setTarget:target];
+            let _: () = msg_send![&close,setAction:sel!(closeTileTab:)];
+            let _: () = msg_send![&root,addSubview:&*close];
             x = plate.origin.x + plate.size.width + 4.;
         }
         let scroll = alloc_view(class!(NSScrollView), rect(0., 0., width, TAB_BAR_HEIGHT));
@@ -4165,7 +4211,7 @@ unsafe fn badge_content(symbol: &str) -> Retained<AnyObject> {
 }
 
 fn tab_width(name: &str) -> f64 {
-    (name.chars().count() as f64 * 6.4 + 34.).clamp(30., 220.)
+    (name.chars().count() as f64 * 6.4 + 56.).clamp(52., 242.)
 }
 
 fn strip_width(widths: &[f64]) -> f64 {
@@ -7309,6 +7355,25 @@ mod tests {
             released_at: None,
         });
         manager
+    }
+
+    #[test]
+    fn rejected_close_preserves_group_members_and_pending_geometry() {
+        for id in [1, 4] {
+            let mut manager = pending_tab_detach(id);
+            let before = manager.desktops[&(1, 7)].clone();
+            let applied = manager.applied.clone();
+            // A recognized drag must never turn into a close action.
+            assert!(!manager.close_tab(id));
+            assert!(manager.desktops[&(1, 7)] == before);
+            assert_eq!(manager.applied, applied);
+            manager.cancel_tab_drag();
+            // The fixture's AX element identifies an application, not this
+            // window. No close can be sent even when AX is authorized.
+            assert!(!manager.close_tab(id));
+            assert!(manager.desktops[&(1, 7)] == before);
+            assert_eq!(manager.applied, applied);
+        }
     }
 
     #[test]

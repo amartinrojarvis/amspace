@@ -4295,6 +4295,26 @@ extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
         }
     });
 }
+extern "C-unwind" fn close_tile_tab(_: Obj, _: Sel, sender: Obj) {
+    let tag: isize = unsafe { msg_send![sender, tag] };
+    let Some(id) = tag
+        .checked_add(2)
+        .and_then(isize::checked_neg)
+        .and_then(|id| u32::try_from(id).ok())
+    else {
+        return;
+    };
+    with_app(|a| {
+        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+            return;
+        }
+        if a.tile_manager.close_tab(id) {
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            a.update_tile_timer();
+        }
+        // No settle_focus here: the application's save dialog owns focus.
+    });
+}
 /// One pan gesture per tab button: the manager owns validation, the
 /// provisional frame and the final detachment of the dragged leaf.
 extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
@@ -4522,6 +4542,7 @@ pub fn run() {
             (sel!(hover:), hover),
             (sel!(tileTick:), tile_tick),
             (sel!(selectTileTab:), select_tile_tab),
+            (sel!(closeTileTab:), close_tile_tab),
             (sel!(dragTileTab:), drag_tile_tab),
             (sel!(layoutChoice:), layout_choice),
             (sel!(screensChanged:), screens_changed),

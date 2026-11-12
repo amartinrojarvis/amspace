@@ -1,11 +1,11 @@
-AMSpace 0.9.8 — separar pestañas y barra exterior.
+AMSpace 0.9.9 — cerrar ventanas desde las pestañas.
 
-- Arrastra cualquier pestaña y suelta para convertirla en una ventana independiente dentro del mosaico. La previsualización muestra el destino; cancelar conserva la agrupación.
-- Barra fina de 22 puntos, centrada por encima de la ventana, con fondo oscuro translúcido y separación de 4 puntos. Reserva su espacio sin tapar controles de las aplicaciones.
-- Máximo de pestañas por grupo configurable en Ajustes → Mosaico: 5 por defecto, entre 2 y 20. Reducirlo no deshace los grupos existentes.
-- Los movimientos menores de 6 puntos siguen siendo clics. Cancelar un arrastre no genera una selección accidental ni bloquea los clics posteriores.
-- Cambiar de plantilla conserva los grupos y su pestaña activa. Al quedar una sola ventana se recupera el espacio de la barra.
+- Cada pestaña incorpora una × para solicitar el cierre de su ventana mediante el botón nativo de la aplicación.
+- El cierre no fuerza la salida ni descarta documentos. La pestaña permanece hasta confirmar que la ventana se ha cerrado; los avisos de guardar quedan bajo control de la aplicación.
+- Una pestaña oculta se selecciona antes de solicitar el cierre para mostrar cualquier confirmación. Los diálogos protegidos conservan el foco.
+- Cerrar, seleccionar y arrastrar tienen áreas independientes. Soltar fuera de la × cancela sin ejecutar otra acción.
+- Se mantienen la barra exterior, la separación por arrastre y el máximo de pestañas configurable de 0.9.8.
 
-Verificación: 222 pruebas correctas, controles AppKit y ajustes comprobados, compilación universal. Sigue pendiente la prueba completa sobre ventanas de otras aplicaciones con Accesibilidad autorizada; no se acredita arrastre físico ni varios monitores reales.
+Verificación: 224 pruebas correctas, controles AppKit y compilación universal. El cierre AX real y los diálogos de guardar de otras aplicaciones siguen pendientes de prueba física con Accesibilidad autorizada.
 
-Las agrupaciones son estado de sesión. Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las funciones privadas dependen de su disponibilidad real.
+Las agrupaciones son estado de sesión. Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior. Las ideas de reordenación, menú contextual, atajos y pestañas fijadas no forman parte de esta versión.

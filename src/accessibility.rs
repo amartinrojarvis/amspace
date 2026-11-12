@@ -36,6 +36,7 @@ unsafe extern "C" {
     fn AXUIElementSetMessagingTimeout(element: Cf, seconds: f32) -> i32;
     fn AXUIElementSetAttributeValue(element: Cf, name: Cf, value: Cf) -> i32;
     fn AXUIElementPerformAction(element: Cf, action: Cf) -> i32;
+    fn AXUIElementGetTypeID() -> usize;
     fn AXValueGetTypeID() -> usize;
     fn AXValueGetValue(value: Cf, kind: u32, out: *mut c_void) -> bool;
     fn AXObserverCreate(
@@ -236,6 +237,20 @@ pub fn focus_is_protected(pid: i32) -> bool {
 }
 pub fn raise(window: Cf) -> bool {
     unsafe { AXUIElementPerformAction(window, cf(ns_string!("AXRaise"))) == 0 }
+}
+/// Request the window's normal close action. Success is not confirmation:
+/// the application may display a save dialog or cancel the close.
+pub fn request_close(window: Cf) -> bool {
+    if window.is_null() || unsafe { CFGetTypeID(window) != AXUIElementGetTypeID() } {
+        return false;
+    }
+    let Some(button) = attr(window, "AXCloseButton") else {
+        return false;
+    };
+    if unsafe { CFGetTypeID(button.0) != AXUIElementGetTypeID() } || !flag(button.0, "AXEnabled") {
+        return false;
+    }
+    unsafe { AXUIElementPerformAction(button.0, cf(ns_string!("AXPress"))) == 0 }
 }
 pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
@@ -717,6 +732,11 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn close_rejects_missing_and_non_ax_objects() {
+        assert!(!request_close(ptr::null()));
+        assert!(!request_close(cf(ns_string!("not an AX window"))));
+    }
     #[test]
     #[ignore = "CPU-only AX key preparation benchmark; run with --release --ignored --nocapture"]
     fn benchmark_attribute_keys() {

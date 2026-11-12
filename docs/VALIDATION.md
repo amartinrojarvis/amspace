@@ -1,3 +1,13 @@
+## Candidata 0.9.9/build 64: cierre individual desde la pestaña
+
+- Cada pestaña muestra una × con área de 22 pt, tooltip y etiqueta accesible. El control de cierre no comparte el reconocedor de arrastre ni el área de selección.
+- `Manager::close_tab` valida contexto e identidad, respeta foco protegido, selecciona el miembro oculto para mostrar confirmaciones y solicita el cierre normal mediante `AXCloseButton`/`AXPress`. No elimina miembros anticipadamente, fuerza la terminación ni responde a avisos de guardar.
+- `./scripts/check.sh`: **224 pruebas correctas**, ocho ignoradas, formato, Clippy sin warnings y plist válido. Nuevas regresiones: rechazo de objetos no AX y conservación del grupo/geometría ante un cierre rechazado o un gesto activo.
+- `--check-tab-controls`: clics sobre las tres × dirigidos solo a su miembro; soltar fuera cancela sin cerrar, seleccionar ni separar. Se conservan las comprobaciones de selección, arrastre y cancelación. La primera prueba detectó que el tag -1 coincidía con el tag predeterminado del contenedor; se reservó ese valor y la repetición final pasó. Captura `.cache/tab-controls.png` inspeccionada: las tres × son visibles y no cubren títulos.
+- El usuario autoriza publicar el cierre individual como 0.9.9/build 64, manteniendo explícito el límite AX descrito abajo. El ZIP publicado de 0.9.8 permanece inmutable.
+- Límite: el cierre AX real y los diálogos de guardar de aplicaciones ajenas siguen sin prueba física, por el permiso de Accesibilidad pendiente. Se amplió el fixture nativo para pulsar el control real, pero no se ejecutó ese diagnóstico. No se modificaron documentos, permisos ni preferencias del usuario.
+- Verificación de la candidata con identidad 0.9.9/build 64: `check.sh` correcto (224 pruebas, ocho ignoradas), bundle universal arm64/x86_64 y `--check-tab-controls` desde el ejecutable release correctos. `prepare-release.py` firmó y verificó ZIP y catálogo usando el Llavero sin exportar la clave. SHA-256 del ZIP: `17efc1b0ae7e6cf65ddf6bdcd7d62bcc9b62c649295d9f3da0c8280e8df637fa`.
+
 ## Publicación 0.9.8/build 63: separación por arrastre y barra exterior
 
 - Arrastrar cualquier pestaña previsualiza y confirma un hueco independiente del mosaico. La cancelación no cambia el modelo; el mouse-up global anterior a `Ended` no pierde la confirmación. Identidad, Space, área y selección obsoletos invalidan la propuesta.

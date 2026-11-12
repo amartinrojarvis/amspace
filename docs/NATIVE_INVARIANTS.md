@@ -68,6 +68,8 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 - Arrastrar una pestaña exige 6 puntos de movimiento. Hasta soltar solo hay previsualización: la confirmación vuelve a validar identidad, pertenencia, área y modelo de origen. Cancelar, cambiar de contexto o perder el callback final no separa ninguna ventana ni genera un clic de selección. El mouse-up global puede preceder a `Ended` de AppKit: no cancelar inmediatamente por ese orden de entrega.
 - `tile.groups.max` limita nuevas admisiones, no la selección ni la separación de miembros existentes. Un rechazo no modifica el grupo de origen ni el destino; reducir el límite no disuelve grupos.
 - Los títulos AX se convierten a `String` antes de liberar su resultado `Copy`; se comprueba el tipo CF. El getter `NSRunningApplication.icon` devuelve un objeto prestado: usar un retorno `Option<Retained<AnyObject>>`, nunca adoptar su puntero con `from_raw`.
+- La × de una pestaña solicita `AXPress` sobre su `AXCloseButton` habilitado; nunca termina el proceso ni envía un atajo global de cierre. La identidad y pertenencia se validan como en la selección. Un diálogo protegido bloquea la petición; no se roba su foco después. Aceptar la acción AX no confirma el cierre: el miembro permanece hasta la reconciliación nativa, incluidos los avisos de guardar cancelados.
+- Selección/arrastre y cierre usan controles hermanos con áreas independientes. Los tags de cierre evitan `-1`, valor predeterminado de `NSView`; soltar fuera de la × no debe seleccionar, separar ni cerrar una pestaña.
 
 ## Evidencia antes de afirmar compatibilidad
 

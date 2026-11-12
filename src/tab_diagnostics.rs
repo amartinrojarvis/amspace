@@ -15,6 +15,7 @@ thread_local! {
     static SELECTED: RefCell<Option<u32>> = const { RefCell::new(None) };
     static CONTROL_EVENTS: RefCell<Vec<(u32, isize)>> = const { RefCell::new(Vec::new()) };
     static DETACHED: RefCell<Option<u32>> = const { RefCell::new(None) };
+    static CLOSE_REQUESTED: RefCell<Option<u32>> = const { RefCell::new(None) };
 }
 
 extern "C-unwind" fn select(_: Obj, _: Sel, sender: Obj) {
@@ -47,6 +48,27 @@ extern "C-unwind" fn drag(_: Obj, _: Sel, recognizer: Obj) {
         });
     }
 }
+extern "C-unwind" fn close(_: Obj, _: Sel, sender: Obj) {
+    let tag: isize = unsafe { msg_send![sender, tag] };
+    let Some(id) = tag
+        .checked_add(2)
+        .and_then(isize::checked_neg)
+        .and_then(|id| u32::try_from(id).ok())
+    else {
+        return;
+    };
+    STATE.with(|state| {
+        if let Some(manager) = state.borrow_mut().as_mut()
+            && manager.close_tab(id)
+        {
+            CLOSE_REQUESTED.with(|requested| *requested.borrow_mut() = Some(id));
+        }
+    });
+}
+extern "C-unwind" fn control_close(_: Obj, _: Sel, sender: Obj) {
+    let tag: isize = unsafe { msg_send![sender, tag] };
+    CONTROL_EVENTS.with(|events| events.borrow_mut().push(((-tag - 2) as u32, 6)));
+}
 
 extern "C-unwind" fn control_click(_: Obj, _: Sel, button: Obj) {
     let id: isize = unsafe { msg_send![button, tag] };
@@ -77,6 +99,10 @@ pub fn check_controls() -> Result<(), String> {
         builder.add_method(
             sel!(dragTileTab:),
             control_drag as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(closeTileTab:),
+            control_close as extern "C-unwind" fn(Obj, Sel, Obj),
         );
         let target: Retained<AnyObject> = msg_send![builder.register(), new];
         let names = [
@@ -162,6 +188,29 @@ pub fn check_controls() -> Result<(), String> {
                 "El clic posterior a cancelar quedó bloqueado: {next_click:?}"
             ));
         }
+        for id in 1..=3isize {
+            let close: Retained<AnyObject> = msg_send![document,viewWithTag:-id - 2];
+            let bounds: NSRect = msg_send![&close, bounds];
+            let point: NSPoint = msg_send![&close,convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.),toView:ptr::null::<AnyObject>()];
+            let x = point.x - center.x;
+            let y = point.y - center.y;
+            queue(&[(1, x, y), (2, x, y)])?;
+            pump(0.15);
+            let events = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+            if events != [(id as u32, 6)] {
+                return Err(format!(
+                    "Cerrar la pestaña {id} seleccionó/arrastró otro control: {events:?}"
+                ));
+            }
+            queue(&[(1, x, y), (6, x, y - 40.), (2, x, y - 40.)])?;
+            pump(0.15);
+            let events = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+            if !events.is_empty() {
+                return Err(format!(
+                    "Soltar fuera de cerrar ejecutó una acción: {events:?}"
+                ));
+            }
+        }
         let bounds: NSRect = msg_send![&content, bounds];
         let bitmap: Option<Retained<AnyObject>> =
             msg_send![&content,bitmapImageRepForCachingDisplayInRect:bounds];
@@ -178,7 +227,7 @@ pub fn check_controls() -> Result<(), String> {
             return Err("No se pudo guardar la captura".into());
         }
         println!(
-            "PASS: clic, umbral de arrastre, inicio/fin único y cancelación AppKit; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+            "PASS: selección, arrastre/cancelación y cierre individual sin acciones cruzadas; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
         );
         Ok(())
     }
@@ -317,6 +366,10 @@ pub fn check() -> Result<(), String> {
         builder.add_method(
             sel!(selectTileTab:),
             select as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(closeTileTab:),
+            close as extern "C-unwind" fn(Obj, Sel, Obj),
         );
         builder.add_method(
             sel!(dragTileTab:),
@@ -521,15 +574,20 @@ pub fn check() -> Result<(), String> {
     // Keep the actual surface visible briefly for an external screenshot.
     pump(3.);
     let closing = ids[2];
-    let element = ax::window_for_id(pid, closing).ok_or("Pestaña de cierre no encontrada")?;
-    let close = ax::attr(element.0, "AXCloseButton").ok_or("Sin botón nativo de cierre")?;
-    #[link(name = "ApplicationServices", kind = "framework")]
-    unsafe extern "C" {
-        fn AXUIElementPerformAction(element: ax::Cf, action: ax::Cf) -> i32;
-    }
-    let action = NSString::from_str("AXPress");
-    if unsafe { AXUIElementPerformAction(close.0, Retained::as_ptr(&action).cast()) } != 0 {
-        return Err("El cierre nativo fue rechazado".into());
+    STATE.with(|state| {
+        let state = state.borrow();
+        let panel = &state.as_ref().unwrap().strips[0].panel;
+        let content: Obj = unsafe { msg_send![&**panel, contentView] };
+        let document: Obj = unsafe { msg_send![content, documentView] };
+        let button: Retained<AnyObject> =
+            unsafe { msg_send![document,viewWithTag:-(closing as isize) - 2] };
+        drop(state);
+        unsafe {
+            let _: () = msg_send![&button,performClick:ptr::null::<AnyObject>()];
+        }
+    });
+    if CLOSE_REQUESTED.with(|requested| *requested.borrow()) != Some(closing) {
+        return Err("El control de cierre no solicitó el cierre nativo".into());
     }
     pump(0.2);
     if ws::ordered_in(closing) != Some(false)
