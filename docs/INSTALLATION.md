@@ -1,6 +1,6 @@
 # Instalar AMSpace y conceder sus permisos
 
-El instalador guiado está en la rama de desarrollo; todavía no forma parte de la publicación 0.9.11. Las versiones que lo incluyan ofrecerán `AMSpace-installer.dmg` junto al ZIP habitual en [GitHub Releases](https://github.com/amartinrojarvis/amspace/releases).
+[Descarga el instalador DMG de AMSpace 0.9.12](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.12/AMSpace-installer.dmg). La [publicación oficial](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.12) también ofrece el ZIP habitual, checksums y la firma Ed25519 del DMG.
 
 Requisitos: macOS 13 o posterior. El bundle universal contiene Apple Silicon e Intel; compilar Intel no acredita una prueba física en ese hardware. AMSpace es código abierto con [licencia MIT](../LICENSE).
 

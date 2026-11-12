@@ -12,7 +12,7 @@ AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escr
 - **Borde de la ventana activa.** Contorno interior sin separación, con radio de esquina leído del sistema, transparente al ratón, color libre o cuatro paletas y grosor de 1 a 6 puntos, en pasos de 0,5.
 - **Foco bajo el cursor.** Activa el teclado de la ventana tras detener el ratón unos 240–390 ms, incluso entre ventanas de una misma aplicación, sin cambiar su orden. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
 - **Traer al primer plano.** Ajuste independiente y desactivado inicialmente: además de enfocar, eleva la ventana sobre las demás.
-- **Tiling opcional.** Mosaico por escritorio con espiral, cuadrícula, principal centrada o principal y secundarias; arrastre con previsualización y ventanas flotantes mediante atajo configurable.
+- **Mosaico opcional.** Distribuciones por escritorio, agrupación de ventanas en pestañas, arrastre con previsualización y ventanas flotantes mediante atajo configurable.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
 - **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.
@@ -24,16 +24,16 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.11](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.11/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Corrige la gestión de distribuciones y pestañas ocultas, valida las previews con las ventanas actuales y reduce trabajo innecesario; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
+Requiere **macOS 13 Ventura o posterior**. [**Descargar el instalador 0.9.12**](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.12/AMSpace-installer.dmg). El paquete universal contiene Apple Silicon e Intel; la ejecución local se comprueba en Apple Silicon. Consulta las novedades y archivos de la [publicación oficial](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.12).
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
-La rama de desarrollo incorpora un **DMG con arrastre a Aplicaciones y una guía visible antes de abrir la app**. Este instalador y las ayudas descritas más abajo todavía no forman parte de la versión publicada 0.9.11. Consulta la [guía de instalación, permisos y privacidad](docs/INSTALLATION.md); la descarga ZIP sigue siendo válida.
+Abre el **DMG**, arrastra AMSpace a **Aplicaciones** y lee **Léeme primero.rtf** antes de abrir la copia instalada. La ventana explica los pasos y el permiso necesario. Consulta la [guía de instalación, permisos y privacidad](docs/INSTALLATION.md). También está disponible el [ZIP](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.12/AMSpace-universal.zip).
 
 1. Abre AMSpace. Solo aparece en la barra de menús, sin icono permanente en el Dock.
 2. Haz clic derecho en un escritorio de la barra para abrir los ajustes.
 3. Pulsa **Accesibilidad…** y autoriza AMSpace en **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. Si no aparece, añádelo con `+` desde Aplicaciones.
-4. Vuelve a los ajustes de AMSpace y activa el borde o el foco. Si macOS solicita reiniciar la app, sal y ábrela de nuevo.
+4. Vuelve a los ajustes de AMSpace y activa Borde, Foco o Mosaico cuando lo desees. Si macOS solicita reiniciar la app, sal y ábrela de nuevo.
 5. Activa **Abrir al iniciar sesión** si lo deseas. macOS puede solicitar confirmar el ítem de inicio.
 
 **El indicador de escritorios funciona sin Accesibilidad; cambiar de escritorio con un clic requiere ese permiso.** No se necesita Grabación de pantalla ni Monitorización de entrada. Accesibilidad se usa para consultar ventanas, recibir cambios de foco, activar ventanas y enviar el cambio nativo al escritorio solicitado.
@@ -93,7 +93,7 @@ Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la
 
 Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escritura por atributo cambiado en cada fotograma). Puedes desactivar esa interpolación con **Animar colocaciones** en Mosaico: cada ventana pasa a su destino con una única escritura AX y el temporizador vuelve al ritmo de reparación. Al reelegir el escritorio ya activo no hay deslizamiento nativo, así que AMSpace dibuja un marco rojo suave a pantalla completa como confirmación; se apaga con **Borde al reelegir el escritorio** en Barra de menús. Ambos interruptores guardan su valor en `tile.animate` y `flash`.
 
-### Pestañas y ayudas — próxima versión
+### Pestañas y ayudas
 
 - **Clic derecho o Control-clic en una pestaña:** separar del grupo, hacer flotante, mover a otro grupo del mismo escritorio y pantalla, o cerrar la ventana. El cierre respeta las confirmaciones de guardar de la aplicación; no fuerza su terminación.
 - **Atajos configurables en Ajustes → Atajos:** pestaña anterior, siguiente y separar la activa. Inicialmente desactivados; sus combinaciones propuestas son `⌃⌥←`, `⌃⌥→` y `⌃⌥D`. La edición rechaza conflictos internos sin perder la configuración anterior.
