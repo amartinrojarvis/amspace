@@ -1,4 +1,4 @@
-## Candidata 0.9.10/build 65: alineación y presentación ligera de pestañas
+## Publicación 0.9.10/build 65: alineación y presentación ligera de pestañas
 
 - Izquierda predeterminada con margen de 8 pt; Centro seleccionable en Ajustes → Mosaico mediante `tile.groups.centered`. El cambio solo invalida la presentación; no modifica grupos ni geometría AX. Se conserva la reserva exterior de 22 + 4 pt.
 - Fondo oscuro con el material nativo existente, borde tenue redondeado en el viewport, contraste mayor para la activa y sombra nativa del panel. No se añade otra capa de desenfoque. Se eliminan los vectores temporales de anchos de ambas rutas de dibujo.
@@ -9,6 +9,9 @@
 - Muestra con la tira de tres pestañas visible en el diagnóstico release, `AMSPACE_TAB_IDLE_SECONDS=25` y `scripts/benchmark.py` durante **20,5 s**: CPU **0,0 % de un núcleo** a la resolución del muestreo; RSS **80,44–82,94 MiB**. Es el proceso diagnóstico completo, incluidas capturas y cachés AppKit, no memoria atribuible solo a pestañas ni una comparación contra 0.9.9.
 - Límites: no se mide GPU/WindowServer, coste bajo movimiento continuo ni múltiples grupos/monitores físicos. La muestra no demuestra coste cero ni ausencia de regresiones en todo hardware. Sigue pendiente la prueba AX de cierre/diálogos de aplicaciones ajenas. Durante estas pruebas no se cambió la app instalada, sus preferencias ni el catálogo publicado.
 - Candidata con identidad 0.9.10/build 65: repetidos `check.sh` (224 correctas, ocho ignoradas), bundle universal y diagnóstico AppKit desde el release, todos correctos. `prepare-release.py` firmó y verificó ZIP y catálogo desde el Llavero, sin exportar claves. SHA-256 del ZIP: `ccf0bf58e2ee0d05dda632a874f4a4c19b5bacbde0b4a09e5623dd4a58b3de95`. Las versiones publicadas anteriores permanecen inmutables.
+- [Release 0.9.10](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.10) sobre `4ac4549`, con [CI macOS correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43236768324). Las descargas públicas sin autenticación de GitHub Releases y `updates/0.9.10/AMSpace-universal.zip` coinciden byte a byte con el ZIP firmado.
+- Catálogo anunciado en `8a96e4e`, copiando el generado sin edición manual. La URL exacta de `SUFeedURL` sin compresión coincidió inmediatamente. La primera variante comprimida aún sirvió 0.9.9 (`Source-Age: 299`, `Vary: Authorization,Accept-Encoding`); la comprobación posterior, sin parámetro de consulta ni cambios al ZIP, coincidió con el catálogo firmado de 0.9.10. Cabeceras y cuerpos conservados como evidencia local.
+- La sonda temporal con Sparkle 2.10.1 y el `hostBundle` instalado 0.9.9/build 64 confirmó «Sparkle detecta actualización: 0.9.10, build 65». Solo cambió `SULastCheckTime`; preferencias funcionales conservadas y sonda retirada. No se instaló la actualización ni se verificó la UI de Buscar ahora o el reinicio.
 
 ## Publicación 0.9.9/build 64: cierre individual desde la pestaña
 
