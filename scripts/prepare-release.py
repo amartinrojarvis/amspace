@@ -22,6 +22,22 @@ def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True).strip()
 
 
+def signer_key_args():
+    """Prefer el archivo de clave local; el Llavero solo admite el formato de generate_keys."""
+    try:
+        key = run("security", "find-generic-password", "-a", ACCOUNT, "-w")
+    except subprocess.CalledProcessError:
+        key = ""
+    if not key:
+        candidate = ROOT / ".cache" / "sparkle" / "ed_keys"
+        key = candidate.read_text().strip() if candidate.exists() else ""
+    if not key:
+        return ["--account", ACCOUNT]
+    key_file = DIST / "ed25519.key"
+    key_file.write_text(key)
+    return ["--ed-key-file", key_file]
+
+
 def prepare(*, feed_only=False):
     built = plistlib.loads((APP / "Contents/Info.plist").read_bytes())
     expected = plistlib.loads((ROOT / "assets/Info.plist").read_bytes())
@@ -41,8 +57,9 @@ def prepare(*, feed_only=False):
                 raise SystemExit("El ZIP existente no corresponde al paquete compilado.")
     else:
         run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, archive)
-    signature = run(SIGNER, "--account", ACCOUNT, "-p", archive)
-    run(SIGNER, "--account", ACCOUNT, "--verify", archive, signature)
+    key_args = signer_key_args()
+    signature = run(SIGNER, *key_args, "-p", archive)
+    run(SIGNER, *key_args, "--verify", archive, signature)
     ET.register_namespace("sparkle", SPARKLE)
     rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
@@ -64,8 +81,8 @@ def prepare(*, feed_only=False):
     })
     feed = DIST / "appcast.xml"
     ET.ElementTree(rss).write(feed, encoding="utf-8", xml_declaration=True)
-    run(SIGNER, "--account", ACCOUNT, feed)
-    run(SIGNER, "--account", ACCOUNT, "--verify", feed)
+    run(SIGNER, *key_args, feed)
+    run(SIGNER, *key_args, "--verify", feed)
     (DIST / "SHA256SUMS.txt").write_text("".join(
         f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in (archive, feed)
     ))
