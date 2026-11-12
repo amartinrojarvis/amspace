@@ -44,6 +44,22 @@ fn fits_area(desktop: &Desktop, area: NSRect) -> bool {
                 && r.origin.y + r.size.height <= area.origin.y + area.size.height + 0.001
         })
 }
+fn custom_proposal(
+    context: &PickerContext,
+    template: &crate::custom_templates::Template,
+) -> Option<Desktop> {
+    if template.count != context.desktop.order.len() {
+        return None;
+    }
+    let mut desktop = context.desktop.clone();
+    if !desktop.restore_distribution(&template.distribution) {
+        return None;
+    }
+    // Named templates preserve the current grid, app minimums and tab groups,
+    // exactly like Manager::restore_distribution_with_grid.
+    desktop.grid = context.desktop.grid;
+    fits_area(&desktop, context.area).then_some(desktop)
+}
 pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
     Some(match key {
         18 => Input::Select(0),
@@ -332,9 +348,9 @@ impl Picker {
                     "{} {} · miniaturas de ejemplo · solo esta pantalla",
                     context.desktop.order.len(),
                     if context.desktop.order.len() == 1 {
-                        "ventana"
+                        "hueco"
                     } else {
-                        "ventanas"
+                        "huecos"
                     }
                 ),
                 12.,
@@ -407,16 +423,14 @@ impl Picker {
                 let Some(card) = cards.get(index) else {
                     continue;
                 };
-                let fits = template.count == context.desktop.order.len()
-                    && template
-                        .preview()
-                        .is_some_and(|desktop| fits_area(&desktop, area));
+                let proposed = custom_proposal(&context, template);
+                let fits = proposed.is_some();
                 valid.push(fits);
                 titles.push(template.name.clone());
                 card_views.push(plate(root, *card, 0.10, true, 12.));
                 let thumb = thumbnail_area(*card, area);
                 plate(root, thumb, 0.75, false, 4.);
-                if let Some(desktop) = template.preview() {
+                if let Some(desktop) = proposed.or_else(|| template.preview()) {
                     let scale = thumb.size.width / area.size.width;
                     for (_, frame) in desktop.window_frames(area, 10.) {
                         plate(
@@ -552,13 +566,14 @@ impl Picker {
             }
             let empty: Retained<AnyObject> = msg_send![class!(NSArray), new];
             let _: () = msg_send![self.ghost,setSubviews:&*empty];
-            let proposed = match self.selection() {
-                Some(Selection::Layout(layout)) => self.context.proposal(layout),
-                Some(Selection::Custom(_)) => self
-                    .custom
+            let proposed = if !self.valid[self.selected] {
+                None
+            } else if let Some(layout) = Layout::ALL.get(self.selected) {
+                self.context.proposal(*layout)
+            } else {
+                self.custom
                     .get(self.selected - Layout::ALL.len())
-                    .and_then(|template| template.preview()),
-                None => None,
+                    .and_then(|template| custom_proposal(&self.context, template))
             };
             if let Some(desktop) = proposed {
                 let area = self.context.area;
@@ -658,19 +673,67 @@ mod tests {
         assert!(eleven[Layout::ALL.len()].origin.y < eleven[0].origin.y);
     }
     #[test]
-    fn saved_distribution_preview_matches_the_commit_minimums() {
+    fn saved_preview_rejects_current_app_minimums_and_wrong_slot_counts() {
         let area = rect(0., 0., 1600., 900.);
-        let mut desktop = Desktop::configured(Layout::Centered, None);
-        desktop.reconcile_at(&[1, 2, 3], area, 10., None);
-        let text = desktop.save_distribution(area).expect("serializable");
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[101, 102], area, 10.);
+        let text = desktop.save_distribution(area).unwrap();
         let template =
             crate::custom_templates::Template::parse("id".into(), "Mi reparto".into(), text)
-                .expect("valid template");
-        assert_eq!(template.count, 3);
+                .unwrap();
         assert!(fits_area(&template.preview().unwrap(), area));
-        // A different slot count never matches the current desktop.
-        let mut fewer = Desktop::configured(Layout::Centered, None);
-        fewer.reconcile_at(&[1, 2], area, 10., None);
-        assert_ne!(fewer.order.len(), template.count);
+        desktop.set_minimum_sizes(&[(101, objc2_foundation::NSSize::new(1600., 90.))].into());
+        let mut context = PickerContext {
+            workspace: (1, 7),
+            area,
+            desktop,
+        };
+        assert!(custom_proposal(&context, &template).is_none());
+        context.desktop.set_minimum_sizes(&Default::default());
+        assert!(custom_proposal(&context, &template).is_some());
+        context.desktop.remove(102);
+        assert!(custom_proposal(&context, &template).is_none());
+    }
+    #[test]
+    fn saved_preview_keeps_current_grid_identities_and_tab_bar_reservation() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let mut saved = Desktop::configured(Layout::Spiral, Some((4, 4)));
+        saved.reconcile(&[1, 2], area, 10.);
+        let template = crate::custom_templates::Template::parse(
+            "id".into(),
+            "Con rejilla".into(),
+            saved.save_distribution(area).unwrap(),
+        )
+        .unwrap();
+        let mut desktop = Desktop::configured(Layout::Grid, Some((7, 3)));
+        desktop.reconcile(&[101, 102], area, 10.);
+        desktop = desktop
+            .proposed_drop(103, crate::tiling::DropIntent::Group(101), area, 10.)
+            .unwrap();
+        let context = PickerContext {
+            workspace: (1, 7),
+            area,
+            desktop: desktop.clone(),
+        };
+        let proposed = custom_proposal(&context, &template).unwrap();
+        assert_eq!(proposed.grid, Some((7, 3)));
+        assert_eq!(proposed.order, desktop.order);
+        assert_eq!(proposed.groups(), desktop.groups());
+        let slot = proposed
+            .frames(area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == 103)
+            .unwrap()
+            .1;
+        let window = proposed
+            .window_frames(area, 10.)
+            .into_iter()
+            .find(|(id, _)| *id == 103)
+            .unwrap()
+            .1;
+        let header = crate::tiling::TAB_BAR_HEIGHT + crate::tiling::TAB_BAR_GAP;
+        assert_eq!(window.origin.y, slot.origin.y + header);
+        assert_eq!(window.size.height, slot.size.height - header);
+        assert!(context.desktop == desktop);
     }
 }

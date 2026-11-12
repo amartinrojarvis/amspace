@@ -223,6 +223,28 @@ struct Managed {
     original_area: NSRect,
     element: ax::Owned,
 }
+impl Managed {
+    fn restoration_target(
+        &self,
+        id: u32,
+        identities: Option<&HashSet<(i32, u32)>>,
+        native_space: Option<u64>,
+        ax_id: Option<u32>,
+        current_area: Option<NSRect>,
+    ) -> Option<NSRect> {
+        if !identities.is_some_and(|ids| ids.contains(&(self.pid, id)))
+            || native_space != Some(self.space.1)
+            || ax_id != Some(id)
+        {
+            return None;
+        }
+        Some(restoration_frame(
+            self.original,
+            self.original_area,
+            current_area?,
+        ))
+    }
+}
 #[derive(Clone)]
 struct Drag {
     id: u32,
@@ -659,11 +681,26 @@ struct TabStrip {
     built: NSRect,
     frame: NSRect,
 }
+impl TabStrip {
+    fn show_at(&mut self, frame: NSRect, primary: f64) {
+        unsafe {
+            if self.frame != frame {
+                let _: () = msg_send![&*self.panel,setFrame:appkit(frame, primary),display:true];
+                self.frame = frame;
+            }
+            let visible: bool = msg_send![&*self.panel, isVisible];
+            if !visible {
+                let _: () = msg_send![&*self.panel, orderFrontRegardless];
+                let root: Obj = msg_send![&*self.panel, contentView];
+                sync_strip_hover(&*root);
+            }
+        }
+    }
+}
 /// A reused drop-hint panel and the SF Symbol last painted into it.
 struct HintBadge {
     panel: Retained<AnyObject>,
     symbol: &'static str,
-    built: NSRect,
     frame: NSRect,
 }
 #[derive(Default)]
@@ -983,14 +1020,7 @@ impl Manager {
     }
 
     fn commit_tab_detach(&mut self, drag: TabDrag) {
-        for id in &drag.baseline.order {
-            self.cancel_window_placement(*id);
-        }
-        for group in drag.baseline.groups() {
-            for id in group.members.iter().filter(|id| Some(**id) != group.leaf()) {
-                self.cancel_window_placement(*id);
-            }
-        }
+        self.cancel_desktop_placements(&drag.baseline);
         self.gesture_candidates.clear();
         self.handoffs.remove(&drag.id);
         self.desktops.insert(drag.space, drag.proposed);
@@ -1488,16 +1518,20 @@ impl Manager {
             return;
         }
         self.cancel_drag();
+        let identities = ws::all_window_ids();
         for (id, w) in &self.windows {
             if !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && !ax::flag(w.element.0, "AXFullScreen")
             {
-                if let Some(current) = area(w.space.0) {
-                    ax::set_frame(
-                        w.element.0,
-                        restoration_frame(w.original, w.original_area, current),
-                    );
+                if let Some(target) = w.restoration_target(
+                    *id,
+                    identities.as_ref(),
+                    spaces::window_space(*id),
+                    ax::window_id(w.element.0),
+                    area(w.space.0),
+                ) {
+                    ax::set_frame(w.element.0, target);
                 }
             }
         }
@@ -1611,6 +1645,22 @@ impl Manager {
             let Some((_, slot)) = frames.iter().find(|(id, _)| *id == leaf) else {
                 continue;
             };
+            // During a native gesture only geometry changes. Reuse captions and
+            // icons instead of synchronous AX title reads at the gesture cadence.
+            // The first reconciliation after release refreshes them normally.
+            if self.pressed
+                && let Some(strip) = self.strips.get_mut(used)
+                && strip.members == group.members
+                && strip.active == group.active
+            {
+                let total = strip_width(strip.signature.iter().map(|(name, _)| tab_width(name)));
+                let panel = tab_bar_frame(*slot, total, centered);
+                if strip.built.size == panel.size {
+                    strip.show_at(panel, primary);
+                    used += 1;
+                    continue;
+                }
+            }
             let mut tabs: Vec<(String, Option<Retained<AnyObject>>)> =
                 Vec::with_capacity(group.members.len());
             for id in &group.members {
@@ -1625,12 +1675,6 @@ impl Manager {
             let panel = tab_bar_frame(*slot, total, centered);
             match self.strips.get_mut(used) {
                 Some(strip) => {
-                    if strip.frame != panel {
-                        unsafe {
-                            let _: () = msg_send![&*strip.panel,setFrame:appkit(panel, primary),display:true];
-                        }
-                        strip.frame = panel;
-                    }
                     let same = strip.signature.len() == tabs.len()
                         && strip
                             .signature
@@ -1669,14 +1713,7 @@ impl Manager {
                         strip.active = group.active;
                         strip.built = panel;
                     }
-                    unsafe {
-                        let visible: bool = msg_send![&*strip.panel, isVisible];
-                        if !visible {
-                            let _: () = msg_send![&*strip.panel, orderFrontRegardless];
-                            let root: Obj = msg_send![&*strip.panel, contentView];
-                            sync_strip_hover(&*root);
-                        }
-                    }
+                    strip.show_at(panel, primary);
                 }
                 None => {
                     let panel_obj = unsafe { new_overlay(panel, primary) };
@@ -1732,13 +1769,12 @@ impl Manager {
                     }
                     badge.frame = panel;
                 }
-                if badge.symbol != symbol || badge.built != panel {
+                if badge.symbol != symbol {
                     let root = unsafe { badge_content(symbol) };
                     unsafe {
                         let _: () = msg_send![&*badge.panel,setContentView:&*root];
                     }
                     badge.symbol = symbol;
-                    badge.built = panel;
                 }
                 unsafe {
                     let visible: bool = msg_send![&*badge.panel, isVisible];
@@ -1757,7 +1793,6 @@ impl Manager {
                 self.badges.push(HintBadge {
                     panel: panel_obj,
                     symbol,
-                    built: panel,
                     frame: panel,
                 });
             }
@@ -2348,9 +2383,7 @@ impl Manager {
             );
         }
         let space = drag.space;
-        for id in &layout.order {
-            self.cancel_window_placement(*id);
-        }
+        self.cancel_desktop_placements(&layout);
         // Use the normal bounded placement/verification path after release;
         // never mark an unverified AX request as an applied native frame.
         self.desktops.insert(space, layout);
@@ -2415,9 +2448,7 @@ impl Manager {
         let Some(proposed) = context.proposal(layout) else {
             return false;
         };
-        for id in &context.desktop.order {
-            self.cancel_window_placement(*id);
-        }
+        self.cancel_desktop_placements(&context.desktop);
         save(defaults, &layout_key(context.workspace), layout.index());
         if trace_tiling() {
             eprintln!(
@@ -2604,7 +2635,6 @@ impl Manager {
         {
             return false;
         }
-        let ids = desktop.order.clone();
         if !preserve_grid {
             save(
                 defaults,
@@ -2617,10 +2647,8 @@ impl Manager {
             }
         }
         save(defaults, &layout_key(space), desktop.layout.index());
+        self.cancel_desktop_placements(&desktop);
         self.desktops.insert(space, desktop);
-        for id in ids {
-            self.cancel_window_placement(id);
-        }
         self.invalidate();
         true
     }
@@ -3071,7 +3099,12 @@ impl Manager {
                 let centered = pref(defaults, "tile.groups.centered") == 1;
                 let mut strips = 0;
                 for (key, area) in active.iter().map(|(k, r)| (*k, *r)) {
-                    if let Some(desktop) = self.desktops.get(&key).cloned() {
+                    if let Some(desktop) = self
+                        .desktops
+                        .get(&key)
+                        .filter(|desktop| !desktop.groups().is_empty())
+                        .cloned()
+                    {
                         let frames = desktop.window_frames(area, 10.);
                         strips = self.draw_strips(&desktop, &frames, primary, strips, centered);
                     }
@@ -3202,6 +3235,13 @@ impl Manager {
                 return;
             }
         }
+        let scan_due = self.dirty
+            || self
+                .last_scan
+                .is_none_or(|t| t.elapsed() >= Duration::from_millis(scan_interval));
+        if !scan_due && self.transitions.is_empty() && self.verifications.is_empty() {
+            return;
+        }
         // One coherent compositor snapshot serves verification, animation and
         // membership for this tick: the same data three times over, instead of
         // three lists that can disagree during a native slide.
@@ -3222,11 +3262,7 @@ impl Manager {
             // Space/screen changes and real gestures already cancel that batch.
             return;
         }
-        if self
-            .last_scan
-            .is_some_and(|t| t.elapsed() < Duration::from_millis(scan_interval))
-            && !self.dirty
-        {
+        if !scan_due {
             return;
         }
         self.last_visible_windows =
@@ -3612,8 +3648,11 @@ impl Manager {
                 continue;
             }
             let hidden = hidden_tab_frames(d, &frames);
-            let snapshot = d.clone();
-            strips_drawn = self.draw_strips(&snapshot, &frames, primary, strips_drawn, centered);
+            if !d.groups().is_empty() {
+                let snapshot = d.clone();
+                strips_drawn =
+                    self.draw_strips(&snapshot, &frames, primary, strips_drawn, centered);
+            }
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
                     return;
@@ -3706,22 +3745,36 @@ impl Manager {
         self.applied.remove(&id);
         self.constrained.remove(&id);
     }
+    fn cancel_desktop_placements(&mut self, desktop: &Desktop) {
+        for id in &desktop.order {
+            self.cancel_window_placement(*id);
+        }
+        for group in desktop.groups() {
+            for id in group.members.iter().filter(|id| Some(**id) != group.leaf()) {
+                self.cancel_window_placement(*id);
+            }
+        }
+    }
     pub fn restore_space(&mut self, space: u64) {
         if self.presentation_blocks_input() {
             self.restore_spaces_after_presentation.insert(space);
             return;
         }
+        let identities = ws::all_window_ids();
         for (id, w) in &self.windows {
             if w.space.1 == space
                 && !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && !ax::flag(w.element.0, "AXFullScreen")
             {
-                if let Some(current) = area(w.space.0) {
-                    ax::set_frame(
-                        w.element.0,
-                        restoration_frame(w.original, w.original_area, current),
-                    );
+                if let Some(target) = w.restoration_target(
+                    *id,
+                    identities.as_ref(),
+                    spaces::window_space(*id),
+                    ax::window_id(w.element.0),
+                    area(w.space.0),
+                ) {
+                    ax::set_frame(w.element.0, target);
                 }
                 self.applied.remove(id);
                 self.transitions.remove(id);
@@ -5999,25 +6052,62 @@ mod tests {
     }
 
     #[test]
-    fn replacing_a_template_cancels_only_its_windows_old_animation_and_retry() {
-        let mut manager = Manager::default();
-        for id in [1, 2] {
-            let from = rect(10., 41., 1600., 900.);
-            let target = rect(-890., -390., 880., 1580.);
-            manager.transition_from(id, from, target);
-            manager.verifications.insert(id, Verification::new(target));
-            manager.applied.insert(id, target);
-            manager.constrained.insert(id, (target, from));
-        }
-        manager.cancel_window_placement(1);
-        assert!(!manager.transitions.contains_key(&1));
-        assert!(!manager.verifications.contains_key(&1));
-        assert!(!manager.applied.contains_key(&1));
-        assert!(!manager.constrained.contains_key(&1));
-        assert!(manager.transitions.contains_key(&2));
-        assert!(manager.verifications.contains_key(&2));
-        assert!(manager.applied.contains_key(&2));
-        assert!(manager.constrained.contains_key(&2));
+    fn replacing_a_template_cancels_hidden_tab_writes_but_not_other_workspaces() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite = NSString::from_str(&format!(
+                "amspace.tests.restore.tabs.{}",
+                std::process::id()
+            ));
+            let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+            let raw = Retained::as_ptr(&defaults) as Obj;
+            let area = rect(-900., 40., 1800., 1200.);
+            let key = (1, 7);
+            let mut desktop = Desktop::configured(Layout::Spiral, None);
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            desktop = desktop
+                .proposed_drop(4, DropIntent::Group(1), area, 10.)
+                .unwrap();
+            assert!(desktop.is_hidden_tab(1));
+            let context = PickerContext {
+                workspace: key,
+                area,
+                desktop: desktop.clone(),
+            };
+            let proposal = context.proposal(Layout::Grid).unwrap();
+            let saved = proposal.save_distribution(area).unwrap();
+            assert_ne!(
+                desktop.window_frames(area, 10.),
+                proposal.window_frames(area, 10.)
+            );
+            let mut manager = Manager::default();
+            manager.desktops.insert(key, desktop);
+            for id in [1, 2, 3, 4, 9] {
+                let from = rect(10., 41., 1600., 900.);
+                let target = rect(-890., -390., 880., 1580.);
+                manager.transition_from(id, from, target);
+                manager.verifications.insert(id, Verification::new(target));
+                manager.applied.insert(id, target);
+                manager.constrained.insert(id, (target, from));
+            }
+            assert!(manager.restore_distribution_at(raw, key, &saved, area));
+            assert_eq!(
+                manager.desktops[&key].window_frames(area, 10.),
+                proposal.window_frames(area, 10.)
+            );
+            for id in [1, 2, 3, 4] {
+                assert!(!manager.transitions.contains_key(&id));
+                assert!(!manager.verifications.contains_key(&id));
+                assert!(!manager.applied.contains_key(&id));
+                assert!(!manager.constrained.contains_key(&id));
+            }
+            assert!(manager.transitions.contains_key(&9));
+            assert!(manager.verifications.contains_key(&9));
+            assert!(manager.applied.contains_key(&9));
+            assert!(manager.constrained.contains_key(&9));
+            let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
     }
 
     #[test]
@@ -7667,5 +7757,38 @@ mod tests {
         assert_eq!(actual.origin.y, from.origin.y);
         assert_eq!(actual.size.height, from.size.height);
         assert!(drag.baseline == tab.baseline);
+    }
+}
+
+#[test]
+fn restoration_rejects_reused_or_transferred_windows_and_missing_native_evidence() {
+    let original = rect(100., 100., 800., 600.);
+    let area = rect(0., 0., 1800., 1200.);
+    let window = Managed {
+        pid: 42,
+        space: (1, 7),
+        original,
+        original_area: area,
+        element: ax::application(std::process::id() as i32).unwrap(),
+    };
+    let identities = HashSet::from([(42, 9)]);
+    assert_eq!(
+        window.restoration_target(9, Some(&identities), Some(7), Some(9), Some(area)),
+        Some(original)
+    );
+    let reused = HashSet::from([(43, 9)]);
+    for (ids, space, ax_id, current) in [
+        (None, Some(7), Some(9), Some(area)),
+        (Some(&reused), Some(7), Some(9), Some(area)),
+        (Some(&identities), None, Some(9), Some(area)),
+        (Some(&identities), Some(8), Some(9), Some(area)),
+        (Some(&identities), Some(7), None, Some(area)),
+        (Some(&identities), Some(7), Some(10), Some(area)),
+        (Some(&identities), Some(7), Some(9), None),
+    ] {
+        assert_eq!(
+            window.restoration_target(9, ids, space, ax_id, current),
+            None
+        );
     }
 }

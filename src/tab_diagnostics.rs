@@ -234,8 +234,58 @@ pub fn check_controls() -> Result<(), String> {
             }
             let _: () = msg_send![owner,mouseExited:ptr::null::<AnyObject>()];
         }
+        // A native move repositions the cached strip without replacing controls
+        // or fetching captions from AX. No foreign windows are needed here.
+        let mut desktop = Desktop::default();
+        let slot = rect(300., 330., 620., 400.);
+        desktop.reconcile_at(&[1], slot, 10., None);
+        for id in [2, 3] {
+            desktop = desktop
+                .proposed_drop(id, DropIntent::Group(id - 1), slot, 10.)
+                .ok_or("No se pudo preparar el grupo de diagnóstico")?;
+        }
+        desktop.select_tab(2);
+        let mut manager = Manager {
+            pressed: true,
+            strips: vec![TabStrip {
+                panel: panel.clone(),
+                signature: names.to_vec(),
+                members: vec![1, 2, 3],
+                active: 1,
+                built: frame,
+                frame,
+            }],
+            ..Manager::default()
+        };
+        for window in [rect(324., 342., 620., 400.), slot] {
+            manager.draw_strips(&desktop, &[(2, window)], primary_height(), 0, false);
+            let root: Obj = msg_send![&panel, contentView];
+            let actual: NSRect = msg_send![&panel, frame];
+            let expected = appkit(tab_bar_frame(window, total, false), primary_height());
+            if !ptr::eq(root, Retained::as_ptr(&content)) || actual != expected {
+                return Err("Mover la tira reconstruyó los controles o perdió su posición.".into());
+            }
+        }
+        manager.show_badge(DropIntent::Group(2), slot, primary_height());
+        let badge: Retained<AnyObject> = msg_send![&*manager.badges[0].panel, contentView];
+        manager.show_badge(
+            DropIntent::Group(2),
+            rect(324., 342., 620., 400.),
+            primary_height(),
+        );
+        let moved_badge: Obj = msg_send![&*manager.badges[0].panel, contentView];
+        if !ptr::eq(moved_badge, Retained::as_ptr(&badge)) {
+            return Err("Mover el indicador de agrupación reconstruyó su contenido.".into());
+        }
+        manager.show_badge(DropIntent::Screen(Zone::Left), slot, primary_height());
+        let changed_badge: Obj = msg_send![&*manager.badges[0].panel, contentView];
+        if ptr::eq(changed_badge, Retained::as_ptr(&badge)) {
+            return Err("Cambiar la intención no actualizó el indicador.".into());
+        }
+        manager.trim_overlays(1, 0);
         capture_control(Retained::as_ptr(&content) as Obj, ".cache/tab-controls.png")?;
         render_tab_presentation(&names, &target)?;
+        objc2::rc::autoreleasepool(|_| check_saved_picker())?;
         if let Some(seconds) = std::env::var("AMSPACE_TAB_IDLE_SECONDS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -257,9 +307,60 @@ pub fn check_controls() -> Result<(), String> {
         }
         let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
         println!(
-            "PASS: selección, arrastre/cancelación, cierre individual y hover sin desplazamientos ni acciones cruzadas; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+            "PASS: selección, arrastre/cancelación, cierre individual, hover y reutilización de controles al mover la tira; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
         );
         Ok(())
+    }
+}
+
+fn check_saved_picker() -> Result<(), String> {
+    unsafe {
+        let suite =
+            NSString::from_str(&format!("amspace.diagnostic.picker.{}", std::process::id()));
+        let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        let raw = Retained::as_ptr(&defaults) as Obj;
+        let result = (|| {
+            let area = rect(100., 100., 1400., 800.);
+            let mut saved = Desktop::configured(Layout::Spiral, Some((4, 4)));
+            saved.reconcile_at(&[1, 2], area, 10., None);
+            crate::custom_templates::save(
+                raw,
+                "Distribución con pestañas",
+                saved.save_distribution(area).ok_or("Plantilla inválida")?,
+            )?;
+            let mut desktop = Desktop::configured(Layout::Grid, Some((7, 3)));
+            desktop.reconcile_at(&[101, 102], area, 10., None);
+            desktop = desktop
+                .proposed_drop(103, DropIntent::Group(101), area, 10.)
+                .ok_or("Grupo inválido")?;
+            let context = PickerContext {
+                workspace: (1, 7),
+                area,
+                desktop,
+            };
+            let mut picker = crate::tile_picker::Picker::new(context, ptr::null_mut(), raw)
+                .ok_or("No se pudo abrir el selector")?;
+            picker.select(Layout::ALL.len());
+            if !matches!(
+                picker.selection(),
+                Some(crate::tile_picker::Selection::Custom(_))
+            ) {
+                return Err("La plantilla agrupada no se pudo seleccionar.".into());
+            }
+            picker.show();
+            pump(0.1);
+            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let panel: Obj = msg_send![app, keyWindow];
+            if panel.is_null() {
+                return Err("El selector no recibió su ventana nativa.".into());
+            }
+            let view: Obj = msg_send![panel, contentView];
+            capture_control(view, ".cache/picker-grouped-preview.png")
+        })();
+        let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        result
     }
 }
 

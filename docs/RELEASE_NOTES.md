@@ -1,11 +1,12 @@
-AMSpace 0.9.10 — pestañas integradas y alineación configurable.
+AMSpace 0.9.11 — estabilidad y menor trabajo innecesario al gestionar ventanas.
 
-- Pestañas alineadas a la izquierda por defecto, con 8 puntos de margen. Puedes centrarlas desde Ajustes → Mosaico → Alineación de pestañas.
-- Fondo oscuro translúcido limitado a la tira, borde redondeado tenue, sombra nativa y mayor contraste para la pestaña activa.
-- La × permanece visible en la activa y aparece al pasar el cursor por las demás, sin desplazar títulos ni cambiar el área de cierre.
-- Se mantienen la barra exterior de 22 puntos, la separación por arrastre, el cierre normal de ventanas y el máximo de pestañas configurable.
-- Seguimiento del cursor mediante eventos nativos, sin nuevos sondeos, temporizadores ni animaciones continuas. Se reutilizan las vistas y se eliminan vectores temporales de anchos.
+- Cambiar o restaurar una distribución cancela también las colocaciones pendientes de pestañas ocultas, evitando que reciban geometría anterior.
+- Las plantillas personales se previsualizan con los grupos, mínimos y rejilla actuales. El selector cuenta huecos, no ventanas individuales.
+- Restaurar ventanas al desactivar Mosaico comprueba de nuevo su identidad, escritorio y pantalla.
+- Un redimensionado con coordenadas no válidas se rechaza completo, sin modificar otras divisiones.
+- Menos enumeraciones innecesarias en reposo. Durante arrastres sin cambios de grupo o tamaño se reutilizan títulos, iconos y controles; mover el indicador no reconstruye su contenido.
+- Se conservan el cierre individual, la separación por arrastre y la presentación exterior de pestañas. Sin nuevos temporizadores ni sondeo adicional.
 
-Verificación: 224 pruebas correctas, controles AppKit, ajustes claros/oscuros y compilación universal. Una muestra aislada de 20,5 s en reposo registró 0,0 % de CPU a la resolución de muestreo; no acredita coste cero ni mide GPU/WindowServer o múltiples grupos. Sigue pendiente el cierre AX y los avisos de guardar de aplicaciones ajenas.
+Verificación: 227 pruebas correctas, controles AppKit reales y compilación universal. Una muestra aislada del diagnóstico en reposo registró 0,0 % de CPU durante 20,46 s; no acredita coste cero ni mide todas las funciones, GPU/WindowServer o arrastre continuo. Las pruebas AX con aplicaciones ajenas siguen pendientes del permiso de Accesibilidad.
 
-Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior.
+Paquete universal Apple Silicon/Intel; compilar Intel no acredita ejecución física en Intel o múltiples monitores. Firma ad hoc, sin Developer ID ni notarización. macOS 13 o posterior.

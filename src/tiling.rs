@@ -1508,9 +1508,18 @@ impl Desktop {
     /// Move shared boundaries, preserving the outer screen rectangle and gaps.
     /// `from` and `to` must belong to the same gesture baseline to avoid drift.
     pub fn resize(&mut self, id: u32, from: NSRect, to: NSRect, area: NSRect, gap: f64) {
-        if ![to.origin.x, to.origin.y, to.size.width, to.size.height]
-            .iter()
-            .all(|n| n.is_finite())
+        if ![
+            from.origin.x,
+            from.origin.y,
+            from.size.width,
+            from.size.height,
+            to.origin.x,
+            to.origin.y,
+            to.size.width,
+            to.size.height,
+        ]
+        .iter()
+        .all(|n| n.is_finite())
         {
             return;
         }
@@ -3286,6 +3295,57 @@ mod tests {
                 resized,
                 "reconciliation discarded user proportions"
             );
+        }
+    }
+    #[test]
+    fn nonfinite_resize_baselines_and_targets_preserve_the_distribution() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let mut baseline = Desktop::configured(Layout::Grid, Some((12, 8)));
+        baseline.reconcile(&[1, 2, 3, 4], area, 10.);
+        let from = baseline.frames(area, 10.)[0].1;
+        baseline.resize(
+            1,
+            from,
+            rect(
+                from.origin.x,
+                from.origin.y,
+                from.size.width + 100.,
+                from.size.height + 80.,
+            ),
+            area,
+            10.,
+        );
+        let frames = baseline.frames(area, 10.);
+        let saved = baseline.save_distribution(area);
+        let from = frames.iter().find(|(id, _)| *id == 1).unwrap().1;
+        let to = rect(
+            from.origin.x,
+            from.origin.y,
+            from.size.width + 100.,
+            from.size.height + 80.,
+        );
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for coordinate in 0..8 {
+                let (mut start, mut end) = (from, to);
+                *match coordinate {
+                    0 => &mut start.origin.x,
+                    1 => &mut start.origin.y,
+                    2 => &mut start.size.width,
+                    3 => &mut start.size.height,
+                    4 => &mut end.origin.x,
+                    5 => &mut end.origin.y,
+                    6 => &mut end.size.width,
+                    _ => &mut end.size.height,
+                } = value;
+                let mut desktop = baseline.clone();
+                desktop.resize(1, start, end, area, 10.);
+                assert_eq!(
+                    desktop.frames(area, 10.),
+                    frames,
+                    "coordinate {coordinate}: {value}"
+                );
+                assert_eq!(desktop.save_distribution(area), saved);
+            }
         }
     }
     #[test]

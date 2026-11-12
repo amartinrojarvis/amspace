@@ -72,6 +72,10 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 - Selección/arrastre y cierre usan controles hermanos con áreas independientes. Los tags de cierre evitan `-1`, valor predeterminado de `NSView`; soltar fuera de la × no debe seleccionar, separar ni cerrar una pestaña.
 - La alineación izquierda mantiene el origen al cambiar el número de pestañas; centrar es una preferencia explícita. Ambas respetan el hueco lógico y la reserva exterior. Cambiar alineación no altera el modelo ni reconstruye contenido si el tamaño no cambia.
 - Mostrar u ocultar la × por hover no cambia frames, acciones, identidad ni accesibilidad. El seguimiento pertenece a las vistas nativas y se retira con ellas: no añade temporizadores, monitores globales ni consultas AX. La × activa siempre permanece visible.
+- Sustituir una distribución invalida también animaciones/verificaciones de los miembros no activos del grupo. Un retry anterior no puede escribir la geometría de la plantilla saliente en una pestaña oculta.
+- La aceptación y preview de una plantilla personal usan grupos, mínimos y rejilla actuales; la representación ordinal de biblioteca no es evidencia de que quepa con las ventanas reales.
+- Restaurar al desactivar Mosaico valida PID/ID, identidad AX, pertenencia nativa y disponibilidad de pantalla. Una referencia retenida por sí sola no autoriza restaurar.
+- Un redimensionado con origen o destino no finito se rechaza completo antes de tocar proporciones. No se permite aplicar solo el eje que conserve números válidos ni alterar la distribución guardada.
 
 ## Evidencia antes de afirmar compatibilidad
 

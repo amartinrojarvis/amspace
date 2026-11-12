@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.8](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.8/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Añade separación por arrastre, barra exterior y límite de pestañas configurable; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.10](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.10/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Incluye separación por arrastre, cierre individual, barra exterior y alineación configurable; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -91,8 +91,8 @@ Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escr
 
 ## Eficiencia
 
-- Sin sondeo de ventanas con el foco automático desactivado. La búsqueda automática de versiones, opcional y desactivada inicialmente, se programa una vez al día.
-- Spaces se consulta al cambiar de escritorio, aplicación o pantalla y al abrir ajustes.
+- En reposo normal, sin sondeo de ventanas con foco automático y Mosaico desactivados. La búsqueda automática de versiones, opcional y desactivada inicialmente, se programa una vez al día.
+- Spaces se consulta al cambiar de escritorio, aplicación o pantalla y al abrir ajustes. Con Mosaico activo hay además reconciliación periódica para recuperar notificaciones ausentes.
 - El borde identifica la ventana por su ID de WindowServer. El movimiento se aplica directamente desde la notificación del compositor, sin redibujar ni esperar a Accesibilidad. El tamaño se actualiza en el siguiente turno del hilo principal, sin demora artificial; no hay un bucle de animación permanente.
 - El foco opcional utiliza un temporizador tolerante cada 80 ms. Solo realiza hit-testing AX y de WindowServer después de que el cursor se detenga, una vez por posición; no escanea continuamente todas las ventanas.
 - «Mostrar escritorio», incluida la esquina activa, suspende tiling, foco y borde. Las ventanas nuevas quedan flotantes al volver; los mosaicos anteriores conservan su distribución por pantalla/escritorio. En macOS reciente se detecta la presentación de WindowManager desde los metadatos del compositor, con comprobación de salida solo mientras está activa.
@@ -176,16 +176,16 @@ Esta es una adaptación nativa de la interacción de [Omarchy/Hyprland](https://
 
 ### Redimensionado y aplicaciones flotantes
 
-Arrastra un borde o esquina de una ventana tiled: las divisiones compartidas se desplazan y las ventanas vecinas se adaptan durante el gesto. Funciona con todas las plantillas. Al soltar se conserva la proporción ajustada, en vez de volver al reparto inicial. Los límites exteriores de la pantalla permanecen fijos; las divisiones tienen mínimos de 120 × 90 puntos por hoja, además de los mínimos que imponga cada aplicación. Seleccionar una plantilla, incluso la actual, reconstruye su reparto inicial. Cerrar una ventana conserva las proporciones ajustadas de las demás divisiones; su hermana ocupa el hueco liberado.
+Arrastra un borde o esquina de una ventana tiled: macOS controla la ventana durante el gesto y AMSpace calcula las divisiones desde su geometría inicial. Si activas **Previsualizar al redimensionar**, muestra el reparto propuesto; al soltar confirma la proporción y coloca las vecinas. Los límites exteriores permanecen fijos y se respetan los mínimos de cada aplicación, además del mínimo de 120 × 90 puntos por hoja. Seleccionar una plantilla, incluso la actual, reconstruye su reparto inicial. Cerrar una ventana conserva las proporciones ajustadas de las demás divisiones; su hermana ocupa el hueco liberado.
 
-Las recolocaciones automáticas se interpolan durante 120 ms con una curva quintic ease-in/ease-out, de velocidad y aceleración nulas en los extremos. Un nuevo gesto interrumpe la animación para dar prioridad al ratón; durante el redimensionado, el sistema controla la ventana arrastrada y AMSpace ajusta las vecinas sin animación adicional que retrase el seguimiento.
+Las recolocaciones automáticas se interpolan durante 160 ms con una curva quintic ease-in/ease-out, de velocidad y aceleración nulas en los extremos. Un gesto real interrumpe las escrituras pendientes para dar prioridad al ratón; AMSpace no compite con el redimensionado nativo mediante escrituras AX por fotograma.
 
 En **Mosaico → Apps flotantes… → Añadir aplicación…**, selecciona una aplicación instalada. El listado permite quitar reglas y se conserva entre reinicios. Cada regla se identifica por el bundle ID de la aplicación y se aplica cuando el gestor incorpora una ventana nueva; no modifica retroactivamente las ya gestionadas. El atajo permite devolver al tile una ventana concreta sin eliminar la regla de su aplicación.
 
 
 El gestor comprueba la geometría real al reajustar: una animación interrumpida no deja su destino marcado como completado. La expansión vuelve a aplicarse después de colocar la ventana, evitando tamaños limitados por su posición anterior. Al retirar tiles, las restantes ocupan el área útil completa, respetando los márgenes y gaps. Si una división produce tiles demasiado pequeños se ajustan sus proporciones dentro de la plantilla elegida; los límites impuestos por aplicaciones se notifican sin reintentar indefinidamente.
 
-El temporizador de tiling funciona a 60 Hz durante animaciones y arrastres de tiles, y a 12,5 Hz en reposo. Pantallas y ventanas se consultan como máximo cada 500 ms, salvo cambios explícitos. Los fotogramas intermedios solo escriben los atributos que cambian. El compositor de macOS presenta las ventanas; AMSpace no captura texturas ni añade una segunda copia gráfica de ventanas ajenas. Estos intervalos son objetivos del programador, no una garantía de FPS: la respuesta AX depende de cada aplicación.
+El temporizador de tiling funciona a 60 Hz durante animaciones y arrastres, a 12,5 Hz durante asentamiento/verificación y a 4 Hz en reposo. La reconciliación ordinaria de pantallas y ventanas usa un intervalo de 500 ms, salvo cambios explícitos y trabajo pendiente. Los fotogramas intermedios solo escriben los atributos que cambian. El compositor de macOS presenta las ventanas; AMSpace no captura texturas ni añade una segunda copia gráfica de ventanas ajenas. Estos intervalos son objetivos del programador, no una garantía de FPS: la respuesta AX depende de cada aplicación.
 
 
 ### Rejilla virtual y distribución guardada
@@ -197,7 +197,7 @@ En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rej
 Recolocar las ventanas de una cuadrícula ajustada conserva sus huecos y proporciones; intercambia o reordena qué ventana ocupa cada hueco. Redimensionar desde una esquina exterior ajusta la división interna opuesta manteniendo el límite de pantalla, incluido el caso de una ventana izquierda y dos apiladas a la derecha.
 
 
-Al cambiar de Space, el gestor conserva el mosaico y pausa las consultas y escrituras de geometría durante 600 ms desde el último aviso para dejar terminar la transición nativa. Después consulta los cambios de pertenencia con mayor frecuencia durante otros 600 ms y vuelve al sondeo habitual. Al trasladar una ventana a otro Space, elimina su hoja del escritorio de origen sin reiniciar las proporciones y la coloca directamente en el destino, evitando una segunda animación. Las ventanas temporalmente fuera de pantalla durante la transición no hacen que se borre la distribución existente.
+Al cambiar de Space, el gestor conserva el mosaico y pausa las consultas y escrituras de geometría durante 400 ms desde el último aviso para dejar terminar la transición nativa. Después exige muestras estables y consulta la pertenencia con mayor frecuencia durante otros 600 ms, antes de volver al sondeo habitual. Al trasladar una ventana a otro Space, elimina su hoja del origen sin reiniciar las proporciones y la coloca directamente en el destino, evitando una segunda animación. Las lecturas transitoriamente incompletas no equivalen a ventanas cerradas.
 
 
 En Espiral, las ventanas nuevas continúan el giro de la última división, aunque otra ventana tenga el foco. Se conservan los tamaños ajustados y el sentido del giro después de cerrar ventanas. La aplicación no sustituye automáticamente Espiral por Cuadrícula: si no caben los mínimos, muestra un aviso. Puedes reconstruir la forma inicial volviendo a elegir **Espiral** en el selector de plantilla.
@@ -231,7 +231,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Última publicada: 0.9.8](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.8/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.8).
+[Última publicada: 0.9.10](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.10/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.10).
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
