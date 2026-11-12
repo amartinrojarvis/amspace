@@ -760,7 +760,8 @@ impl App {
                 self.status_ids = snapshot.desktops.clone();
                 let _: () = msg_send![parent, setTitle:&*NSString::from_str("")];
                 let _: () = msg_send![&self.status, setLength:width * count as f64];
-                for index in 0..count {
+                let desktops: &[u64] = if compact { &[0] } else { &snapshot.desktops };
+                for (index, &desktop) in desktops.iter().enumerate() {
                     let button = alloc_view(
                         desktop_button_class(),
                         rect(index as f64 * width, 0., width, frame.size.height.max(22.)),
@@ -771,10 +772,10 @@ impl App {
                     let _: () = msg_send![&button, setAutoresizingMask:16usize];
                     let _: () = msg_send![&button, setTarget:&*self.target];
                     let _: () = msg_send![&button, setAction:if compact {sel!(desktopMenu:)} else {sel!(selectDesktop:)}];
-                    let _: () = msg_send![&button, setTag:if compact {0isize} else {snapshot.desktops[index] as isize}];
+                    let _: () = msg_send![&button, setTag:desktop as isize];
                     let _: () = msg_send![parent, addSubview:&*button];
                     let bounds: NSRect = msg_send![&button, bounds];
-                    let info: Obj = msg_send![class!(NSNumber), numberWithUnsignedLongLong:if compact {0u64} else {snapshot.desktops[index]}];
+                    let info: Obj = msg_send![class!(NSNumber), numberWithUnsignedLongLong:desktop];
                     let tracking: Allocated<AnyObject> = msg_send![class!(NSTrackingArea), alloc];
                     let tracking: Retained<AnyObject> = msg_send![tracking, initWithRect:bounds, options:(1usize|128usize|512usize), owner:&*self.target, userInfo:info];
                     let _: () = msg_send![&button, addTrackingArea:&*tracking];
