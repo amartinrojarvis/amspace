@@ -64,6 +64,7 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 - Un grupo de pestañas del mosaico ocupa **un único hueco**: `order` y las hojas del árbol mantienen el mismo número de elementos, y cada miembro oculto recibe exactamente el rectángulo de su hoja. No volver a dividir el hueco al seleccionar una pestaña ni duplicar escrituras cuando esa hoja ya tiene transición o verificación en vuelo.
 - El tercio superior es la única zona que agrupa; los dos inferiores siguen intercambiando huecos. Al cerrar la pestaña visible, su hermana hereda el mismo rectángulo (el id promovido sale de `remove`), y la otra tira conserva el suyo. Los miembros ocultos no son llegadas: no se reinsertran por `reconcile_at`, por la gracia de pertenencia ni por el asentamiento de un Space.
 - Las tiras del mosaico son independientes del `AXTabGroup` de cada aplicación: ese sigue identificando las pestañas nativas por su identidad AX, no por títulos, posición ni tamaño.
+- Las tiras y los iconos de intención son paneles propios, no activables, sin sombra y sin captura de ratón, en el mismo nivel y comportamiento de colección que el borde. Se reutilizan por posición y `trim_overlays` retira en el mismo cuadro los que ya no tienen modelo: ninguna tira antigua sobrevive a un cambio de hueco, y ninguno de los dos conjuntos añade un temporizador ni un sondeo.
 
 ## Evidencia antes de afirmar compatibilidad
 

@@ -1,9 +1,9 @@
 //! Main-thread macOS adapter. Layout calculations live in `tiling`.
 use crate::{
     accessibility as ax,
-    native::{Obj, color, rect},
+    native::{Obj, alloc_view, color, rect},
     spaces,
-    tiling::{Desktop, DropIntent, Layout, Zone, ax_screen_rect, contains, drop_intent},
+    tiling::{Desktop, DropIntent, Group, Layout, Zone, ax_screen_rect, contains, drop_intent},
     window_server as ws,
 };
 use objc2::{
@@ -602,6 +602,21 @@ impl MembershipGrace {
             .collect()
     }
 }
+/// A reused strip panel and the content last painted into it.
+struct TabStrip {
+    panel: Retained<AnyObject>,
+    signature: Vec<(String, Option<Obj>)>,
+    active: usize,
+    built: NSRect,
+    frame: NSRect,
+}
+/// A reused drop-hint panel and the SF Symbol last painted into it.
+struct HintBadge {
+    panel: Retained<AnyObject>,
+    symbol: &'static str,
+    built: NSRect,
+    frame: NSRect,
+}
 #[derive(Default)]
 pub struct Manager {
     desktops: HashMap<Workspace, Desktop>,
@@ -627,6 +642,10 @@ pub struct Manager {
     handoffs: HashMap<u32, MonitorHandoff>,
     pressed: bool,
     preview: Vec<Retained<AnyObject>>,
+    /// One rounded strip per tabbed group, reused across ticks.
+    strips: Vec<TabStrip>,
+    /// Transient SF Symbol hints over the resolved drop destination.
+    badges: Vec<HintBadge>,
     last_scan: Option<Instant>,
     last_area_update: Option<Instant>,
     active_areas: Vec<(Workspace, NSRect)>,
@@ -1154,6 +1173,26 @@ impl Manager {
         self.invalidate();
     }
     fn hide_preview(&self) {
+        self.hide_preview_panels();
+        for strip in &self.strips {
+            unsafe {
+                let visible: bool = msg_send![&*strip.panel, isVisible];
+                if visible {
+                    let _: () = msg_send![&*strip.panel,orderOut:ptr::null::<AnyObject>()];
+                }
+            }
+        }
+        for badge in &self.badges {
+            unsafe {
+                let visible: bool = msg_send![&*badge.panel, isVisible];
+                if visible {
+                    let _: () = msg_send![&*badge.panel,orderOut:ptr::null::<AnyObject>()];
+                }
+            }
+        }
+    }
+    /// Only the destination rectangles; strips and badges keep their own trim.
+    fn hide_preview_panels(&self) {
         for w in &self.preview {
             unsafe {
                 let visible: bool = msg_send![&**w, isVisible];
@@ -1212,6 +1251,160 @@ impl Manager {
                 }
             }
         }
+    }
+    /// One rounded strip per tabbed group, above its slot: app icon plus title
+    /// per tab, with the visible tab lit. Panels are reused; content is only
+    /// rebuilt when the strip's identity or geometry actually changed.
+    fn draw_strips(
+        &mut self,
+        desktop: &Desktop,
+        frames: &[(u32, NSRect)],
+        primary: f64,
+        start: usize,
+    ) -> usize {
+        let mut used = start;
+        let groups: &[Group] = desktop.groups();
+        for group in groups {
+            let Some(leaf) = group.leaf() else { continue };
+            let Some((_, slot)) = frames.iter().find(|(id, _)| *id == leaf) else {
+                continue;
+            };
+            let mut tabs: Vec<(String, Option<Obj>)> = Vec::with_capacity(group.members.len());
+            for id in &group.members {
+                let (pid, element) = self
+                    .windows
+                    .get(id)
+                    .map(|w| (w.pid, w.element.0))
+                    .unwrap_or((0, ptr::null()));
+                tabs.push((window_label(element as Obj, pid), app_icon(pid)));
+            }
+            let widths: Vec<f64> = tabs.iter().map(|(name, _)| tab_width(name)).collect();
+            let total = strip_width(&widths);
+            let panel = rect(
+                slot.origin.x + (slot.size.width - total) / 2.,
+                slot.origin.y + 6.,
+                total,
+                STRIP_HEIGHT,
+            );
+            match self.strips.get_mut(used) {
+                Some(strip) => {
+                    if strip.frame != panel {
+                        unsafe {
+                            let _: () = msg_send![&*strip.panel,setFrame:appkit(panel, primary),display:true];
+                        }
+                        strip.frame = panel;
+                    }
+                    if strip.signature != tabs
+                        || strip.active != group.active
+                        || strip.built != panel
+                    {
+                        let root = unsafe { strip_content(&tabs, group.active, total) };
+                        unsafe {
+                            let _: () = msg_send![&*strip.panel,setContentView:&*root];
+                        }
+                        strip.signature = tabs;
+                        strip.active = group.active;
+                        strip.built = panel;
+                    }
+                    unsafe {
+                        let visible: bool = msg_send![&*strip.panel, isVisible];
+                        if !visible {
+                            let _: () = msg_send![&*strip.panel, orderFrontRegardless];
+                        }
+                    }
+                }
+                None => {
+                    let panel_obj = unsafe { new_overlay(panel, primary) };
+                    let root = unsafe { strip_content(&tabs, group.active, total) };
+                    unsafe {
+                        let _: () = msg_send![&panel_obj,setContentView:&*root];
+                        let _: () = msg_send![&panel_obj, orderFrontRegardless];
+                    }
+                    self.strips.push(TabStrip {
+                        panel: panel_obj,
+                        signature: tabs,
+                        active: group.active,
+                        built: panel,
+                        frame: panel,
+                    });
+                }
+            }
+            used += 1;
+        }
+        used
+    }
+    /// SF Symbol over the pending destination: stacked tab or exchanged slots.
+    fn show_badge(&mut self, intent: DropIntent, slot: NSRect, primary: f64) {
+        let symbol: &'static str = match intent {
+            DropIntent::Group(_) => "square.topthird.inset.filled",
+            DropIntent::Window(..) | DropIntent::Screen(_) => "arrow.left.arrow.right",
+        };
+        let panel = rect(
+            slot.origin.x + (slot.size.width - BADGE_SIZE) / 2.,
+            slot.origin.y + (slot.size.height - BADGE_SIZE) / 2.,
+            BADGE_SIZE,
+            BADGE_SIZE,
+        );
+        match self.badges.get_mut(0) {
+            Some(badge) => {
+                if badge.frame != panel {
+                    unsafe {
+                        let _: () =
+                            msg_send![&*badge.panel,setFrame:appkit(panel, primary),display:true];
+                    }
+                    badge.frame = panel;
+                }
+                if badge.symbol != symbol || badge.built != panel {
+                    let root = unsafe { badge_content(symbol) };
+                    unsafe {
+                        let _: () = msg_send![&*badge.panel,setContentView:&*root];
+                    }
+                    badge.symbol = symbol;
+                    badge.built = panel;
+                }
+                unsafe {
+                    let visible: bool = msg_send![&*badge.panel, isVisible];
+                    if !visible {
+                        let _: () = msg_send![&*badge.panel, orderFrontRegardless];
+                    }
+                }
+            }
+            None => {
+                let panel_obj = unsafe { new_overlay(panel, primary) };
+                let root = unsafe { badge_content(symbol) };
+                unsafe {
+                    let _: () = msg_send![&panel_obj,setContentView:&*root];
+                    let _: () = msg_send![&panel_obj, orderFrontRegardless];
+                }
+                self.badges.push(HintBadge {
+                    panel: panel_obj,
+                    symbol,
+                    built: panel,
+                    frame: panel,
+                });
+            }
+        }
+    }
+    /// Retire the overlays this tick did not use, so stale strips never linger.
+    fn trim_overlays(&mut self, strips: usize, badges: usize) {
+        for strip in self.strips.iter().skip(strips) {
+            unsafe {
+                let visible: bool = msg_send![&*strip.panel, isVisible];
+                if visible {
+                    let _: () = msg_send![&*strip.panel,orderOut:ptr::null::<AnyObject>()];
+                }
+            }
+        }
+        self.strips.truncate(strips);
+        for badge in self.badges.iter().skip(badges) {
+            unsafe {
+                let visible: bool = msg_send![&*badge.panel, isVisible];
+                if visible {
+                    let _: () = msg_send![&*badge.panel,orderOut:ptr::null::<AnyObject>()];
+                }
+            }
+        }
+        self.badges.truncate(badges);
     }
     pub fn prepare_keyboard_transfer(
         &mut self,
@@ -2386,6 +2579,7 @@ impl Manager {
         );
         if down || self.drag.is_some() {
             let mut preview = None;
+            let mut hint: Option<(DropIntent, NSRect)> = None;
             if let Some(drag) = &mut self.drag {
                 if !active
                     .iter()
@@ -2446,6 +2640,7 @@ impl Manager {
                                     },
                                     intent,
                                 );
+                                hint = preview.map(|r| (intent, r));
                             }
                         }
                     }
@@ -2460,15 +2655,30 @@ impl Manager {
                     pointer_workspace,
                     pref(defaults, "tile.resize.preview") != 0,
                 );
+                let primary = primary_height();
                 // One owner updates overlay visibility once per tick. Resize
                 // preference changes cannot hide a move destination afterwards.
+                let mut strips = 0;
+                for (key, area) in active.iter().map(|(k, r)| (*k, *r)) {
+                    if let Some(desktop) = self.desktops.get(&key).cloned() {
+                        let frames = desktop.frames(area, 10.);
+                        strips = self.draw_strips(&desktop, &frames, primary, strips);
+                    }
+                }
                 if let Some(frames) = resize_preview {
                     self.show_previews(&frames);
                 } else if let Some(r) = preview {
                     self.show_preview(r);
                 } else {
-                    self.hide_preview();
+                    self.hide_preview_panels();
                 }
+                let badges = if let Some((intent, slot)) = hint {
+                    self.show_badge(intent, slot, primary);
+                    1
+                } else {
+                    0
+                };
+                self.trim_overlays(strips, badges);
                 return; // Only previews change while macOS owns the native gesture.
             }
         }
@@ -2929,6 +3139,8 @@ impl Manager {
             return;
         }
         // The settle flag was read once for this tick, above.
+        let primary = primary_height();
+        let mut strips_drawn = 0usize;
         for (space, r) in active {
             let d = self.desktops.entry(space).or_default();
             d.grid = if pref(defaults, "tile.grid.enabled") != 0 {
@@ -2977,6 +3189,8 @@ impl Manager {
                 continue;
             }
             let mut hidden: Vec<(u32, NSRect)> = Vec::new();
+            let snapshot = d.clone();
+            strips_drawn = self.draw_strips(&snapshot, &frames, primary, strips_drawn);
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
                     return;
@@ -3027,6 +3241,7 @@ impl Manager {
                 self.place_hidden_tab(id, frame);
             }
         }
+        self.trim_overlays(strips_drawn, 0);
         self.dirty = false;
     }
     /// `frame` is the AX geometry used for placement, never a compositor slide.
@@ -3218,6 +3433,18 @@ fn settle_minimum(minimum: &mut objc2_foundation::NSSize, actual: objc2_foundati
     minimum.width = minimum.width.min(actual.width).max(80.);
     minimum.height = minimum.height.min(actual.height).max(60.);
 }
+/// Height of the primary screen, the reference for AppKit's y-flip.
+fn primary_height() -> f64 {
+    unsafe {
+        let screens: Obj = msg_send![class!(NSScreen), screens];
+        let first: Obj = msg_send![screens, firstObject];
+        if first.is_null() {
+            return 0.;
+        }
+        let frame: NSRect = msg_send![first, frame];
+        frame.size.height
+    }
+}
 
 /// One native Space read per window per tick. The animation, the verification
 /// and the membership scan must agree on the same mid-slide answer.
@@ -3273,6 +3500,236 @@ fn committed_during_settling(settling: bool, applied: Option<NSRect>, target: NS
     settling && applied.is_some_and(|applied| near(applied, target))
 }
 
+/// Height of a tab strip and side of a drop-hint badge, in points.
+const STRIP_HEIGHT: f64 = 26.;
+const BADGE_SIZE: f64 = 34.;
+
+/// Convert global AX (top-left) coordinates to AppKit's bottom-left system.
+fn appkit(r: NSRect, primary_height: f64) -> NSRect {
+    rect(
+        r.origin.x,
+        primary_height - r.origin.y - r.size.height,
+        r.size.width,
+        r.size.height,
+    )
+}
+
+unsafe fn new_overlay(frame: NSRect, primary_height: f64) -> Retained<AnyObject> {
+    unsafe {
+        let panel: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
+        let panel: Retained<AnyObject> = msg_send![panel,initWithContentRect:appkit(frame, primary_height),styleMask:128usize,backing:2usize,defer:false];
+        let _: () = msg_send![&panel,setReleasedWhenClosed:false];
+        let _: () = msg_send![&panel,setOpaque:false];
+        let clear: Obj = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![&panel,setBackgroundColor:clear];
+        let _: () = msg_send![&panel,setIgnoresMouseEvents:true];
+        let _: () = msg_send![&panel,setHasShadow:false];
+        let _: () = msg_send![&panel,setAnimationBehavior:2isize];
+        let _: () = msg_send![&panel,setLevel:3isize];
+        let _: () = msg_send![&panel,setCollectionBehavior:((1usize<<0)|(1<<3)|(1<<6)|(1<<8))];
+        panel
+    }
+}
+
+/// A dark, slightly translucent rounded card hosting the tab captions.
+unsafe fn translucent_card(frame: NSRect) -> Retained<AnyObject> {
+    unsafe {
+        let root = alloc_view(class!(NSVisualEffectView), frame);
+        let _: () = msg_send![&root,setMaterial:13isize];
+        let _: () = msg_send![&root,setBlendingMode:0isize];
+        let _: () = msg_send![&root,setState:1isize];
+        let _: () = msg_send![&root,setWantsLayer:true];
+        let layer: Obj = msg_send![&root, layer];
+        let _: () = msg_send![layer,setCornerRadius:9f64];
+        let _: () = msg_send![layer,setMasksToBounds:true];
+        root
+    }
+}
+
+unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, radius: f64) {
+    unsafe {
+        let view = alloc_view(class!(NSView), frame);
+        let _: () = msg_send![&view,setWantsLayer:true];
+        let layer: Obj = msg_send![&view, layer];
+        let c = color(rgb[0], rgb[1], rgb[2], alpha);
+        let cg: *const std::ffi::c_void = msg_send![c, CGColor];
+        let _: () = msg_send![layer,setBackgroundColor:cg];
+        let _: () = msg_send![layer,setCornerRadius:radius];
+        let _: () = msg_send![parent,addSubview:&*view];
+    }
+}
+
+unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
+    unsafe {
+        let field: Allocated<AnyObject> = msg_send![class!(NSTextField), alloc];
+        let field: Retained<AnyObject> = msg_send![field,initWithFrame:frame];
+        let _: () = msg_send![&field,setStringValue:&*NSString::from_str(value)];
+        let _: () = msg_send![&field,setEditable:false];
+        let _: () = msg_send![&field,setBordered:false];
+        let _: () = msg_send![&field,setDrawsBackground:false];
+        let _: () = msg_send![&field,setUsesSingleLineMode:true];
+        let _: () = msg_send![&field,setLineBreakMode:4isize];
+        let font: Obj =
+            msg_send![class!(NSFont),systemFontOfSize:11f64,weight:if bold {0.4f64} else {0.}];
+        let _: () = msg_send![&field,setFont:font];
+        let text: Obj =
+            msg_send![class!(NSColor), colorWithSRGBRed:0.96,green:0.97,blue:1.,alpha:1.];
+        let _: () = msg_send![&field,setTextColor:text];
+        let _: () = msg_send![&field,setAccessibilityLabel:&*NSString::from_str(value)];
+        let _: () = msg_send![parent,addSubview:&*field];
+    }
+}
+
+/// One pill per member: the app's own icon plus its window title, with the
+/// visible tab lit by the accent plate behind it.
+unsafe fn strip_content(
+    tabs: &[(String, Option<Obj>)],
+    active: usize,
+    total: f64,
+) -> Retained<AnyObject> {
+    unsafe {
+        let root = translucent_card(rect(0., 0., total, STRIP_HEIGHT));
+        let parent = Retained::as_ptr(&root) as Obj;
+        let mut x = 4.;
+        for (index, (name, icon)) in tabs.iter().enumerate() {
+            let width = tab_width(name);
+            let plate = rect(x, 4., width, STRIP_HEIGHT - 8.);
+            if index == active {
+                rounded_plate(parent, plate, [0.48, 0.60, 1.], 0.85, 6.);
+            } else {
+                rounded_plate(parent, plate, [1., 1., 1.], 0.10, 6.);
+            }
+            let inner = x + 6.;
+            let mut text_x = inner;
+            let icon: Option<Obj> = *icon;
+            if let Some(icon) = icon {
+                let image: Allocated<AnyObject> = msg_send![class!(NSImageView), alloc];
+                let image: Retained<AnyObject> =
+                    msg_send![image,initWithFrame:rect(inner, 7., 12., 12.)];
+                let _: () = msg_send![&image,setImage:icon];
+                let _: () = msg_send![&image,setImageScaling:3isize];
+                let _: () = msg_send![&root,addSubview:&*image];
+                text_x = inner + 16.;
+            }
+            caption(
+                parent,
+                rect(text_x, 6., (x + width - 6. - text_x).max(8.), 14.),
+                name,
+                index == active,
+            );
+            x = plate.origin.x + plate.size.width + 4.;
+        }
+        root
+    }
+}
+
+unsafe fn badge_content(symbol: &str) -> Retained<AnyObject> {
+    unsafe {
+        let root = translucent_card(rect(0., 0., BADGE_SIZE, BADGE_SIZE));
+        let image: *mut AnyObject = msg_send![class!(NSImage),imageWithSystemSymbolName:&*NSString::from_str(symbol),accessibilityDescription:&*NSString::from_str(symbol)];
+        if !image.is_null() {
+            let view: Allocated<AnyObject> = msg_send![class!(NSImageView), alloc];
+            let view: Retained<AnyObject> =
+                msg_send![view,initWithFrame:rect(7., 7., BADGE_SIZE - 14., BADGE_SIZE - 14.)];
+            let _: () = msg_send![&view,setImage:image];
+            let _: () = msg_send![&view,setImageScaling:3isize];
+            let tint: Obj =
+                msg_send![class!(NSColor), colorWithSRGBRed:0.96,green:0.97,blue:1.,alpha:1.];
+            let _: () = msg_send![&view,setContentTintColor:tint];
+            let _: () = msg_send![&root,addSubview:&*view];
+        }
+        root
+    }
+}
+
+fn tab_width(name: &str) -> f64 {
+    (name.chars().count() as f64 * 6.4 + 34.).clamp(30., 220.)
+}
+
+fn strip_width(widths: &[f64]) -> f64 {
+    let count = widths.len();
+    if count == 0 {
+        return 0.;
+    }
+    widths.iter().sum::<f64>() + 4. * (count - 1) as f64 + 8.
+}
+
+/// The window's own title when AX has one, otherwise its application name.
+fn window_label(element: Obj, pid: i32) -> String {
+    let title = ax::attr(element as ax::Cf, "AXTitle")
+        .and_then(|value| unsafe { (value.0 as *const NSString).as_ref() })
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    title.or_else(|| app_name(pid)).unwrap_or_default()
+}
+
+fn app_name(pid: i32) -> Option<String> {
+    unsafe {
+        let app: *mut AnyObject =
+            msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:pid];
+        if app.is_null() {
+            return None;
+        }
+        let name: *mut NSString = msg_send![app, localizedName];
+        name.as_ref().map(|s| s.to_string())
+    }
+}
+
+fn app_icon(pid: i32) -> Option<Obj> {
+    unsafe {
+        let app: *mut AnyObject =
+            msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:pid];
+        if app.is_null() {
+            return None;
+        }
+        let icon: *mut AnyObject = msg_send![app, icon];
+        (!icon.is_null()).then_some(icon)
+    }
+}
+#[test]
+fn strip_and_badge_geometry_stays_inside_the_slot_and_matches_its_tabs() {
+    let area = rect(0., 30., 1600., 900.);
+    let mut base = Desktop::configured(Layout::Grid, None);
+    base.reconcile(&[1, 2, 3], area, 10.);
+    let desktop = base
+        .proposed_drop(3, DropIntent::Group(1), area, 10.)
+        .expect("join must fit");
+    let frames = desktop.frames(area, 10.);
+    let slot = frames.iter().find(|(id, _)| *id == 3).unwrap().1;
+    let names: Vec<String> = desktop
+        .tab_strip(3)
+        .map(|(members, _)| members.iter().map(|id| format!("v{id}")).collect())
+        .unwrap();
+    let widths: Vec<f64> = names.iter().map(|n| tab_width(n)).collect();
+    let total = strip_width(&widths);
+    // Two tabs: their own widths plus one inner gap and the two margins.
+    assert_eq!(total, widths.iter().sum::<f64>() + 12.);
+    let panel = rect(
+        slot.origin.x + (slot.size.width - total) / 2.,
+        slot.origin.y + 6.,
+        total,
+        STRIP_HEIGHT,
+    );
+    assert!(panel.origin.x >= slot.origin.x);
+    assert!(panel.origin.x + panel.size.width <= slot.origin.x + slot.size.width);
+    assert!(panel.origin.y >= slot.origin.y);
+    assert!(panel.origin.y + panel.size.height <= slot.origin.y + slot.size.height);
+    // The badge is centered on the same slot and never overflows it.
+    let badge = rect(
+        slot.origin.x + (slot.size.width - BADGE_SIZE) / 2.,
+        slot.origin.y + (slot.size.height - BADGE_SIZE) / 2.,
+        BADGE_SIZE,
+        BADGE_SIZE,
+    );
+    assert!(badge.origin.x >= slot.origin.x);
+    assert!(badge.origin.y >= slot.origin.y);
+    assert!(badge.origin.x + badge.size.width <= slot.origin.x + slot.size.width + 0.001);
+    assert!(badge.origin.y + badge.size.height <= slot.origin.y + slot.size.height + 0.001);
+    // The y-flip uses the primary height, not the slot's own height.
+    let flipped = appkit(badge, 1000.);
+    assert_eq!(flipped.origin.y, 1000. - badge.origin.y - BADGE_SIZE);
+    assert_eq!(strip_width(&[]), 0.);
+}
 #[cfg(test)]
 mod tests {
     use super::*;
