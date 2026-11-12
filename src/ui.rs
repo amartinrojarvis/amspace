@@ -117,11 +117,22 @@ struct PendingFocus {
     verify: bool,
     retries: u8,
 }
+struct TabMenuState {
+    context: crate::tile_manager::TabContext,
+    actions: Vec<crate::tile_manager::TabAction>,
+    selected: Option<crate::tile_manager::TabAction>,
+}
 struct App {
     tile_manager: crate::tile_manager::Manager,
     tile_timer: Option<Retained<AnyObject>>,
     tile_mouse: Option<crate::tile_mouse::Monitor>,
     tile_interval: f64,
+    tiling_paused: bool,
+    pause_button: Obj,
+    tab_menu: Option<TabMenuState>,
+    guide: Option<crate::discovery::Guide>,
+    notice: Option<crate::discovery::Notice>,
+    tab_shortcuts_switch: Obj,
     shortcuts: crate::shortcuts::Service,
     shortcut_config: Option<(Vec<crate::shortcuts::Binding>, bool)>,
     shortcut_status: Obj,
@@ -237,7 +248,7 @@ unsafe fn value(defaults: Obj, key: &str) -> bool {
 unsafe fn number(defaults: Obj, key: &str) -> f64 {
     unsafe { msg_send![defaults, doubleForKey:&*NSString::from_str(key)] }
 }
-unsafe fn window(frame: NSRect, style: usize) -> Retained<AnyObject> {
+pub(crate) unsafe fn window(frame: NSRect, style: usize) -> Retained<AnyObject> {
     unsafe {
         let w: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
         let w: Retained<AnyObject> =
@@ -246,7 +257,13 @@ unsafe fn window(frame: NSRect, style: usize) -> Retained<AnyObject> {
         w
     }
 }
-unsafe fn button(parent: Obj, frame: NSRect, title: &str, target: Obj, tag: isize) -> Obj {
+pub(crate) unsafe fn button(
+    parent: Obj,
+    frame: NSRect,
+    title: &str,
+    target: Obj,
+    tag: isize,
+) -> Obj {
     unsafe {
         let b = alloc_view(class!(NSButton), frame);
         let _: () = msg_send![&b, setTitle:&*NSString::from_str(title)];
@@ -292,7 +309,7 @@ unsafe fn toggle(
         Retained::as_ptr(&s) as Obj
     }
 }
-unsafe fn card(parent: Obj, frame: NSRect) {
+pub(crate) unsafe fn card(parent: Obj, frame: NSRect) {
     unsafe {
         let b = alloc_view(class!(NSBox), frame);
         let _: () = msg_send![&b, setBoxType:4usize]; // NSBoxCustom
@@ -459,6 +476,22 @@ impl App {
         unsafe {
             let defaults: Retained<AnyObject> =
                 msg_send![class!(NSUserDefaults), standardUserDefaults];
+            let mut app = Self::build(target, defaults);
+            app.updater = Updater::new();
+            app.ensure_desktop_observer();
+            crate::desktop_mode::refresh();
+            app.tile_manager
+                .set_presentation(crate::desktop_mode::current());
+            app.apply_bar_background();
+            app.refresh_spaces();
+            app.update_window();
+            app.configure_hover();
+            app.configure_tiling();
+            app
+        }
+    }
+    unsafe fn build(target: Retained<AnyObject>, defaults: Retained<AnyObject>) -> Self {
+        unsafe {
             let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
             let status: Retained<AnyObject> = msg_send![bar, statusItemWithLength:-1f64];
             let b: Obj = msg_send![&status, button];
@@ -497,7 +530,11 @@ impl App {
                     if n.is_finite() { n.clamp(0., 1.) } else { 0.5 }
                 })
             };
-            let mut a = Self {
+            // The strip follows the very same persisted border color, so one
+            // preference read seeds both the border layer and the tabs.
+            let mut tile_manager = crate::tile_manager::Manager::with_tab_target(target.clone());
+            tile_manager.set_tab_accent(rgb);
+            Self {
                 border_enabled: value(Retained::as_ptr(&defaults) as Obj, "border"),
                 border_paint: None,
                 status_detail: String::new(),
@@ -515,10 +552,16 @@ impl App {
                 flash_panel: None,
                 hover_enabled: value(Retained::as_ptr(&defaults) as Obj, "hover"),
                 raise_enabled: value(Retained::as_ptr(&defaults) as Obj, "raise"),
-                tile_manager: crate::tile_manager::Manager::with_tab_target(target.clone()),
+                tile_manager,
                 tile_timer: None,
                 tile_mouse: None,
                 tile_interval: 0.,
+                tiling_paused: false,
+                pause_button: ptr::null_mut(),
+                tab_menu: None,
+                guide: None,
+                notice: None,
+                tab_shortcuts_switch: ptr::null_mut(),
                 shortcuts: Default::default(),
                 shortcut_config: None,
                 shortcut_status: ptr::null_mut(),
@@ -569,7 +612,7 @@ impl App {
                 settings: None,
                 settings_timer: None,
                 about: None,
-                updater: Updater::new(),
+                updater: None,
                 updates_switch: ptr::null_mut(),
                 tabs: ptr::null_mut(),
                 page_title: ptr::null_mut(),
@@ -605,17 +648,7 @@ impl App {
                 border_switch: ptr::null_mut(),
                 hover_switch: ptr::null_mut(),
                 slider: ptr::null_mut(),
-            };
-            a.ensure_desktop_observer();
-            crate::desktop_mode::refresh();
-            a.tile_manager
-                .set_presentation(crate::desktop_mode::current());
-            a.apply_bar_background();
-            a.refresh_spaces();
-            a.update_window();
-            a.configure_hover();
-            a.configure_tiling();
-            a
+            }
         }
     }
     fn save(&self) {
@@ -1211,6 +1244,7 @@ impl App {
     }
     fn hover(&mut self) {
         if self.layout_picker.is_some()
+            || self.tab_menu.is_some()
             || self.transfer.is_some()
             || self.switching.is_some()
             || Instant::now() < self.hover_resume
@@ -1457,6 +1491,13 @@ impl App {
                 0.3,
                 false,
             );
+            self.pause_button = button(
+                side,
+                rect(12., 109., 160., 28.),
+                "Pausar Mosaico",
+                target,
+                110,
+            );
             build_navigation(side, rect(12., 25., 160., 80.), target, true);
             self.page_title = label(
                 root,
@@ -1549,6 +1590,7 @@ impl App {
             let _: () = msg_send![self.feedback, setMaximumNumberOfLines:2isize];
             let _: () = msg_send![self.feedback,setSelectable:true];
             self.settings = Some(w);
+            self.refresh_pause_button();
         }
     }
     unsafe fn build_window_page(&mut self, root: Obj, target: Obj) {
@@ -1676,6 +1718,7 @@ impl App {
         if !self.shortcuts.available(action)
             || self.sleeping
             || self.transfer.is_some()
+            || self.tab_menu.is_some()
             || focus::secure_input()
             || crate::desktop_mode::active()
         {
@@ -1692,13 +1735,32 @@ impl App {
                 }
             }
             Action::Float => {
-                if self.switching.is_none() && self.layout_picker.is_none() {
+                if !self.tiling_paused && self.switching.is_none() && self.layout_picker.is_none() {
                     self.tile_manager
                         .toggle_float(Retained::as_ptr(&self.defaults) as Obj);
                     self.update_tile_timer();
                 }
             }
             Action::Layouts => self.toggle_picker(),
+            Action::PreviousTab | Action::NextTab | Action::DetachTab => {
+                if let Some(reason) = self.tab_block_reason() {
+                    self.show_notice(reason);
+                    return;
+                }
+                let result = if action == Action::DetachTab {
+                    self.tile_manager.detach_active_tab()
+                } else {
+                    self.tile_manager.cycle_tab(action == Action::NextTab)
+                };
+                match result {
+                    Ok(()) => {
+                        self.hover_resume = Instant::now() + Duration::from_millis(600);
+                        self.update_tile_timer();
+                        self.settle_focus();
+                    }
+                    Err(reason) => self.show_notice(reason),
+                }
+            }
             Action::SendSpace(index) => {
                 self.start_transfer(crate::window_move::Destination::Space(index as usize))
             }
@@ -1711,6 +1773,10 @@ impl App {
         }
     }
     fn start_transfer(&mut self, destination: crate::window_move::Destination) {
+        if self.tiling_paused {
+            self.show_notice("Reanuda Mosaico antes de trasladar una ventana.");
+            return;
+        }
         if self.switching.is_some() || self.layout_picker.is_some() || self.transfer.is_some() {
             self.record_transfer(
                 "Espera a que termine el cambio de escritorio o el traslado anterior.",
@@ -1809,7 +1875,8 @@ impl App {
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         let tiling = crate::tile_manager::pref(defaults, "tile.enabled") != 0
             && ax::trusted()
-            && !crate::desktop_mode::active();
+            && !crate::desktop_mode::active()
+            && !self.tiling_paused;
         let mut bindings = if self.sleeping {
             vec![]
         } else {
@@ -1832,6 +1899,9 @@ impl App {
     fn refresh_shortcut_fields(&self) {
         unsafe {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
+            if !self.tab_shortcuts_switch.is_null() {
+                let _: () = msg_send![self.tab_shortcuts_switch, setState:crate::tile_manager::pref(defaults, "tile.tabs.enabled").clamp(0, 1)];
+            }
             if !self.picker_mods.is_null() {
                 let _: () = msg_send![self.picker_mods,selectItemAtIndex:crate::tile_hotkey::modifier_index(crate::tile_manager::pref(defaults,"tile.picker.mods")) as isize];
                 let _: () = msg_send![self.picker_keys,selectItemAtIndex:crate::tile_hotkey::key_index(crate::tile_manager::pref_or(defaults,"tile.picker.key",2)) as isize];
@@ -1886,12 +1956,19 @@ impl App {
     unsafe fn build_shortcuts_page(&mut self, root: Obj, target: Obj) {
         unsafe {
             let bounds: NSRect = msg_send![root, bounds];
-            let width = bounds.size.width;
+            let scroll = alloc_view(class!(NSScrollView), bounds);
+            let _: () = msg_send![&scroll, setHasVerticalScroller:true];
+            let _: () = msg_send![&scroll, setAutohidesScrollers:true];
+            let _: () = msg_send![&scroll, setDrawsBackground:false];
+            let _: () = msg_send![root, addSubview:&*scroll];
+            let document = alloc_view(class!(NSView), rect(0., 0., bounds.size.width - 16., 740.));
+            let root = Retained::as_ptr(&document) as Obj;
+            let width = bounds.size.width - 16.;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
-            card(root, rect(0., 480., width, 90.));
+            card(root, rect(0., 650., width, 90.));
             label(
                 root,
-                rect(18., 530., width - 90., 24.),
+                rect(18., 700., width - 90., 24.),
                 "Navegación y traslado de ventanas",
                 14.,
                 0.3,
@@ -1900,7 +1977,7 @@ impl App {
             toggle(
                 root,
                 width - 58.,
-                530.,
+                700.,
                 "Activar atajos de navegación y traslado",
                 target,
                 90,
@@ -1908,7 +1985,7 @@ impl App {
             );
             label(
                 root,
-                rect(18., 492., width - 36., 28.),
+                rect(18., 662., width - 36., 28.),
                 "Activa los atajos nuevos cuando hayas elegido tus combinaciones.",
                 11.,
                 0.,
@@ -1916,7 +1993,7 @@ impl App {
             );
             let priority = button(
                 root,
-                rect(18., 444., width - 36., 26.),
+                rect(18., 614., width - 36., 26.),
                 "Dar prioridad a los atajos de AMSpace",
                 target,
                 91,
@@ -1925,18 +2002,18 @@ impl App {
             let _: () = msg_send![priority,setState:crate::tile_manager::pref(defaults,"shortcuts.priority").clamp(0,1)];
             label(
                 root,
-                rect(18., 416., width - 36., 22.),
+                rect(18., 586., width - 36., 22.),
                 "macOS, otras herramientas de teclado y la entrada segura pueden limitarla.",
                 11.,
                 0.,
                 true,
             );
             self.shortcut_status =
-                label(root, rect(18., 365., width - 155., 44.), "", 10., 0., true);
+                label(root, rect(18., 535., width - 155., 44.), "", 10., 0., true);
             let _: () = msg_send![self.shortcut_status,setMaximumNumberOfLines:2isize];
             button(
                 root,
-                rect(width - 130., 380., 112., 26.),
+                rect(width - 130., 550., 112., 26.),
                 "Sugerencias…",
                 target,
                 54,
@@ -1956,11 +2033,14 @@ impl App {
                 ("Enviar a pantalla derecha", "shortcuts.right", 9, Some(51)),
                 ("Ventana flotante / mosaico", "tile", 0, Some(0)),
                 ("Selector de plantillas", "tile.picker", 0, Some(2)),
+                ("Pestaña anterior", "tile.tab.previous", 0, Some(50)),
+                ("Pestaña siguiente", "tile.tab.next", 0, Some(51)),
+                ("Separar pestaña activa", "tile.tab.detach", 0, Some(7)),
             ]
             .into_iter()
             .enumerate()
             {
-                let y = 326. - row as f64 * 43.;
+                let y = 496. - row as f64 * 43.;
                 label(
                     root,
                     rect(18., y + 3., width - 300., 22.),
@@ -1999,6 +2079,14 @@ impl App {
                     );
                 }
             }
+            self.tab_shortcuts_switch = button(
+                root,
+                rect(18., 104., width - 36., 26.),
+                "Activar atajos de pestañas (requiere Mosaico)",
+                target,
+                94,
+            );
+            let _: () = msg_send![self.tab_shortcuts_switch, setButtonType:3usize];
             let stay = button(
                 root,
                 rect(18., 59., width - 36., 26.),
@@ -2016,6 +2104,9 @@ impl App {
                 0.,
                 true,
             );
+            let _: () = msg_send![&scroll, setDocumentView:&*document];
+            let _: () =
+                msg_send![root, scrollPoint:NSPoint::new(0., (740. - bounds.size.height).max(0.))];
             self.refresh_shortcut_fields();
             self.refresh_shortcut_status();
         }
@@ -2031,6 +2122,7 @@ impl App {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             if crate::tile_manager::pref(defaults, "tile.enabled") == 0
                 || self.sleeping
+                || self.tiling_paused
                 || crate::desktop_mode::active()
                 || !ax::trusted()
             {
@@ -2042,6 +2134,8 @@ impl App {
                 autoreleasepool(|_| {
                     with_app(|a| {
                         if a.layout_picker.is_some()
+                            || a.tiling_paused
+                            || a.tab_menu.is_some()
                             || a.transfer.is_some()
                             || a.switching.is_some()
                             || a.sleeping
@@ -2053,6 +2147,9 @@ impl App {
                             down,
                             point,
                         );
+                        if let Some(error) = a.tile_manager.interaction_error.take() {
+                            a.show_notice(&error);
+                        }
                         a.update_tile_timer();
                     })
                 });
@@ -2063,6 +2160,14 @@ impl App {
         }
     }
     fn update_tile_timer(&mut self) {
+        if self.tiling_paused {
+            if let Some(timer) = self.tile_timer.take() {
+                unsafe {
+                    let _: () = msg_send![&timer, invalidate];
+                }
+            }
+            return;
+        }
         let interval = self.tile_manager.tick_interval();
         if self.tile_timer.is_some() && self.tile_interval == interval {
             return;
@@ -2100,7 +2205,7 @@ impl App {
                 "Selecciona un escritorio".into()
             };
             text(self.tile_controls[0], &title);
-            let enabled = self.tile_space.is_some();
+            let enabled = self.tile_space.is_some() && !self.tiling_paused;
             let _: () = msg_send![self.tile_controls[1],setEnabled:enabled];
             let context = self.tile_manager.picker_context();
             let area = context.as_ref().map(|c| c.area).unwrap_or_else(|| {
@@ -2499,6 +2604,10 @@ Otras apps pueden tener atajos propios no detectables.",
         }
     }
     fn toggle_picker(&mut self) {
+        if self.tiling_paused {
+            self.show_notice("Reanuda Mosaico antes de cambiar la plantilla.");
+            return;
+        }
         if self.layout_picker.take().is_some() {
             return;
         }
@@ -3061,6 +3170,13 @@ Otras apps pueden tener atajos propios no detectables.",
                 target,
                 99,
             );
+            button(
+                root,
+                rect(14., 0., 222., 30.),
+                "Instalación y ayuda…",
+                target,
+                113,
+            );
         }
     }
     fn apply_bar_background(&self) {
@@ -3331,11 +3447,18 @@ Otras apps pueden tener atajos propios no detectables.",
         }
     }
     fn refresh_permission(&self) {
+        if self.guide.is_none() && self.permission.is_null() {
+            return;
+        }
+        let trusted = ax::trusted();
         unsafe {
+            if let Some(guide) = &self.guide {
+                guide.refresh(trusted);
+            }
             if !self.permission.is_null() {
                 text(
                     self.permission,
-                    if ax::trusted() {
+                    if trusted {
                         "● Accesibilidad concedida"
                     } else {
                         "○ Borde, foco y tiling requieren Accesibilidad"
@@ -3350,6 +3473,89 @@ Otras apps pueden tener atajos propios no detectables.",
                 text(self.feedback, message);
             }
         }
+    }
+    fn show_notice(&mut self, message: &str) {
+        self.feedback(message);
+        self.notice
+            .get_or_insert_with(crate::discovery::Notice::new)
+            .show(message);
+        unsafe {
+            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(hideNotice:), object:ptr::null::<AnyObject>()];
+            let _: () = msg_send![&self.target, performSelector:sel!(hideNotice:), withObject:ptr::null::<AnyObject>(), afterDelay:5f64];
+        }
+    }
+    fn show_guide(&mut self) {
+        self.show_guide_page(0);
+    }
+    fn show_guide_page(&mut self, page: usize) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let tips = crate::tile_manager::pref_or(defaults, "help.tips", 1) != 0;
+        let target = Retained::as_ptr(&self.target) as Obj;
+        self.guide
+            .get_or_insert_with(|| crate::discovery::Guide::new(target, tips))
+            .show(ax::trusted(), tips, page);
+        let seen = crate::tile_manager::pref(defaults, "help.seen");
+        crate::tile_manager::save(defaults, "help.seen", seen | 1);
+    }
+    fn show_tip(&mut self, bit: isize, message: &str) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let seen = crate::tile_manager::pref(defaults, "help.seen");
+        if crate::tile_manager::pref_or(defaults, "help.tips", 1) != 0 && seen & bit == 0 {
+            crate::tile_manager::save(defaults, "help.seen", seen | bit);
+            self.show_notice(message);
+        }
+    }
+    fn tab_block_reason(&self) -> Option<&'static str> {
+        if self.tiling_paused {
+            Some("Mosaico está en pausa. Reanúdalo en Ajustes.")
+        } else if !ax::trusted() {
+            Some("Concede Accesibilidad a AMSpace para gestionar las ventanas.")
+        } else if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled")
+            == 0
+        {
+            Some("Activa Mosaico en Ajustes para gestionar las pestañas.")
+        } else if self.sleeping
+            || crate::desktop_mode::active()
+            || self.switching.is_some()
+            || self.transfer.is_some()
+            || self.layout_picker.is_some()
+        {
+            Some("Espera a que termine la transición o cierra el selector de plantillas.")
+        } else {
+            None
+        }
+    }
+    fn refresh_pause_button(&self) {
+        if self.pause_button.is_null() {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![self.pause_button, setTitle:&*NSString::from_str(if self.tiling_paused { "Reanudar Mosaico" } else { "Pausar Mosaico" })];
+            let _: () = msg_send![self.pause_button, setEnabled:crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") != 0];
+        }
+    }
+    fn toggle_mosaic_pause(&mut self) {
+        if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") == 0 {
+            self.show_notice("Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.");
+            return;
+        }
+        if self.transfer.is_some() || self.switching.is_some() {
+            self.show_notice(
+                "Espera a que termine el traslado o cambio de escritorio antes de pausar.",
+            );
+            return;
+        }
+        self.tiling_paused = !self.tiling_paused;
+        self.layout_picker = None;
+        if self.tiling_paused {
+            self.tile_manager.pause_user();
+        }
+        self.configure_tiling();
+        self.refresh_pause_button();
+        self.refresh_tile_controls();
+        self.show_notice(if self.tiling_paused {
+            "Mosaico en pausa. Conserva la distribución y deja de colocar ventanas. Reanúdalo en la barra lateral de Ajustes."
+        } else { "Mosaico reanudado." });
     }
     fn record_transfer(&mut self, message: &str, feedback: bool) {
         if self.transfer_history.len() == 16 {
@@ -3444,6 +3650,11 @@ Otras apps pueden tener atajos propios no detectables.",
                 return;
             }
             self.feedback("");
+            if self.tiling_paused && matches!(tag, 41 | 80..=87 | 95 | 97) {
+                self.show_notice("Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución.");
+                self.refresh_tile_controls();
+                return;
+            }
             match tag {
                 1 => {
                     let state: isize = msg_send![sender, state];
@@ -3541,7 +3752,12 @@ Otras apps pueden tener atajos propios no detectables.",
                             if selected == 0 {
                                 self.tile_manager.restore();
                             }
+                            self.tiling_paused = false;
                             self.configure_tiling();
+                            self.refresh_pause_button();
+                            if selected != 0 {
+                                self.show_tip(2, "Agrupa soltando una ventana en la parte superior de otra. Arrastra una pestaña para separarla; clic derecho para ver sus acciones.");
+                            }
                         }
                         41 => {
                             if let Some(id) = self.tile_space {
@@ -3604,6 +3820,7 @@ Otras apps pueden tener atajos propios no detectables.",
                             value,
                         );
                         // Only admission changes; existing groups keep their members.
+                        self.tile_manager.set_max_group_tabs(value as usize);
                         self.tile_manager.invalidate();
                     } else {
                         self.feedback("El máximo de pestañas admite valores enteros entre 2 y 20.");
@@ -3641,12 +3858,47 @@ Otras apps pueden tener atajos propios no detectables.",
                     crate::tile_manager::save(Retained::as_ptr(&self.defaults) as Obj, key, state);
                     self.configure_shortcuts();
                 }
-                300..=311 => {
+                300..=399 => {
                     if let Some((_, key, _, _)) = self.shortcut_fields.get((tag - 300) as usize) {
                         let key = key.clone();
                         let selected: isize = msg_send![sender, indexOfSelectedItem];
                         self.edit_shortcuts(&[(&key, selected)]);
                     }
+                }
+                94 => {
+                    let state: isize = msg_send![sender, state];
+                    self.edit_shortcuts(&[("tile.tabs.enabled", state)]);
+                }
+                110 => {
+                    self.toggle_mosaic_pause();
+                    return;
+                }
+                111 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "help.tips",
+                        state,
+                    );
+                    return;
+                }
+                112 => {
+                    if let Some(guide) = &self.guide {
+                        guide.hide();
+                    }
+                    return;
+                }
+                113 => {
+                    self.show_guide();
+                    return;
+                }
+                114 => {
+                    open_url("x-apple.systempreferences:com.apple.preference.security");
+                    return;
+                }
+                115 => {
+                    self.refresh_permission();
+                    return;
                 }
                 54 => self.show_picker_settings(),
                 62 => {
@@ -3806,6 +4058,10 @@ Otras apps pueden tener atajos propios no detectables.",
             }
             self.refresh_shortcut_fields();
             self.save();
+            // One shared source of truth: the tabs follow the border's own color
+            // at once, whether it came from the well or a preset, and even while
+            // the border layer itself is switched off.
+            self.tile_manager.set_tab_accent(self.rgb);
             self.update_window();
             self.refresh_permission();
             if (tag == 1 || tag == 2) && !ax::trusted() {
@@ -4312,10 +4568,180 @@ extern "C-unwind" fn desktop_distributed(_: Obj, _: Sel, notification: Obj) {
         }
     }
 }
+extern "C-unwind" fn hide_notice(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| {
+        if let Some(notice) = &a.notice {
+            notice.hide();
+        }
+    });
+}
+extern "C-unwind" fn show_guide(_: Obj, _: Sel, _: Obj) {
+    with_app(App::show_guide);
+}
+extern "C-unwind" fn show_tab_guide(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.show_guide_page(1));
+}
+extern "C-unwind" fn initial_help(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| {
+        let defaults = Retained::as_ptr(&a.defaults) as Obj;
+        if crate::tile_manager::pref_or(defaults, "help.tips", 1) != 0
+            && crate::tile_manager::pref(defaults, "help.seen") & 1 == 0
+        {
+            a.show_guide();
+        }
+    });
+}
+extern "C-unwind" fn toggle_mosaic_pause(_: Obj, _: Sel, _: Obj) {
+    with_app(App::toggle_mosaic_pause);
+}
+extern "C-unwind" fn show_tile_tab_menu(_: Obj, _: Sel, button: Obj, event: Obj) {
+    show_tab_menu(button, event);
+}
+extern "C-unwind" fn tab_menu_action(_: Obj, _: Sel, sender: Obj) {
+    let tag: isize = unsafe { msg_send![sender, tag] };
+    with_app(|a| {
+        if let Some(menu) = &mut a.tab_menu {
+            menu.selected = usize::try_from(tag)
+                .ok()
+                .and_then(|i| menu.actions.get(i))
+                .copied();
+        }
+    });
+}
+
+unsafe fn tab_menu(
+    target: Obj,
+    targets: Vec<crate::tile_manager::TabGroupTarget>,
+) -> (Retained<AnyObject>, Vec<crate::tile_manager::TabAction>) {
+    use crate::tile_manager::TabAction;
+    unsafe {
+        let menu: Retained<AnyObject> = msg_send![class!(NSMenu), new];
+        let _: () = msg_send![&menu, setAutoenablesItems:false];
+        let mut actions = vec![TabAction::Detach, TabAction::Float, TabAction::Close];
+        let add = |menu: &Retained<AnyObject>,
+                   title: &str,
+                   action: Sel,
+                   tag: isize,
+                   enabled: bool|
+         -> Retained<AnyObject> {
+            let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
+            let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(title), action:action, keyEquivalent:&*NSString::from_str("")];
+            let _: () = msg_send![&item, setTarget:target];
+            let _: () = msg_send![&item, setTag:tag];
+            let _: () = msg_send![&item, setEnabled:enabled];
+            let _: () = msg_send![menu, addItem:&*item];
+            item
+        };
+        add(&menu, "Separar del grupo", sel!(tabMenuAction:), 0, true);
+        add(&menu, "Hacer flotante", sel!(tabMenuAction:), 1, true);
+        let move_item = add(&menu, "Mover a otro grupo", sel!(tabMenuAction:), -1, true);
+        let destinations: Retained<AnyObject> = msg_send![class!(NSMenu), new];
+        let _: () = msg_send![&destinations, setAutoenablesItems:false];
+        if targets.is_empty() {
+            add(
+                &destinations,
+                "No hay otros grupos en este escritorio y pantalla",
+                sel!(tabMenuAction:),
+                -1,
+                false,
+            );
+        }
+        for target in targets {
+            let title = if let Some(reason) = target.unavailable {
+                format!("{} — {reason}", target.title)
+            } else {
+                target.title
+            };
+            add(
+                &destinations,
+                &title,
+                sel!(tabMenuAction:),
+                actions.len() as isize,
+                target.unavailable.is_none(),
+            );
+            actions.push(TabAction::MoveToGroup(target.id));
+        }
+        let _: () = msg_send![&move_item, setSubmenu:&*destinations];
+        add(&menu, "Cerrar ventana", sel!(tabMenuAction:), 2, true);
+        let separator: Obj = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![&menu, addItem:separator];
+        add(&menu, "Pausar Mosaico", sel!(toggleMosaicPause:), -1, true);
+        add(&menu, "Ayuda de pestañas…", sel!(showTabGuide:), -1, true);
+        (menu, actions)
+    }
+}
+
+fn show_tab_menu(button: Obj, event: Obj) {
+    // Pausing from the menu can retire the strip that owns this view.
+    let Some(button) = (unsafe { Retained::retain(button) }) else {
+        return;
+    };
+    let id: isize = unsafe { msg_send![&button, tag] };
+    let Ok(id) = u32::try_from(id) else {
+        return;
+    };
+    let mut popup = None;
+    with_app(|a| {
+        if a.tab_menu.is_some() {
+            return;
+        }
+        if let Some(reason) = a.tab_block_reason() {
+            a.show_notice(reason);
+            return;
+        }
+        match a.tile_manager.tab_context(id) {
+            Ok(context) => {
+                let targets = a.tile_manager.tab_group_targets(&context);
+                let (menu, actions) =
+                    unsafe { tab_menu(Retained::as_ptr(&a.target) as Obj, targets) };
+                a.pending_focus = None;
+                a.tab_menu = Some(TabMenuState {
+                    context,
+                    actions,
+                    selected: None,
+                });
+                popup = Some(menu);
+            }
+            Err(reason) => a.show_notice(reason),
+        }
+    });
+    if let Some(menu) = popup {
+        // AppKit tracks synchronously and dispatches actions in a nested run loop.
+        // Never retain the APP borrow across that loop.
+        unsafe {
+            let _: () = msg_send![class!(NSMenu), popUpContextMenu:&*menu, withEvent:event, forView:&*button];
+        }
+        with_app(|a| {
+            let Some(menu) = a.tab_menu.take() else {
+                return;
+            };
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            let Some(action) = menu.selected else {
+                return;
+            };
+            if let Some(reason) = a.tab_block_reason() {
+                a.show_notice(reason);
+                return;
+            }
+            // Validate and focus only after AppKit has ended menu tracking.
+            match a.tile_manager.perform_tab_action(&menu.context, action) {
+                Ok(()) => {
+                    a.update_tile_timer();
+                    if !matches!(action, crate::tile_manager::TabAction::Close) {
+                        a.settle_focus();
+                    }
+                }
+                Err(reason) => a.show_notice(reason),
+            }
+        });
+    }
+}
+
 extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
     let id: isize = unsafe { msg_send![sender, tag] };
     with_app(|a| {
-        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
+            // A paused manager must never be reactivated by an already queued UI action.
             return;
         }
         if let Ok(id) = u32::try_from(id)
@@ -4324,6 +4750,7 @@ extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
             a.hover_resume = Instant::now() + Duration::from_millis(600);
             a.update_tile_timer();
             a.settle_focus();
+            a.show_tip(4, "Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana.");
         }
     });
 }
@@ -4337,12 +4764,15 @@ extern "C-unwind" fn close_tile_tab(_: Obj, _: Sel, sender: Obj) {
         return;
     };
     with_app(|a| {
-        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
             return;
         }
         if a.tile_manager.close_tab(id) {
             a.hover_resume = Instant::now() + Duration::from_millis(600);
             a.update_tile_timer();
+        }
+        if let Some(error) = a.tile_manager.last_error.take() {
+            a.show_notice(&error);
         }
         // No settle_focus here: the application's save dialog owns focus.
     });
@@ -4353,7 +4783,7 @@ extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
     let state: isize = unsafe { msg_send![sender, state] };
     let view: Option<Retained<AnyObject>> = unsafe { msg_send![sender, view] };
     with_app(|a| {
-        if a.layout_picker.is_some() || a.transfer.is_some() || a.switching.is_some() {
+        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
             a.tile_manager.cancel_tab_drag();
             return;
         }
@@ -4373,12 +4803,19 @@ extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
         } else {
             a.tile_manager.cancel_tab_drag();
         }
+        if let Some(error) = a.tile_manager.interaction_error.take() {
+            a.show_notice(&error);
+        }
     });
 }
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
         with_app(|a| {
-            if a.layout_picker.is_some() || a.transfer.is_some() {
+            if a.tiling_paused
+                || a.tab_menu.is_some()
+                || a.layout_picker.is_some()
+                || a.transfer.is_some()
+            {
                 return;
             }
             if a.switching.is_some() {
@@ -4391,6 +4828,9 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
                 return;
             }
             a.update_tile_timer();
+            if let Some(error) = a.tile_manager.interaction_error.take() {
+                a.show_notice(&error);
+            }
             if let Some(error) = a.tile_manager.last_error.take() {
                 a.last_tiling_feedback = error.clone();
                 if a.transfer_feedback_at
@@ -4526,6 +4966,8 @@ unsafe fn make_menu(app: Obj, target: Obj) {
             ("Acerca de AMSpace", sel!(about:), ""),
             ("Buscar actualizaciones…", sel!(checkUpdates:), ""),
             ("Ajustes…", sel!(settings:), ","),
+            ("Instalación y ayuda…", sel!(showGuide:), ""),
+            ("Pausar / reanudar Mosaico", sel!(toggleMosaicPause:), ""),
             ("Cerrar ventana", sel!(performClose:), "w"),
             ("Salir de AMSpace", sel!(quit:), "q"),
         ] {
@@ -4551,10 +4993,8 @@ unsafe fn make_menu(app: Obj, target: Obj) {
         let _: () = msg_send![app, setMainMenu:&*menu];
     }
 }
-pub fn run() {
-    let app: Retained<AnyObject> = autoreleasepool(|_| unsafe {
-        let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
-        let _: bool = msg_send![&app,setActivationPolicy:1isize];
+unsafe fn controller() -> Retained<AnyObject> {
+    unsafe {
         let mut builder = ClassBuilder::new(c"AMSpaceController", class!(NSObject)).unwrap();
         for (s, f) in [
             (
@@ -4595,6 +5035,12 @@ pub fn run() {
             (sel!(settingsRefresh:), settings_refresh),
             (sel!(transferTick:), transfer_tick),
             (sel!(mouseEntered:), preview_enter),
+            (sel!(tabMenuAction:), tab_menu_action),
+            (sel!(toggleMosaicPause:), toggle_mosaic_pause),
+            (sel!(showGuide:), show_guide),
+            (sel!(showTabGuide:), show_tab_guide),
+            (sel!(initialHelp:), initial_help),
+            (sel!(hideNotice:), hide_notice),
             (sel!(mouseExited:), preview_exit),
             (sel!(showDesktopPreview:), preview_show),
             (sel!(fadeFlash:), fade_flash),
@@ -4602,6 +5048,10 @@ pub fn run() {
         ] {
             builder.add_method(s, f);
         }
+        builder.add_method(
+            sel!(showTileTabMenu:event:),
+            show_tile_tab_menu as extern "C-unwind" fn(Obj, Sel, Obj, Obj),
+        );
         builder.add_method(
             sel!(numberOfRowsInTableView:),
             navigation_rows as extern "C-unwind" fn(Obj, Sel, Obj) -> isize,
@@ -4618,7 +5068,15 @@ pub fn run() {
             sel!(applicationShouldHandleReopen:hasVisibleWindows:),
             reopen as extern "C-unwind" fn(Obj, Sel, Obj, Bool) -> Bool,
         );
-        let target: Retained<AnyObject> = msg_send![builder.register(), new];
+        msg_send![builder.register(), new]
+    }
+}
+
+pub fn run() {
+    let app: Retained<AnyObject> = autoreleasepool(|_| unsafe {
+        let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![&app,setActivationPolicy:1isize];
+        let target = controller();
         let _: () = msg_send![&app,setDelegate:&*target];
         make_menu(
             Retained::as_ptr(&app) as Obj,
@@ -4685,6 +5143,9 @@ pub fn run() {
             let _: () = msg_send![distributed, addObserver:&*target, selector:sel!(desktopDistributed:), name:&*NSString::from_str(name), object:ptr::null::<AnyObject>(), suspensionBehavior:4usize];
         }
         APP.with(|cell| *cell.borrow_mut() = Some(App::new(target)));
+        with_app(|a| {
+            let _: () = msg_send![&a.target, performSelector:sel!(initialHelp:), withObject:ptr::null::<AnyObject>(), afterDelay:0f64];
+        });
         app
     });
     autoreleasepool(|_| unsafe {

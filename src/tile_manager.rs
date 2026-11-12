@@ -1,4 +1,5 @@
 //! Main-thread macOS adapter. Layout calculations live in `tiling`.
+use crate::model::{TAB_ICON_BACKING, TabAccent};
 use crate::{
     accessibility as ax,
     native::{Obj, alloc_view, color, rect},
@@ -746,6 +747,11 @@ pub struct Manager {
     /// the eased 160 ms batch. `tick_mode_input` refreshes it from preferences.
     animated: Option<bool>,
     pub last_error: Option<String>,
+    /// One-shot notice for the gesture that just ended. The parent consumes it
+    /// after each mouse event and tile tick; routine background fitting
+    /// failures stay in `last_error` (Settings-only) so no frame repeats them.
+    pub interaction_error: Option<String>,
+    accent: TabAccent,
 }
 pub struct KeyboardTransfer {
     pub source: Workspace,
@@ -777,6 +783,46 @@ impl Manager {
         Self {
             tab_target: Some(target),
             ..Self::default()
+        }
+    }
+
+    /// Retint existing layers without rebuilding controls or reading AX titles.
+    pub fn set_tab_accent(&mut self, rgb: [f64; 3]) {
+        if self.accent.rgb == rgb {
+            return;
+        }
+        let next = TabAccent::new(rgb);
+        if next == self.accent {
+            return;
+        }
+        self.accent = next;
+        if self.strips.is_empty() {
+            return;
+        }
+        unsafe {
+            let [r, g, b] = next.backing();
+            let cg: *const crate::native::CgColor = msg_send![color(r, g, b, 1.), CGColor];
+            for strip in &self.strips {
+                let Some(id) = strip.members.get(strip.active) else {
+                    continue;
+                };
+                let root: Obj = msg_send![&strip.panel, contentView];
+                let button: Obj = msg_send![root, viewWithTag:*id as isize];
+                if button.is_null() {
+                    continue;
+                }
+                let container: Obj = msg_send![button, superview];
+                let plate = (*container)
+                    .class()
+                    .instance_variable(c"accentPlate")
+                    .unwrap()
+                    .load_ptr::<Obj>(&*container)
+                    .read();
+                if !plate.is_null() {
+                    let layer: Obj = msg_send![plate, layer];
+                    let _: () = msg_send![layer, setBackgroundColor:cg];
+                }
+            }
         }
     }
 
@@ -930,7 +976,7 @@ impl Manager {
                 }
                 let Some(proposed) = tab_detach_proposal(desktop, id, *area, &self.minimum_sizes)
                 else {
-                    self.last_error = Some("No hay espacio suficiente para separar esta pestaña respetando los tamaños mínimos.".into());
+                    self.interaction_error = Some(DETACH_CAPACITY.to_string());
                     return false;
                 };
                 let Some((_, frame)) = proposed
@@ -1020,10 +1066,15 @@ impl Manager {
     }
 
     fn commit_tab_detach(&mut self, drag: TabDrag) {
-        self.cancel_desktop_placements(&drag.baseline);
+        self.commit_tab_model(drag.space, drag.id, drag.proposed);
+    }
+
+    fn commit_tab_model(&mut self, space: Workspace, id: u32, proposed: Desktop) {
+        if let Some(previous) = self.desktops.insert(space, proposed) {
+            self.cancel_desktop_placements(&previous);
+        }
         self.gesture_candidates.clear();
-        self.handoffs.remove(&drag.id);
-        self.desktops.insert(drag.space, drag.proposed);
+        self.handoffs.remove(&id);
         self.invalidate();
     }
 
@@ -1049,6 +1100,330 @@ impl Manager {
     pub fn cancel_tab_drag(&mut self) {
         if self.tab_drag.take().is_some() {
             self.hide_preview_panels();
+        }
+    }
+    /// Explicit user pause: keep every tree, membership and original frame,
+    /// drop only the in-flight writes and the visible overlays.
+    pub fn pause_user(&mut self) {
+        self.cancel_drag();
+        self.interaction_error = None;
+    }
+
+    pub fn set_max_group_tabs(&mut self, maximum: usize) {
+        for desktop in self.desktops.values_mut() {
+            desktop.max_group_tabs = maximum;
+        }
+    }
+
+    /// Snapshot of the tab the strip is showing. Every later action revalidates
+    /// it, so a menu opened before a Space switch or a window replacement can
+    /// never act on stale identities.
+    pub fn tab_context(&mut self, id: u32) -> Result<TabContext, &'static str> {
+        self.tab_identity_guards()?;
+        self.current_tab_context(id).map(|(context, _)| context)
+    }
+
+    /// Re-run the identity checks of a captured context. A changed PID, a
+    /// recycled window id, another native Space, a new area or a modal owner
+    /// makes the stored context stale.
+    fn validate_tab_context(&mut self, context: &TabContext) -> Result<NSRect, &'static str> {
+        self.tab_identity_guards()?;
+        let (current, area) = self.current_tab_context(context.id)?;
+        (current == *context)
+            .then_some(area)
+            .ok_or("La pestaña cambió; vuelve a abrir el menú.")
+    }
+
+    fn tab_identity_guards(&mut self) -> Result<(), &'static str> {
+        if !ax::trusted() {
+            return Err("Concede Accesibilidad a AMSpace para gestionar las pestañas.");
+        }
+        if crate::focus::secure_input() {
+            return Err("Hay una entrada segura activa; termina ese cuadro de diálogo.");
+        }
+        if self.presentation_blocks_input() {
+            return Err("Mosaico está en pausa o el Escritorio está activo.");
+        }
+        if self.space_quiet_until.is_some() || self.space_reentry.is_some() {
+            return Err("Espera a que termine el cambio de escritorio.");
+        }
+        if self.drag.is_some() || self.tab_drag.is_some() || self.pending_drop.is_some() {
+            return Err("Termina el arrastre en curso antes de usar el menú de pestañas.");
+        }
+        Ok(())
+    }
+
+    /// The live identity plus the area its Space currently publishes.
+    fn current_tab_context(&self, id: u32) -> Result<(TabContext, NSRect), &'static str> {
+        let window = self
+            .windows
+            .get(&id)
+            .ok_or("Esta ventana ya no está gestionada por Mosaico.")?;
+        let (pid, space) = (window.pid, window.space);
+        let slot = self
+            .active_areas
+            .iter()
+            .find(|(key, _)| *key == space)
+            .map(|(_, rect)| *rect)
+            .ok_or("Este escritorio ya no está visible.")?;
+        let desktop = self
+            .desktops
+            .get(&space)
+            .ok_or("Este escritorio ya no está gestionado.")?;
+        if self.floating.contains(&id)
+            || !desktop
+                .tab_strip(id)
+                .is_some_and(|(members, _)| members.len() > 1)
+        {
+            return Err("Esta ventana ya no pertenece a un grupo de pestañas.");
+        }
+        // One fresh area read is the authority: a Dock/menu-bar change or a
+        // Space slide invalidates every frame the menu cached.
+        if !spaces::visible_desktops().contains(&space)
+            || spaces::window_space(id) != Some(space.1)
+            || area(space.0) != Some(slot)
+        {
+            return Err("La ventana cambió de escritorio o de área; vuelve a abrir el menú.");
+        }
+        if ax::window_id(window.element.0) != Some(id) || !ax::tileable(window.element.0) {
+            return Err("La identidad de la ventana cambió; vuelve a abrir el menú.");
+        }
+        let ids = ws::all_window_ids().ok_or("No se pudo comprobar la lista de ventanas.")?;
+        let members = desktop
+            .order
+            .iter()
+            .copied()
+            .chain(desktop.groups().iter().flat_map(|group| {
+                group
+                    .members
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(index, member)| (index != group.active).then_some(*member))
+            }));
+        for member in members {
+            if !self.windows.get(&member).is_some_and(|w| {
+                w.space == space
+                    && ids.contains(&(w.pid, member))
+                    && spaces::window_space(member) == Some(space.1)
+            }) {
+                return Err("Las ventanas del escritorio cambiaron; vuelve a abrir el menú.");
+            }
+        }
+        if ax::focus_is_protected(pid) {
+            return Err("Un cuadro de diálogo de la aplicación tiene el foco.");
+        }
+        Ok((
+            TabContext {
+                id,
+                pid,
+                workspace: space,
+            },
+            slot,
+        ))
+    }
+
+    /// Commit one menu action against the currently validated context.
+    pub fn perform_tab_action(
+        &mut self,
+        context: &TabContext,
+        action: TabAction,
+    ) -> Result<(), &'static str> {
+        let area = self.validate_tab_context(context)?;
+        let id = context.id;
+        match action {
+            TabAction::Detach => self.detach_tab(id, area),
+            TabAction::Float => self.float_tab(id, area),
+            TabAction::MoveToGroup(target) => self.move_tab_to_group(context, target, area),
+            TabAction::Close => {
+                if self.close_tab(id) {
+                    return Ok(());
+                }
+                let reason = if self.last_error.is_some() {
+                    "La aplicación no ha aceptado cerrar esta ventana."
+                } else {
+                    "La ventana no está lista para cerrarse; inténtalo de nuevo."
+                };
+                self.last_error = None;
+                Err(reason)
+            }
+        }
+    }
+
+    fn detach_tab(&mut self, id: u32, area: NSRect) -> Result<(), &'static str> {
+        let space = self.windows[&id].space;
+        let baseline = self
+            .desktops
+            .get(&space)
+            .ok_or("Este escritorio ya no está visible.")?;
+        let proposed =
+            tab_detach_proposal(baseline, id, area, &self.minimum_sizes).ok_or(DETACH_CAPACITY)?;
+        self.focus_member(id)?;
+        self.commit_tab_model(space, id, proposed);
+        Ok(())
+    }
+
+    fn float_tab(&mut self, id: u32, area: NSRect) -> Result<(), &'static str> {
+        let window = &self.windows[&id];
+        let space = window.space;
+        let (position, size) =
+            ax::geometry(window.element.0).ok_or("No se pudo leer la geometría de la ventana.")?;
+        let mut desktop = self
+            .desktops
+            .get(&space)
+            .cloned()
+            .ok_or("Este escritorio ya no está visible.")?;
+        desktop.remove(id);
+        self.focus_member(id)?;
+        let window = self.windows.get_mut(&id).unwrap();
+        window.original = NSRect::new(position, size);
+        window.original_area = area;
+        self.floating.insert(id);
+        self.inactive_tabs.remove(&id);
+        self.minimum_sizes.remove(&id);
+        self.commit_tab_model(space, id, desktop);
+        Ok(())
+    }
+
+    fn move_tab_to_group(
+        &mut self,
+        context: &TabContext,
+        target: u32,
+        area: NSRect,
+    ) -> Result<(), &'static str> {
+        let space = context.workspace;
+        let desktop = self
+            .desktops
+            .get(&space)
+            .ok_or("Este escritorio ya no está visible.")?;
+        // The menu stores the leaf it saw; follow the strip if its visible tab
+        // changed while the menu was tracking.
+        let leaf = desktop
+            .groups()
+            .iter()
+            .find(|group| group.members.contains(&target))
+            .and_then(Group::leaf)
+            .ok_or("El grupo de destino ya no existe.")?;
+        if desktop
+            .tab_strip(leaf)
+            .is_some_and(|(members, _)| members.contains(&context.id))
+        {
+            return Err("La pestaña ya pertenece a ese grupo.");
+        }
+        let proposed = tab_group_proposal(desktop, &self.minimum_sizes, context.id, leaf, area)?;
+        self.focus_member(context.id)?;
+        self.commit_tab_model(space, context.id, proposed);
+        Ok(())
+    }
+
+    /// Other strips of the same Space, with the concrete reason a destination
+    /// is disabled. Titles are read only here, i.e. on an explicit menu open.
+    pub fn tab_group_targets(&self, context: &TabContext) -> Vec<TabGroupTarget> {
+        let Some(desktop) = self.desktops.get(&context.workspace) else {
+            return Vec::new();
+        };
+        let Some((_, area)) = self
+            .active_areas
+            .iter()
+            .find(|(key, _)| *key == context.workspace)
+        else {
+            return Vec::new();
+        };
+        desktop
+            .groups()
+            .iter()
+            .filter(|group| group.members.len() > 1 && !group.members.contains(&context.id))
+            .filter_map(|group| {
+                let leaf = group.leaf()?;
+                Some(TabGroupTarget {
+                    id: leaf,
+                    title: self
+                        .windows
+                        .get(&leaf)
+                        .map(|window| window_label(window.element.0 as Obj, window.pid))
+                        .unwrap_or_else(|| "Grupo no disponible".into()),
+                    unavailable: group_rejection(
+                        desktop,
+                        &self.minimum_sizes,
+                        context.id,
+                        leaf,
+                        *area,
+                    ),
+                })
+            })
+            .collect()
+    }
+
+    fn focus_member(&self, id: u32) -> Result<(), &'static str> {
+        let window = self
+            .windows
+            .get(&id)
+            .ok_or("La ventana ya no está gestionada.")?;
+        if ax::window_id(window.element.0) != Some(id) || !ax::tileable(window.element.0) {
+            return Err("La identidad de la ventana cambió; vuelve a intentarlo.");
+        }
+        if ax::focus_is_protected(window.pid) {
+            return Err("Un cuadro de diálogo de la aplicación tiene el foco.");
+        }
+        if !ax::focus(window.element.0, window.pid) {
+            return Err("La aplicación no ha aceptado activar esta ventana.");
+        }
+        Ok(())
+    }
+
+    /// Move the visible tab of the front window's own strip, wrapping around.
+    pub fn cycle_tab(&mut self, forward: bool) -> Result<(), &'static str> {
+        self.tab_identity_guards()?;
+        let (_, id) = self.front_tab_identity()?;
+        self.current_tab_context(id)?;
+        let space = self.windows[&id].space;
+        let desktop = self
+            .desktops
+            .get(&space)
+            .ok_or("Este escritorio ya no está visible.")?;
+        let (members, _) = desktop
+            .tab_strip(id)
+            .ok_or("Esta ventana no forma un grupo de pestañas.")?;
+        let active = members
+            .iter()
+            .position(|member| *member == id)
+            .ok_or("El grupo de pestañas cambió.")?;
+        let next = tab_cycle(members, active, forward).ok_or("El grupo de pestañas cambió.")?;
+        self.focus_member(next)?;
+        self.select_tab_model(next);
+        Ok(())
+    }
+
+    /// Detach the visible tab of the front window's strip.
+    pub fn detach_active_tab(&mut self) -> Result<(), &'static str> {
+        self.tab_identity_guards()?;
+        let (_, id) = self.front_tab_identity()?;
+        let (_, area) = self.current_tab_context(id)?;
+        self.detach_tab(id, area)
+    }
+
+    /// The real front window of the frontmost application, never the last AX
+    /// focus the manager happened to cache.
+    fn front_tab_identity(&self) -> Result<(i32, u32), &'static str> {
+        unsafe {
+            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return Err("Sin sesión de espacio de trabajo.");
+            }
+            let app: Obj = msg_send![workspace, frontmostApplication];
+            if app.is_null() {
+                return Err("Ninguna aplicación está al frente.");
+            }
+            let pid: i32 = msg_send![app, processIdentifier];
+            let id = ws::front_window(pid)
+                .map(|window| window.id)
+                .ok_or("La aplicación del frente no tiene ventana normal.")?;
+            if !self.windows.contains_key(&id) {
+                return Err("Esa ventana no está gestionada por Mosaico.");
+            }
+            if self.windows[&id].pid != pid {
+                return Err("El identificador de ventana cambió de aplicación.");
+            }
+            Ok((pid, id))
         }
     }
     pub fn diagnostic_report(&self) -> String {
@@ -1702,6 +2077,7 @@ impl Manager {
                                 group.active,
                                 panel.size.width,
                                 self.tab_target.as_deref(),
+                                self.accent,
                             )
                         };
                         unsafe {
@@ -1724,6 +2100,7 @@ impl Manager {
                             group.active,
                             panel.size.width,
                             self.tab_target.as_deref(),
+                            self.accent,
                         )
                     };
                     unsafe {
@@ -3217,6 +3594,19 @@ impl Manager {
                                 w.space = drop.destination;
                             }
                             self.invalidate();
+                        } else {
+                            // A rejected gesture reports itself once; the next
+                            // tick consumes it, so no frame repeats the notice.
+                            self.interaction_error = Some(
+                                drop_rejection(
+                                    &d,
+                                    &self.minimum_sizes,
+                                    drop.id,
+                                    drop.intent,
+                                    *area,
+                                )
+                                .to_string(),
+                            );
                         }
                     }
                 } else {
@@ -3786,6 +4176,121 @@ impl Manager {
     }
 }
 
+/// Everything a tab menu needs to revalidate its target: the compositor id,
+/// its owning process and the Space/display it was listed on.
+#[derive(Clone, PartialEq)]
+pub struct TabContext {
+    pub id: u32,
+    pub pid: i32,
+    pub workspace: Workspace,
+}
+
+/// The native requests a tab strip offers.
+#[derive(Clone, Copy)]
+pub enum TabAction {
+    Detach,
+    Float,
+    MoveToGroup(u32),
+    Close,
+}
+
+/// One receiving strip in the menu. `unavailable` is the concrete reason the
+/// item is disabled, so the menu never has to guess.
+pub struct TabGroupTarget {
+    pub id: u32,
+    pub title: String,
+    pub unavailable: Option<&'static str>,
+}
+
+const DETACH_CAPACITY: &str =
+    "No hay espacio suficiente para separar esta pestaña respetando los tamaños mínimos.";
+const MINIMUM_CAPACITY: &str =
+    "La distribución no permite respetar los tamaños mínimos de estas ventanas.";
+const GROUP_GONE: &str = "El grupo ya no está en este escritorio.";
+const GROUP_FULL: &str = "Grupo lleno: alcanza su máximo de pestañas.";
+const GROUP_LIMIT: &str = "El máximo de pestañas por grupo es demasiado bajo.";
+const SAME_TAB: &str = "Es la propia pestaña.";
+
+/// Why `id` cannot join the strip led by `leaf` right now, or `None` when the
+/// model accepts the join. Only literal, bounded reasons, so a disabled item
+/// explains itself without a per-frame rebuild note. The minimum check reuses
+/// the very solver the drag gesture commits with.
+fn group_rejection(
+    desktop: &Desktop,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    id: u32,
+    leaf: u32,
+    area: NSRect,
+) -> Option<&'static str> {
+    tab_group_proposal(desktop, minimums, id, leaf, area).err()
+}
+
+fn tab_group_proposal(
+    desktop: &Desktop,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    id: u32,
+    leaf: u32,
+    area: NSRect,
+) -> Result<Desktop, &'static str> {
+    if leaf == id {
+        return Err(SAME_TAB);
+    }
+    if !desktop.order.contains(&leaf) {
+        return Err(GROUP_GONE);
+    }
+    if desktop.max_group_tabs < 2 {
+        return Err(GROUP_LIMIT);
+    }
+    let members = desktop
+        .tab_strip(leaf)
+        .map(|(members, _)| members)
+        .unwrap_or(&[]);
+    if !members.contains(&id) && members.len().max(1) >= desktop.max_group_tabs {
+        return Err(GROUP_FULL);
+    }
+    arrival_proposal(
+        desktop,
+        id,
+        Some(DropIntent::Group(leaf)),
+        area,
+        Some(minimums),
+    )
+    .ok_or(MINIMUM_CAPACITY)
+}
+
+/// Why the released gesture did not change the tree. The same solver answered
+/// `None`, so the message names the actual limit instead of a generic failure.
+fn drop_rejection(
+    desktop: &Desktop,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    id: u32,
+    intent: Option<DropIntent>,
+    area: NSRect,
+) -> &'static str {
+    match intent {
+        Some(DropIntent::Group(leaf)) => {
+            group_rejection(desktop, minimums, id, leaf, area).unwrap_or(MINIMUM_CAPACITY)
+        }
+        Some(_) => MINIMUM_CAPACITY,
+        None => DETACH_CAPACITY,
+    }
+}
+
+/// Wrap inside one strip: `active` indexes `members`, so forward advances and
+/// backward steps with a single modular addition.
+fn tab_cycle(members: &[u32], active: usize, forward: bool) -> Option<u32> {
+    let count = members.len();
+    if count < 2 || active >= count {
+        return None;
+    }
+    let next = if forward {
+        (active + 1) % count
+    } else {
+        (active + count - 1) % count
+    };
+    members.get(next).copied()
+}
+
 pub(crate) fn restoration_frame(original: NSRect, source: NSRect, destination: NSRect) -> NSRect {
     if source == destination {
         return original;
@@ -4031,7 +4536,7 @@ unsafe fn translucent_card(frame: NSRect) -> Retained<AnyObject> {
     }
 }
 
-unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, radius: f64) {
+unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, radius: f64) -> Obj {
     unsafe {
         let view = alloc_view(class!(NSView), frame);
         let _: () = msg_send![&view,setWantsLayer:true];
@@ -4041,6 +4546,7 @@ unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, r
         let _: () = msg_send![layer,setBackgroundColor:cg];
         let _: () = msg_send![layer,setCornerRadius:radius];
         let _: () = msg_send![parent,addSubview:&*view];
+        Retained::as_ptr(&view) as Obj
     }
 }
 
@@ -4057,8 +4563,11 @@ unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
         let font: Obj =
             msg_send![class!(NSFont),systemFontOfSize:11f64,weight:if bold {0.4f64} else {0.}];
         let _: () = msg_send![&field,setFont:font];
-        let text: Obj =
-            msg_send![class!(NSColor), colorWithSRGBRed:0.96,green:0.97,blue:1.,alpha:1.];
+        let text = if bold {
+            color(1., 1., 1., 1.)
+        } else {
+            color(0.96, 0.97, 1., 1.)
+        };
         let _: () = msg_send![&field,setTextColor:text];
         let _: () = msg_send![&field,setAccessibilityLabel:&*NSString::from_str(value)];
         let _: () = msg_send![parent,addSubview:&*field];
@@ -4072,12 +4581,24 @@ fn tab_button_class() -> &'static AnyClass {
             sel!(mouseDown:),
             tab_button_down as extern "C-unwind" fn(Obj, Sel, Obj),
         );
+        builder.add_method(
+            sel!(rightMouseDown:),
+            tab_button_right_down as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
         builder.register()
     });
     *CLASS
 }
 extern "C-unwind" fn tab_button_down(button: Obj, _: Sel, event: Obj) {
     unsafe {
+        if !button.is_null() && !event.is_null() {
+            let modifiers: usize = msg_send![event, modifierFlags];
+            // A control-click is the keyboard route to the same context menu.
+            if modifiers & (1 << 18) != 0 {
+                request_tab_menu(button, event);
+                return;
+            }
+        }
         let gestures: Obj = msg_send![button, gestureRecognizers];
         let gesture: Obj = msg_send![gestures, firstObject];
         if !gesture.is_null() {
@@ -4094,6 +4615,26 @@ extern "C-unwind" fn tab_button_down(button: Obj, _: Sel, event: Obj) {
             }
         }
         let _: () = msg_send![super(button, class!(NSButton)),mouseDown:event];
+    }
+}
+
+/// Right-click on a tab: the parent owns the menu, its items and the dispatch.
+extern "C-unwind" fn tab_button_right_down(button: Obj, _: Sel, event: Obj) {
+    if button.is_null() || event.is_null() {
+        return;
+    }
+    request_tab_menu(button, event);
+}
+
+fn request_tab_menu(button: Obj, event: Obj) {
+    unsafe {
+        let target: Obj = msg_send![button, target];
+        if !target.is_null() {
+            let accepts: bool = msg_send![target, respondsToSelector:sel!(showTileTabMenu:event:)];
+            if accepts {
+                let _: () = msg_send![target, showTileTabMenu:button, event:event];
+            }
+        }
     }
 }
 
@@ -4165,6 +4706,7 @@ unsafe fn strip_content(
     active: usize,
     width: f64,
     target: Option<&AnyObject>,
+    accent: TabAccent,
 ) -> Retained<AnyObject> {
     unsafe {
         let total = strip_width(tabs.iter().map(|(name, _)| tab_width(name)));
@@ -4178,15 +4720,17 @@ unsafe fn strip_content(
             let width = tab_width(name);
             let plate = rect(x, 0., width, TAB_BAR_HEIGHT);
             let is_active = index == active;
-            if is_active {
+            let active_plate: Obj = if is_active {
                 selected = plate;
+                // Opaque hue-preserving backing: the white caption and the
+                // close glyph hold 4.5:1 over any wallpaper behind the card.
                 rounded_plate(
                     parent,
                     rect(x, 3., width, TAB_BAR_HEIGHT - 6.),
-                    [0.48, 0.60, 1.],
-                    0.34,
+                    accent.backing(),
+                    1.,
                     6.,
-                );
+                )
             } else {
                 rounded_plate(
                     parent,
@@ -4195,10 +4739,22 @@ unsafe fn strip_content(
                     0.05,
                     6.,
                 );
-            }
+                ptr::null_mut()
+            };
             let inner = x + 6.;
             let mut text_x = inner;
             if let Some(icon) = icon {
+                // A neutral compact backing keeps monochrome app icons legible
+                // on the saturated active plate; originals keep their own colors.
+                if is_active {
+                    rounded_plate(
+                        parent,
+                        rect(inner - 1., 4., 14., 14.),
+                        TAB_ICON_BACKING,
+                        1.,
+                        3.,
+                    );
+                }
                 let image = alloc_view(class!(NSImageView), rect(inner, 5., 12., 12.));
                 let _: () = msg_send![&image,setImage:&**icon];
                 let _: () = msg_send![&image,setImageScaling:3isize];
@@ -4238,6 +4794,7 @@ unsafe fn strip_content(
             let _: () = msg_send![&close,setTitle:&*NSString::from_str("×")];
             let font: Obj = msg_send![class!(NSFont),systemFontOfSize:14f64];
             let _: () = msg_send![&close,setFont:font];
+            let _: () = msg_send![&close, setContentTintColor:color(1., 1., 1., 1.)];
             let label = NSString::from_str(&format!("Cerrar ventana: {name}"));
             let _: () = msg_send![&close,setAccessibilityLabel:&*label];
             let _: () = msg_send![&close,setToolTip:&*label];
@@ -4255,6 +4812,13 @@ unsafe fn strip_content(
             active_ivar
                 .load_ptr::<u8>(&tab)
                 .write(if is_active { 1 } else { 0 });
+            // The root retains this view; fetch its current AppKit layer on retint.
+            (*tab)
+                .class()
+                .instance_variable(c"accentPlate")
+                .unwrap()
+                .load_ptr::<Obj>(&tab)
+                .write(active_plate);
             let area: Allocated<AnyObject> = msg_send![class!(NSTrackingArea), alloc];
             // Enter/exit + active always + during drag + visible rect.
             // Do not assume the pointer starts inside newly created views.
@@ -4290,6 +4854,7 @@ fn tab_container_class() -> &'static AnyClass {
         let mut builder = ClassBuilder::new(c"AMSpaceTabContainer", class!(NSView)).unwrap();
         builder.add_ivar::<*mut AnyObject>(c"close");
         builder.add_ivar::<u8>(c"active");
+        builder.add_ivar::<Obj>(c"accentPlate");
         builder.add_method(
             sel!(mouseEntered:),
             tab_hover_entered as extern "C-unwind" fn(Obj, Sel, Obj),
@@ -7757,6 +8322,114 @@ mod tests {
         assert_eq!(actual.origin.y, from.origin.y);
         assert_eq!(actual.size.height, from.size.height);
         assert!(drag.baseline == tab.baseline);
+    }
+
+    #[test]
+    fn tab_cycle_wraps_in_both_directions_and_rejects_degenerate_strips() {
+        let members = [10u32, 20, 30];
+        assert_eq!(tab_cycle(&members, 0, true), Some(20));
+        assert_eq!(tab_cycle(&members, 2, true), Some(10));
+        assert_eq!(tab_cycle(&members, 0, false), Some(30));
+        assert_eq!(tab_cycle(&members, 1, false), Some(10));
+        assert_eq!(tab_cycle(&[7], 0, true), None);
+        assert_eq!(tab_cycle(&members, 3, true), None);
+    }
+
+    /// Two independent leaves plus one two-tab strip.
+    fn contract_desktop(area: NSRect) -> Desktop {
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile_at(&[1, 2, 3], area, 10., None);
+        desktop
+            .proposed_drop(4, DropIntent::Group(3), area, 10.)
+            .unwrap()
+    }
+
+    #[test]
+    fn group_rejection_names_the_limit_and_accepts_only_feasible_joins() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let desktop = contract_desktop(area);
+        let minimums = HashMap::new();
+        assert_eq!(
+            group_rejection(&desktop, &minimums, 1, 1, area),
+            Some(SAME_TAB)
+        );
+        assert_eq!(
+            group_rejection(&desktop, &minimums, 1, 99, area),
+            Some(GROUP_GONE)
+        );
+        assert_eq!(group_rejection(&desktop, &minimums, 1, 4, area), None);
+        // The capacity limit is reported before any solver work.
+        let mut full = desktop.clone();
+        full.max_group_tabs = 2;
+        assert_eq!(
+            group_rejection(&full, &minimums, 1, 4, area),
+            Some(GROUP_FULL)
+        );
+        let mut narrow = desktop.clone();
+        narrow.max_group_tabs = 1;
+        assert_eq!(
+            group_rejection(&narrow, &minimums, 1, 4, area),
+            Some(GROUP_LIMIT)
+        );
+        // An app-imposed minimum the receiving slot cannot honor is concrete.
+        let tight = HashMap::from([(1u32, objc2_foundation::NSSize::new(5000., 5000.))]);
+        assert_eq!(
+            group_rejection(&desktop, &tight, 1, 4, area),
+            Some(MINIMUM_CAPACITY)
+        );
+        assert_eq!(
+            drop_rejection(&desktop, &tight, 1, Some(DropIntent::Group(4)), area),
+            MINIMUM_CAPACITY
+        );
+        assert_eq!(
+            drop_rejection(&desktop, &minimums, 1, None, area),
+            DETACH_CAPACITY
+        );
+    }
+
+    #[test]
+    fn tab_group_move_preserves_members_and_uses_the_live_limit() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let desktop = contract_desktop(area)
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let proposed = tab_group_proposal(&desktop, &HashMap::new(), 2, 4, area).unwrap();
+        assert_eq!(proposed.tab_strip(2), Some((&[3, 4, 2][..], 2)));
+        assert!(proposed.order.contains(&1));
+        assert_eq!(
+            proposed
+                .window_frames(area, 10.)
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let mut manager = Manager::default();
+        manager.desktops.insert((1, 7), proposed.clone());
+        manager.set_max_group_tabs(2);
+        let current = &manager.desktops[&(1, 7)];
+        assert_eq!(
+            group_rejection(current, &HashMap::new(), 1, 2, area),
+            Some(GROUP_FULL)
+        );
+        assert_eq!(current.tab_strip(2), proposed.tab_strip(2));
+        assert_eq!(current.order, proposed.order);
+    }
+
+    #[test]
+    fn user_pause_cancels_pending_writes_without_restoring_or_detaching() {
+        let mut manager = pending_tab_detach(1);
+        let before = manager.desktops.clone();
+        let original = manager.windows[&1].original;
+        manager.interaction_error = Some(DETACH_CAPACITY.into());
+        manager.pause_user();
+        assert!(manager.desktops == before);
+        assert_eq!(manager.windows[&1].original, original);
+        assert!(manager.tab_drag.is_none());
+        assert!(manager.pending_drop.is_none());
+        assert!(manager.transitions.is_empty());
+        assert!(manager.verifications.is_empty());
+        assert!(manager.interaction_error.is_none());
     }
 }
 

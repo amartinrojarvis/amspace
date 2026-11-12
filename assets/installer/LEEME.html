@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>AMSpace · Instalación, permisos y privacidad</title>
+<style>
+body { font: 13px -apple-system, Helvetica, sans-serif; line-height: 1.5; color: #252525; max-width: 760px; margin: 32px; }
+h1 { font-size: 26px; } h2 { font-size: 17px; margin-top: 24px; }
+a { color: #3a53a4; }
+</style>
+</head>
+<body>
+<h1>Instalar AMSpace</h1>
+<p>Gestor nativo de Spaces y ventanas para macOS 13 o posterior. Código abierto con licencia MIT. El paquete universal contiene Apple Silicon e Intel; la ejecución física se comprueba en Apple Silicon.</p>
+<h2>1. Copiar, expulsar y abrir</h2>
+<ol>
+<li>Arrastra <strong>AMSpace.app</strong> sobre <strong>Aplicaciones</strong> en la ventana del instalador. Si ya tienes AMSpace abierto, sal de la app antes de sustituirla.</li>
+<li>Espera a que termine la copia y expulsa el disco AMSpace.</li>
+<li>Abre <strong>Aplicaciones/AMSpace.app</strong>, no la copia del disco ni la de Descargas. AMSpace aparece en la barra de menús, sin icono permanente en el Dock. Clic derecho en su indicador abre Ajustes.</li>
+</ol>
+<h2>2. Si macOS bloquea la primera apertura</h2>
+<p><strong>La distribución actual tiene firma ad hoc: no dispone de Developer ID ni de notarización de Apple.</strong> Un checksum verifica que los bytes coinciden, no que Apple haya aprobado la aplicación.</p>
+<p>Solo si obtuviste la app de la publicación oficial y confías en ella: intenta abrir la copia instalada; después ve a <strong>Ajustes del Sistema → Privacidad y seguridad</strong> y usa <strong>Abrir igualmente</strong> para AMSpace. Confirma la apertura cuando macOS lo solicite. El nombre y la ubicación exactos pueden variar según la versión del sistema.</p>
+<p><strong>No ignores un aviso de malware o de que la app dañará tu equipo.</strong> En ese caso no continúes: conserva el aviso y comunícalo al proyecto. No desactives Gatekeeper ni SIP, no elimines la cuarentena y no ejecutes comandos de terceros para evitar la comprobación.</p>
+<h2>3. Conceder Accesibilidad a la copia instalada</h2>
+<ol>
+<li>En AMSpace, abre <strong>Instalación y ayuda</strong> o Ajustes y pulsa <strong>Abrir Accesibilidad…</strong>.</li>
+<li>En <strong>Ajustes del Sistema → Privacidad y seguridad → Accesibilidad</strong>, activa AMSpace. En algunas versiones el panel puede llamarse «Control de dispositivos y acceso a datos».</li>
+<li>Si no aparece, pulsa <strong>+</strong> y selecciona <strong>Aplicaciones/AMSpace.app</strong>. Autoriza el cambio con tu contraseña o Touch ID si macOS lo pide.</li>
+<li>Vuelve a AMSpace y pulsa <strong>Revisar permiso</strong>. Si el sistema pide reiniciar la app, sal y abre otra vez la copia de Aplicaciones.</li>
+<li>Activa Borde, Foco o Mosaico solo cuando lo desees. Están desactivados inicialmente. Los atajos nuevos de pestañas también se activan expresamente desde Ajustes → Atajos.</li>
+</ol>
+<p>El indicador de escritorios funciona sin Accesibilidad; gestionar ventanas y cambiar de escritorio con clic requiere ese permiso. AMSpace no solicita Grabación de pantalla ni Monitorización de entrada. Nunca puede concederse Accesibilidad a sí misma.</p>
+<p>Tras una actualización ad hoc, macOS puede conservar la autorización para la firma anterior. Si la app instalada sigue indicando permiso pendiente, sal de AMSpace, retira su entrada antigua de Accesibilidad y añade de nuevo la copia de Aplicaciones. No restablezcas los permisos de otras aplicaciones.</p>
+<h2>Privacidad y seguridad</h2>
+<ul>
+<li><strong>Permiso sensible:</strong> Accesibilidad permite consultar y manipular ventanas, incluidos títulos, posición y tamaño. Concédelo solo a software en el que confíes; puedes revocarlo desde Ajustes del Sistema.</li>
+<li><strong>Sin cuenta ni telemetría:</strong> las preferencias se guardan localmente. No se capturan imágenes del contenido de tus ventanas para las previews.</li>
+<li><strong>Red:</strong> las comprobaciones de actualización de Sparkle consultan el catálogo y descargan paquetes de GitHub. La búsqueda automática está desactivada inicialmente; se controla en Ajustes → General. Las descargas implican una conexión a esos servidores, como cualquier descarga web.</li>
+<li><strong>Actualizaciones:</strong> se verifican con Ed25519. Esa firma no sustituye Developer ID ni notarización. La instalación necesita tu intervención.</li>
+<li><strong>Diagnósticos:</strong> «Copiar diagnóstico» coloca información técnica en el portapapeles. Revísala antes de compartirla; puede incluir identificadores de ventanas, procesos, pantallas y preferencias.</li>
+</ul>
+<h2>Ayuda y desinstalación</h2>
+<p>En Ajustes → General puedes volver a abrir la guía. Desmarca «Mostrar ayudas en los primeros usos» para dejar de recibir consejos; los errores operativos seguirán siendo visibles. Clic derecho o Control-clic en una pestaña abre sus acciones. Pausar Mosaico conserva la distribución y detiene sus colocaciones; el botón Reanudar está siempre en la barra lateral de Ajustes.</p>
+<p>Para desinstalar: desactiva Abrir al iniciar sesión, sal de AMSpace, elimina la app de Aplicaciones y retira su permiso de Accesibilidad. No es necesario borrar permisos ni preferencias de otras apps.</p>
+<p>Descargas y código oficial: <a href="https://github.com/amartinrojarvis/amspace">github.com/amartinrojarvis/amspace</a><br>
+Publicaciones: <a href="https://github.com/amartinrojarvis/amspace/releases">GitHub Releases</a><br>
+Las licencias de AMSpace y sus componentes se incluyen dentro del paquete de la aplicación.</p>
+</body>
+</html>

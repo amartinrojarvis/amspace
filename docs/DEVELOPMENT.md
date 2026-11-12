@@ -48,6 +48,7 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | `src/tile_hotkey.rs`, `src/shortcuts.rs` | Reservas Carbon, catálogo compatible, conflictos y tap prioritario |
 | `src/window_move.rs`, `src/sky_bridge.rs` | Captura y confirmación de traslado; entrada opcional del puente SkyLight |
 | `src/updater.rs` | Sparkle, búsqueda e instalación de actualizaciones |
+| `src/discovery.rs` | Guía nativa de instalación/uso/privacidad y avisos no activadores; creados bajo demanda |
 
 ## Preferencias e identidades
 
@@ -74,6 +75,12 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | `tile.groups` | Ausente equivale a 1: el tercio superior de un hueco agrupa la ventana arrastrada como pestaña de ese hueco |
 | `tile.groups.max` | Máximo de miembros por grupo; ausente equivale a 5, ajustes 2–20. Reducirlo limita admisiones futuras sin deshacer grupos |
 | `tile.groups.centered` | Alineación de la tira: 0 o ausente = izquierda; 1 = centro. Otros valores se interpretan como izquierda |
+| `tile.tabs.enabled` | Ausente/0: no reservar los tres atajos nuevos de pestañas; requieren Mosaico activo y sin pausa |
+| `tile.tab.previous.*`, `tile.tab.next.*`, `tile.tab.detach.*` | `.key` usa índices históricos 50, 51 y 7 por defecto; `.mods` ausente = 0. Acciones 60–62, sin renumerar las anteriores |
+| `help.tips` | Ausente equivale a 1: mostrar ayudas iniciales; los errores operativos no se silencian |
+| `help.seen` | Máscara de ayudas ya vistas: 1 instalación, 2 activar Mosaico, 4 seleccionar pestaña |
+
+La pausa manual de Mosaico es estado de sesión, no una preferencia: conserva modelos y geometrías originales, cancela escrituras pendientes y retira overlays. Los callbacks y atajos comprueban la pausa antes de mutar. El menú contextual conserva PID/ID/Workspace y vuelve a validar el contexto al ejecutar; AppKit debe rastrear el menú fuera del préstamo mutable de `APP`, porque despacha sus acciones en un run loop anidado.
 
 Los IDs de pantalla actuales no son perfiles portables por UUID. Los valores persistidos de `Layout` están en `tiling.rs`: Espiral=1, Cuadrícula=2, Principal=3, División en 3=4, División en 4=5, Principal centrada=6, Centrada XL=7, Principal vertical=8. El antiguo valor 0 se interpreta como Espiral. `selection_index` es otra representación: usa las conversiones existentes.
 

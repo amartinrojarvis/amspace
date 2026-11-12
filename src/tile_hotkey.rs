@@ -201,6 +201,9 @@ pub enum Action {
     SendSpace(u8),
     MonitorLeft,
     MonitorRight,
+    PreviousTab,
+    NextTab,
+    DetachTab,
 }
 impl Action {
     pub fn id(self) -> u32 {
@@ -211,6 +214,9 @@ impl Action {
             Self::SendSpace(n) => 30 + u32::from(n),
             Self::MonitorLeft => 50,
             Self::MonitorRight => 51,
+            Self::PreviousTab => 60,
+            Self::NextTab => 61,
+            Self::DetachTab => 62,
         }
     }
     pub fn from_id(id: u32) -> Option<Self> {
@@ -221,6 +227,9 @@ impl Action {
             30..=38 => Some(Self::SendSpace((id - 30) as u8)),
             50 => Some(Self::MonitorLeft),
             51 => Some(Self::MonitorRight),
+            60 => Some(Self::PreviousTab),
+            61 => Some(Self::NextTab),
+            62 => Some(Self::DetachTab),
             _ => None,
         }
     }
@@ -376,5 +385,9 @@ mod tests {
         assert_eq!(action(signature, 2, 1), None);
         assert_eq!(action(0, 2, 2), None);
         assert_eq!(action(signature, 3, 3), None);
+        assert_eq!(action(signature, 60, 60), Some(Action::PreviousTab));
+        assert_eq!(action(signature, 61, 61), Some(Action::NextTab));
+        assert_eq!(action(signature, 62, 62), Some(Action::DetachTab));
+        assert_eq!(action(signature, 60, 61), None);
     }
 }

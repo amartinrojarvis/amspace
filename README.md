@@ -28,6 +28,8 @@ Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple S
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
+La rama de desarrollo incorpora un **DMG con arrastre a Aplicaciones y una guía visible antes de abrir la app**. Este instalador y las ayudas descritas más abajo todavía no forman parte de la versión publicada 0.9.11. Consulta la [guía de instalación, permisos y privacidad](docs/INSTALLATION.md); la descarga ZIP sigue siendo válida.
+
 1. Abre AMSpace. Solo aparece en la barra de menús, sin icono permanente en el Dock.
 2. Haz clic derecho en un escritorio de la barra para abrir los ajustes.
 3. Pulsa **Accesibilidad…** y autoriza AMSpace en **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. Si no aparece, añádelo con `+` desde Aplicaciones.
@@ -61,7 +63,9 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ./scripts/bundle.sh --universal
 ```
 
-La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` es únicamente una herramienta de desarrollo para rasterizar el icono vectorial; no forma parte del ejecutable. El empaquetado descarga Sparkle 2.10.1 desde su repositorio oficial y verifica un SHA-256 fijado antes de integrarlo. Las dependencias directas de Rust son `objc2`, `objc2-foundation`, `block2` y `libc`; las versiones están fijadas en Cargo.lock.
+Para generar el instalador guiado desde ese bundle: `./scripts/dmg.sh`. Produce `dist/AMSpace-installer.dmg` y necesita una sesión de Finder durante el empaquetado. El usuario final no necesita herramientas de desarrollo ni permiso de Automatización. [Detalles de instalación y permisos](docs/INSTALLATION.md).
+
+La aplicación en ejecución es Rust + AppKit/Core Animation. `scripts/icon.swift` y `scripts/dmg-background.swift` son herramientas de desarrollo para dibujar el icono y el fondo del instalador; no forman parte del ejecutable. El empaquetado descarga Sparkle 2.10.1 desde su repositorio oficial y verifica un SHA-256 fijado antes de integrarlo. Las dependencias directas de Rust son `objc2`, `objc2-foundation`, `block2` y `libc`; las versiones están fijadas en Cargo.lock.
 
 Para regenerar los iconos: `./scripts/make-icon.sh`. Para firmar con tu certificado, define `SIGNING_IDENTITY` al ejecutar el empaquetador. La distribución notarizada requiere además configurar hardened runtime, firmar con Developer ID y enviar el paquete al servicio de notarización; este script no realiza esos pasos.
 
@@ -88,6 +92,17 @@ El borde sigue la ventana enfocada por AMSpace y respeta su posición en la pila
 Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la app activa: `⌘,` abre ajustes, `⌘W` cierra su ventana y `⌘Q` sale. Cerrar los ajustes deja el indicador en funcionamiento.
 
 Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escritura por atributo cambiado en cada fotograma). Puedes desactivar esa interpolación con **Animar colocaciones** en Mosaico: cada ventana pasa a su destino con una única escritura AX y el temporizador vuelve al ritmo de reparación. Al reelegir el escritorio ya activo no hay deslizamiento nativo, así que AMSpace dibuja un marco rojo suave a pantalla completa como confirmación; se apaga con **Borde al reelegir el escritorio** en Barra de menús. Ambos interruptores guardan su valor en `tile.animate` y `flash`.
+
+### Pestañas y ayudas — próxima versión
+
+- **Clic derecho o Control-clic en una pestaña:** separar del grupo, hacer flotante, mover a otro grupo del mismo escritorio y pantalla, o cerrar la ventana. El cierre respeta las confirmaciones de guardar de la aplicación; no fuerza su terminación.
+- **Atajos configurables en Ajustes → Atajos:** pestaña anterior, siguiente y separar la activa. Inicialmente desactivados; sus combinaciones propuestas son `⌃⌥←`, `⌃⌥→` y `⌃⌥D`. La edición rechaza conflictos internos sin perder la configuración anterior.
+- **Pausar Mosaico:** botón siempre visible en la barra lateral de Ajustes y acción en el menú de pestañas. Conserva la distribución, cancela las colocaciones pendientes y detiene su temporizador y monitor de arrastre. Mientras está pausado no se reorganizan ni trasladan ventanas desde AMSpace. Borde, foco y navegación de escritorios siguen siendo independientes. La pausa dura hasta reanudar o cerrar la app; no cambia la preferencia de activación.
+- **Ayuda inicial desactivable:** instalación, permisos, privacidad y gestos en una ventana nativa. Se puede volver a abrir desde General → Instalación y ayuda. La casilla «Mostrar ayudas en los primeros usos» controla las ayudas iniciales, no los avisos de error.
+- **Motivos concretos:** los destinos incompatibles explican capacidad o tamaños mínimos; las operaciones rechazadas muestran un aviso temporal incluso con Ajustes cerrado. No hay sondeo nuevo para la guía, los menús o los avisos.
+- **Color integrado:** la pestaña activa utiliza el color elegido para el borde, oscurecido solo cuando hace falta para mantener el contraste del título y del cierre. El icono conserva sus colores originales sobre una base neutra. El color se calcula al cambiar la preferencia y se aplica a los controles existentes, sin sondeo ni consultas adicionales de títulos.
+
+La agrupación conserva el límite configurable de **5 pestañas** por defecto (2–20), la barra exterior y la separación por arrastre. Reducir el máximo no disuelve grupos existentes.
 
 ## Eficiencia
 

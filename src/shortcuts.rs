@@ -51,7 +51,10 @@ pub fn bindings(defaults: Obj, tiling: bool) -> Vec<Binding> {
 }
 fn configured(defaults: Obj, tiling: bool, navigation: bool) -> Vec<Binding> {
     use crate::tile_manager::{pref, pref_or};
-    let mut result = Vec::new();
+    let tabs = tiling && pref(defaults, "tile.tabs.enabled") != 0;
+    let mut result = Vec::with_capacity(
+        usize::from(navigation) * 20 + usize::from(tiling) * 2 + usize::from(tabs) * 3,
+    );
     if navigation {
         for (prefix, send, fallback) in [
             ("shortcuts.desktop", false, 11),
@@ -111,6 +114,26 @@ fn configured(defaults: Obj, tiling: bool, navigation: bool) -> Vec<Binding> {
                 mods: crate::tile_hotkey::modifier_index(pref(defaults, &format!("{prefix}.mods"))),
                 action,
             });
+        }
+        if tabs {
+            for (prefix, action, key) in [
+                ("tile.tab.previous", Action::PreviousTab, 50),
+                ("tile.tab.next", Action::NextTab, 51),
+                ("tile.tab.detach", Action::DetachTab, 7),
+            ] {
+                result.push(Binding {
+                    key: crate::tile_hotkey::key_index(pref_or(
+                        defaults,
+                        &format!("{prefix}.key"),
+                        key,
+                    )),
+                    mods: crate::tile_hotkey::modifier_index(pref(
+                        defaults,
+                        &format!("{prefix}.mods"),
+                    )),
+                    action,
+                });
+            }
         }
     }
     result
@@ -506,6 +529,23 @@ mod tests {
                     .physical(),
                 (49, 256 | 512)
             );
+            assert!(edit(obj, &[("tile.tabs.enabled", 1)]));
+            let enabled_tabs = bindings(obj, true);
+            assert!(enabled_tabs.iter().any(|b| b.action == Action::PreviousTab));
+            assert!(!bindings(obj, false).iter().any(|b| matches!(
+                b.action,
+                Action::PreviousTab | Action::NextTab | Action::DetachTab
+            )));
+            assert!(!edit(obj, &[("tile.tab.previous.key", 51)]));
+            assert_eq!(bindings(obj, true), enabled_tabs);
+            let absent: Obj =
+                msg_send![&defaults,objectForKey:&*NSString::from_str("tile.tab.previous.key")];
+            assert!(absent.is_null());
+            assert!(edit(obj, &[("tile.tabs.enabled", 0)]));
+            assert!(!bindings(obj, true).iter().any(|b| matches!(
+                b.action,
+                Action::PreviousTab | Action::NextTab | Action::DetachTab
+            )));
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*name];
         });
     }
@@ -577,7 +617,7 @@ mod tests {
             ..first
         };
         assert_eq!(conflicts(&[first, second]).len(), 2);
-        for id in [1, 2, 10, 18, 30, 38, 50, 51] {
+        for id in [1, 2, 10, 18, 30, 38, 50, 51, 60, 61, 62] {
             assert_eq!(Action::from_id(id).unwrap().id(), id);
         }
         assert_eq!(Action::from_id(19), None);

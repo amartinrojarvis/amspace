@@ -83,6 +83,11 @@ extern "C-unwind" fn control_drag(_: Obj, _: Sel, recognizer: Obj) {
     }
 }
 
+extern "C-unwind" fn control_context(_: Obj, _: Sel, button: Obj, _: Obj) {
+    let id: isize = unsafe { msg_send![button, tag] };
+    CONTROL_EVENTS.with(|events| events.borrow_mut().push((id as u32, 7)));
+}
+
 /// Exercise the actual strip controls with app-local mouse events: no AX,
 /// global input injection, foreign windows, or preference changes.
 pub fn check_controls() -> Result<(), String> {
@@ -104,6 +109,10 @@ pub fn check_controls() -> Result<(), String> {
             sel!(closeTileTab:),
             control_close as extern "C-unwind" fn(Obj, Sel, Obj),
         );
+        builder.add_method(
+            sel!(showTileTabMenu:event:),
+            control_context as extern "C-unwind" fn(Obj, Sel, Obj, Obj),
+        );
         let target: Retained<AnyObject> = msg_send![builder.register(), new];
         let names: [(String, Option<Retained<AnyObject>>); 3] = [
             ("Primera ventana".into(), None),
@@ -114,7 +123,14 @@ pub fn check_controls() -> Result<(), String> {
         let frame = tab_bar_frame(rect(300., 330., 620., 400.), total, false);
         let panel = new_overlay(frame, primary_height());
         let _: () = msg_send![&panel,setHasShadow:true];
-        let content = strip_content(&names, &[1, 2, 3], 1, frame.size.width, Some(&target));
+        let content = strip_content(
+            &names,
+            &[1, 2, 3],
+            1,
+            frame.size.width,
+            Some(&target),
+            crate::model::TabAccent::default(),
+        );
         let _: () = msg_send![&panel,setIgnoresMouseEvents:false];
         let _: () = msg_send![&panel,setContentView:&*content];
         let _: () = msg_send![&panel, orderFrontRegardless];
@@ -124,14 +140,14 @@ pub fn check_controls() -> Result<(), String> {
         let bounds: NSRect = msg_send![&button, bounds];
         let center: NSPoint = msg_send![&button,convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.),toView:ptr::null::<AnyObject>()];
         let number: isize = msg_send![&panel, windowNumber];
-        let queue = |events: &[(usize, f64, f64)]| -> Result<(), String> {
+        let queue_flags = |events: &[(usize, f64, f64)], flags: usize| -> Result<(), String> {
             for (index, (kind, x, y)) in events.iter().enumerate() {
                 let process: Obj = msg_send![class!(NSProcessInfo), processInfo];
                 let uptime: f64 = msg_send![process, systemUptime];
                 let event: Option<Retained<AnyObject>> = msg_send![class!(NSEvent),
                     mouseEventWithType:*kind,
                     location:NSPoint::new(center.x + x, center.y + y),
-                    modifierFlags:0usize, timestamp:uptime + index as f64 * 0.01,
+                    modifierFlags:flags, timestamp:uptime + index as f64 * 0.01,
                     windowNumber:number, context:ptr::null::<AnyObject>(),
                     eventNumber:index as isize, clickCount:1isize, pressure:if *kind == 2 { 0f32 } else { 1f32 }];
                 let event = event.ok_or("No se pudo crear el evento local")?;
@@ -139,6 +155,7 @@ pub fn check_controls() -> Result<(), String> {
             }
             Ok(())
         };
+        let queue = |events: &[(usize, f64, f64)]| queue_flags(events, 0);
         queue(&[(1, 0., 0.), (2, 0., 0.)])?;
         pump(0.15);
         let click = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
@@ -189,6 +206,19 @@ pub fn check_controls() -> Result<(), String> {
             return Err(format!(
                 "El clic posterior a cancelar quedó bloqueado: {next_click:?}"
             ));
+        }
+        for (events, flags) in [
+            (&[(3usize, 0., 0.), (4, 0., 0.)][..], 0),
+            (&[(1usize, 0., 0.), (2, 0., 0.)][..], 1 << 18),
+        ] {
+            queue_flags(events, flags)?;
+            pump(0.15);
+            let events = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+            if events != [(2, 7)] {
+                return Err(format!(
+                    "El menú contextual seleccionó o arrastró la pestaña: {events:?}"
+                ));
+            }
         }
         for id in 1..=3isize {
             let close: Retained<AnyObject> = msg_send![document,viewWithTag:-id - 2];
@@ -266,6 +296,23 @@ pub fn check_controls() -> Result<(), String> {
                 return Err("Mover la tira reconstruyó los controles o perdió su posición.".into());
             }
         }
+        capture_control(
+            Retained::as_ptr(&content) as Obj,
+            ".cache/tab-accent-before.png",
+        )?;
+        manager.set_tab_accent([0.25, 0.72, 0.62]);
+        pump(0.05);
+        let recolored: Obj = msg_send![&panel, contentView];
+        if !ptr::eq(recolored, Retained::as_ptr(&content)) {
+            return Err("Cambiar el color reconstruyó los controles de la tira.".into());
+        }
+        capture_control(recolored, ".cache/tab-accent-after.png")?;
+        if std::fs::read(".cache/tab-accent-before.png").map_err(|e| e.to_string())?
+            == std::fs::read(".cache/tab-accent-after.png").map_err(|e| e.to_string())?
+        {
+            return Err("Cambiar el color no actualizó la pestaña activa.".into());
+        }
+        manager.set_tab_accent([0.42, 0.48, 0.95]);
         manager.show_badge(DropIntent::Group(2), slot, primary_height());
         let badge: Retained<AnyObject> = msg_send![&*manager.badges[0].panel, contentView];
         manager.show_badge(
@@ -285,6 +332,7 @@ pub fn check_controls() -> Result<(), String> {
         manager.trim_overlays(1, 0);
         capture_control(Retained::as_ptr(&content) as Obj, ".cache/tab-controls.png")?;
         render_tab_presentation(&names, &target)?;
+        render_tab_palette(&target)?;
         objc2::rc::autoreleasepool(|_| check_saved_picker())?;
         if let Some(seconds) = std::env::var("AMSPACE_TAB_IDLE_SECONDS")
             .ok()
@@ -307,7 +355,7 @@ pub fn check_controls() -> Result<(), String> {
         }
         let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
         println!(
-            "PASS: selección, arrastre/cancelación, cierre individual, hover y reutilización de controles al mover la tira; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
+            "PASS: selección, arrastre/cancelación, menú con clic derecho y Control-clic, cierre individual, hover y reutilización de controles al mover la tira; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
         );
         Ok(())
     }
@@ -429,7 +477,14 @@ unsafe fn render_tab_presentation(
             );
             let _: () = msg_send![&canvas,addSubview:&*surface];
             let frame = tab_bar_frame(window, total, centered);
-            let strip = strip_content(names, &[1, 2, 3], 1, frame.size.width, Some(target));
+            let strip = strip_content(
+                names,
+                &[1, 2, 3],
+                1,
+                frame.size.width,
+                Some(target),
+                crate::model::TabAccent::default(),
+            );
             let _: () = msg_send![&strip,setFrame:appkit(frame,330.)];
             let _: () = msg_send![&canvas,addSubview:&*strip];
         }
@@ -441,6 +496,78 @@ unsafe fn render_tab_presentation(
             ".cache/tab-presentation.png",
         );
         let _: () = msg_send![&panel,orderOut:ptr::null::<AnyObject>()];
+        result
+    }
+}
+
+/// Original app icon plus monochrome extremes on light/dark window surfaces.
+unsafe fn render_tab_palette(target: &AnyObject) -> Result<(), String> {
+    unsafe {
+        let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let application_icon: Obj = msg_send![app, applicationIconImage];
+        let application_icon =
+            Retained::retain(application_icon).ok_or("Sin icono de aplicación")?;
+        let monochrome = |value: f64| -> Retained<AnyObject> {
+            let image: Allocated<AnyObject> = msg_send![class!(NSImage), alloc];
+            let image: Retained<AnyObject> =
+                msg_send![image, initWithSize:objc2_foundation::NSSize::new(12., 12.)];
+            let _: () = msg_send![&image, lockFocus];
+            let fill = color(value, value, value, 1.);
+            let _: () = msg_send![fill, setFill];
+            let path: Obj = msg_send![class!(NSBezierPath), bezierPathWithRoundedRect:rect(1., 1., 10., 10.), xRadius:2f64, yRadius:2f64];
+            let _: () = msg_send![path, fill];
+            let _: () = msg_send![&image, unlockFocus];
+            image
+        };
+        let names = [
+            ("Icono original · aplicación".into(), Some(application_icon)),
+            ("Icono oscuro · título".into(), Some(monochrome(0.))),
+            ("Icono claro · título".into(), Some(monochrome(1.))),
+        ];
+        let panel = new_overlay(rect(200., 180., 920., 450.), primary_height());
+        let canvas = alloc_view(class!(NSView), rect(0., 0., 920., 450.));
+        let appearance: Obj = msg_send![class!(NSAppearance), appearanceNamed:&*NSString::from_str("NSAppearanceNameDarkAqua")];
+        let _: () = msg_send![&canvas, setAppearance:appearance];
+        let parent = Retained::as_ptr(&canvas) as Obj;
+        for (index, (title, rgb)) in [
+            ("Índigo", [0.42, 0.48, 0.95]),
+            ("Menta", [0.25, 0.72, 0.62]),
+            ("Ámbar", [0.94, 0.65, 0.27]),
+            ("Rosa", [0.88, 0.42, 0.60]),
+            ("Negro", [0., 0., 0.]),
+            ("Blanco", [1., 1., 1.]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = 450. - (index + 1) as f64 * 75.;
+            let light = index % 2 != 0;
+            let background = if light {
+                [0.90, 0.91, 0.93]
+            } else {
+                [0.15, 0.16, 0.18]
+            };
+            rounded_plate(parent, rect(0., y, 920., 75.), background, 1., 0.);
+            let label =
+                crate::native::label(parent, rect(12., y + 26., 86., 22.), title, 12., 0., false);
+            let value = if light { 0.12 } else { 0.95 };
+            let _: () = msg_send![label, setTextColor:color(value, value, value, 1.)];
+            let strip = strip_content(
+                &names,
+                &[1, 2, 3],
+                index % 3,
+                790.,
+                Some(target),
+                crate::model::TabAccent::new(rgb),
+            );
+            let _: () = msg_send![&strip, setFrame:rect(110., y + 26., 790., TAB_BAR_HEIGHT)];
+            let _: () = msg_send![&canvas, addSubview:&*strip];
+        }
+        let _: () = msg_send![&panel, setContentView:&*canvas];
+        let _: () = msg_send![&panel, orderFrontRegardless];
+        pump(0.1);
+        let result = capture_control(parent, ".cache/tab-palette.png");
+        let _: () = msg_send![&panel, orderOut:ptr::null::<AnyObject>()];
         result
     }
 }

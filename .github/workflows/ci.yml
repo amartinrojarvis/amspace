@@ -15,6 +15,11 @@ jobs:
           components: rustfmt, clippy
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: ./scripts/check.sh
+      - name: Validate installer sources
+        run: |
+          bash -n scripts/dmg.sh
+          python3 -c 'import ast,pathlib; ast.parse(pathlib.Path("scripts/prepare-release.py").read_text())'
+          xcrun swiftc -typecheck scripts/dmg-background.swift
       - run: ./scripts/bundle.sh --universal
       - name: Package application
         run: ditto -c -k --keepParent dist/AMSpace.app dist/AMSpace-universal.zip

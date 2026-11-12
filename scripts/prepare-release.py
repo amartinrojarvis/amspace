@@ -23,7 +23,9 @@ def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True).strip()
 
 
-def prepare(*, feed_only=False):
+def prepare(*, feed_only=False, with_dmg=False):
+    if feed_only and with_dmg:
+        raise SystemExit("--feed-only conserva el paquete publicado; no se combina con --with-dmg.")
     built = plistlib.loads((APP / "Contents/Info.plist").read_bytes())
     expected = plistlib.loads((ROOT / "assets/Info.plist").read_bytes())
     version = built["CFBundleShortVersionString"]
@@ -72,13 +74,26 @@ def prepare(*, feed_only=False):
     ET.ElementTree(rss).write(feed, encoding="utf-8", xml_declaration=True)
     run(SIGNER, *key_args, feed)
     run(SIGNER, *key_args, "--verify", feed)
+    artifacts = [archive, feed]
+    if with_dmg:
+        print(run(ROOT / "scripts/dmg.sh"))
+        installer = DIST / "AMSpace-installer.dmg"
+        installer_signature = run(SIGNER, *key_args, "-p", installer)
+        run(SIGNER, *key_args, "--verify", installer, installer_signature)
+        detached = DIST / "AMSpace-installer.dmg.ed25519"
+        detached.write_text(installer_signature + "\n")
+        artifacts.extend([installer, detached])
     (DIST / "SHA256SUMS.txt").write_text("".join(
-        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in (archive, feed)
+        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in artifacts
     ))
     print(f"Preparada {version}, build {built['CFBundleVersion']}. ZIP y feed firmados y verificados.")
+    if with_dmg:
+        print("DMG y firma separada incluidos en SHA256SUMS.txt. Sparkle sigue usando el ZIP.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--feed-only", action="store_true", help="Regenerar el catálogo firmado conservando el ZIP existente.")
-    prepare(feed_only=parser.parse_args().feed_only)
+    parser.add_argument("--with-dmg", action="store_true", help="Añadir instalador DMG guiado y firma separada; necesita una sesión de Finder.")
+    args = parser.parse_args()
+    prepare(feed_only=args.feed_only, with_dmg=args.with_dmg)

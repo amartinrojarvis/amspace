@@ -7,6 +7,7 @@ mod border;
 mod custom_templates;
 mod desktop_mode;
 mod desktop_preview;
+mod discovery;
 mod focus;
 mod instance;
 mod layout_thumbnail;

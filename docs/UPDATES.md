@@ -12,8 +12,8 @@ La búsqueda diaria es opcional. Nunca se instala automáticamente. El feed y el
 
 1. Incrementar `version` en Cargo.toml y `CFBundleShortVersionString` en assets/Info.plist. Incrementar también `CFBundleVersion`, entero estrictamente creciente. Actualizar Cargo.lock y docs/RELEASE_NOTES.md.
 2. Ejecutar `./scripts/check.sh` y `./scripts/bundle.sh --universal`.
-3. Ejecutar `./scripts/prepare-release.py` en el Mac que custodia la clave. Genera `dist/AMSpace-universal.zip`, `dist/appcast.xml` firmado y `dist/SHA256SUMS.txt`; verifica ambas firmas y coherencia del paquete.
-4. Crear el commit, subirlo y esperar a CI. Crear una release de GitHub con tag `vX.Y.Z`, ese commit y los tres archivos. Comprobar que el ZIP puede descargarse sin autenticación.
+3. Ejecutar `./scripts/prepare-release.py --with-dmg` en el Mac que custodia la clave, con una sesión de Finder. Genera `dist/AMSpace-universal.zip`, `dist/appcast.xml`, `dist/AMSpace-installer.dmg`, su firma separada `dist/AMSpace-installer.dmg.ed25519` y `dist/SHA256SUMS.txt`; verifica las firmas y coherencia del paquete. Sin `--with-dmg` conserva el flujo ZIP anterior. No se combina con `--feed-only`.
+4. Crear el commit, subirlo y esperar a CI. Crear una release de GitHub con tag `vX.Y.Z`, ese commit y los archivos preparados. Comprobar que ZIP y DMG pueden descargarse sin autenticación y que sus hashes coinciden. Montar el DMG descargado: revisar disposición, guía, alias a Aplicaciones y firma del bundle. Probar primera instalación en una cuenta o Mac de prueba, sin restablecer los permisos del usuario habitual.
 5. Publicar una copia idéntica del ZIP firmado en la rama `updates`, ruta `X.Y.Z/AMSpace-universal.zip`, y verificar su descarga pública desde `https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/X.Y.Z/AMSpace-universal.zip`. Mantener esas rutas inmutables. El catálogo utiliza esa URL para evitar depender del host de descargas de releases. Para reparar solo la URL del catálogo de un ZIP existente, usar `prepare-release.py --feed-only`; comprueba versión y ejecutable antes de firmar, sin reemplazar el ZIP.
 6. Solo después, copiar `dist/appcast.xml` a `appcast.xml` en la raíz, hacer commit y push. **No editar manualmente el feed firmado.** Verificar la URL exacta de `SUFeedURL` tanto sin compresión como con las cabeceras de Sparkle; comparar los cuerpos descargados con el catálogo firmado local. GitHub usa `Vary: Authorization,Accept-Encoding`: una respuesta sin compresión actualizada no prueba que la variante comprimida ya anuncie la versión. No añadir un parámetro de consulta para esta comprobación: crearía otra clave de caché.
 7. Probar Buscar… desde la versión anterior, instalar y verificar versión y preferencias después del reinicio.
@@ -42,6 +42,10 @@ Ed25519 autentica el canal de actualización; no sustituye Developer ID ni notar
 ## Desarrollo
 
 `fetch-sparkle.sh` fija versión y SHA-256 de la distribución oficial y la guarda en .cache (ignorada por Git). `bundle.sh` integra el framework y sus auxiliares, preserva symlinks, incluye licencias y verifica la firma del bundle. CI empaqueta pero no publica ni dispone de la clave privada.
+
+`dmg.sh` genera un volumen temporal HFS+ con arrastre a Aplicaciones, fondo dibujado por AppKit y guía RTF desde `assets/installer/LEEME.html`. Finder guarda la disposición; por eso CI valida las fuentes del instalador pero no genera el DMG en una sesión sin interfaz. El script desmonta y retira su staging; solo sustituye su artefacto local en `dist/`.
+
+El DMG es para instalación manual. El enclosure de Sparkle continúa apuntando al ZIP inmutable de `updates/<versión>/`; añadir el instalador no migra ese canal ni reemplaza archivos publicados. La firma separada del DMG puede verificarse con `.cache/sparkle/bin/sign_update --account io.github.amartinrojarvis.amspace --verify dist/AMSpace-installer.dmg "$(cat dist/AMSpace-installer.dmg.ed25519)"` en el entorno del editor. No equivale a Developer ID ni evita Gatekeeper.
 
 ## Candidatas para pruebas físicas
 
