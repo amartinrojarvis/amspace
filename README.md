@@ -24,7 +24,7 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.6/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. La candidata 0.9.7 corrige errores de las pestañas, pero su publicación está retenida hasta completar la prueba nativa con Accesibilidad.
+Requiere **macOS 13 Ventura o posterior**. El paquete universal contiene Apple Silicon e Intel; la prueba de ejecución local se realiza en Apple Silicon. La última versión publicada es la [0.9.7](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.7/AMSpace-universal.zip); consulta [Releases](https://github.com/amartinrojarvis/amspace/releases), descomprímela y mueve **AMSpace.app** a **Aplicaciones** antes de abrirla. Corrige errores de las pestañas; la prueba completa de interacción nativa con Accesibilidad sigue pendiente.
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
@@ -225,7 +225,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Última publicada: 0.9.6](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.6/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.6). La candidata 0.9.7 no se anuncia en el catálogo.
+[Última publicada: 0.9.7](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.7/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.7).
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
@@ -247,4 +247,4 @@ La versión 0.9.4 dibuja esas tiras y los iconos de intención. Cada grupo muest
 
 La versión 0.9.5 refresca la línea de permiso de Accesibilidad en cada cuadro del temporizador de la ventana de Ajustes, de modo que el círculo se pone lleno nada más conceder el permiso en Preferencias del Sistema, sin tocar ningún control.
 
-La versión 0.9.6 añadió comprobaciones de objetos ausentes en Sparkle, pero no resolvió correctamente la propiedad del icono. La candidata 0.9.7 retiene el resultado prestado de `icon` y convierte `AXTitle` mientras su objeto sigue vivo; añade selección desde la tira y corrige la geometría compartida y las transiciones del modelo de grupos. La validación y sus límites se registran en [VALIDATION.md](docs/VALIDATION.md). No está publicada: falta completar la comprobación nativa AX.
+La versión 0.9.6 añadió comprobaciones de objetos ausentes en Sparkle, pero no resolvió correctamente la propiedad del icono. La 0.9.7 retiene el resultado prestado de `icon` y convierte `AXTitle` mientras su objeto sigue vivo; añade selección desde la tira y corrige la geometría compartida y las transiciones del modelo de grupos. La validación y sus límites se registran en [VALIDATION.md](docs/VALIDATION.md). Se publica por autorización del usuario; falta completar la comprobación nativa AX.

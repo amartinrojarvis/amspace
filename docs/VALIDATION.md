@@ -1,3 +1,10 @@
+## Publicación 0.9.7/build 62
+
+- El usuario autorizó publicar el fix después de la retención inicial, manteniendo explícito el límite de Accesibilidad pendiente.
+- [Release 0.9.7](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.7) sobre `c07acadf3a78a488eaa59df4bbd67c4a8c0f538a`, con CI correcta. Se reutiliza el ZIP universal ya verificado, sin recompilar ni cambiar sus bytes; se regeneró únicamente el catálogo firmado con las notas de publicación.
+- ZIP, catálogo y SHA256SUMS publicados en la release. Copia inmutable del ZIP en `updates/0.9.7/AMSpace-universal.zip`. Ambas descargas HTTPS públicas, sin autenticación, coinciden byte a byte con el ZIP firmado. SHA-256: `4eb34a0c9930307426dda72615e9a17242c6f5274aa9b215e89f9b146aaac3b1`.
+- El anuncio estable usa el catálogo generado y verificado por Sparkle, sin edición manual. No se sustituye la instalación local ni se presenta esta publicación como prueba de instalación completa mediante Sparkle o de interacción AX con pestañas.
+
 ## Candidata 0.9.7/build 62: propiedad y selección de pestañas
 
 - `AXTitle` se valida como CFString y se convierte antes de destruir su resultado `Copy`. `NSRunningApplication.icon` usa un retorno `Option<Retained<AnyObject>>`, que retiene el getter +0; no adopta memoria prestada.
@@ -11,7 +18,7 @@
 - **Límite nativo:** `--check-tab-groups` no pudo ejecutar la agrupación/clic/cierre contra ventanas de otro proceso: macOS denegó Accesibilidad al binario debug, al bundle firmado y al lanzamiento con LaunchServices. La prueba de render no demuestra selección AX, arrastre físico ni varios monitores. No se reiniciaron permisos; la app instalada original se restauró tras la prueba temporal. No afirmar «funciona perfectamente» ni atribuir los informes originales a una línea sin el binario coincidente.
 - Se restauró y volvió a lanzar `/Applications/AMSpace.app` 0.9.6/build 61. La comparación de preferencias no mostró cambios funcionales; solo cambió `SULastCheckTime`, fecha de comprobación de Sparkle. No se sustituyó la instalación por la candidata.
 - Firma: se eliminó el fallback que exportaba el secreto. Se corrigieron solo servicio/protocolo del ítem existente del Llavero, sin solicitar ni reemplazar sus datos; `generate_keys --account … -p` devuelve la misma clave pública que `SUPublicEDKey`. Con autorización del usuario se eliminaron las copias de texto de `dist/ed25519.key` y `/tmp/amspace.key`; `.cache/sparkle/ed_keys` no existía.
-- Decisión de entrega: el usuario eligió completar código, comprobaciones y paquete, pero **no publicar la estable** hasta autorizar Accesibilidad y superar la prueba nativa. Se conserva el catálogo público anterior; no se crea una release ni se publica el ZIP candidato.
+- Decisión inicial de entrega: el usuario eligió completar código, comprobaciones y paquete, pero retener la estable hasta autorizar Accesibilidad y superar la prueba nativa. Posteriormente autorizó la publicación descrita arriba, sin dar por superada esa prueba.
 
 ## Corrección del registro de 0.9.6/build 61
 
