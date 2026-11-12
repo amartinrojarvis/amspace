@@ -15,8 +15,23 @@ La búsqueda diaria es opcional. Nunca se instala automáticamente. El feed y el
 3. Ejecutar `./scripts/prepare-release.py` en el Mac que custodia la clave. Genera `dist/AMSpace-universal.zip`, `dist/appcast.xml` firmado y `dist/SHA256SUMS.txt`; verifica ambas firmas y coherencia del paquete.
 4. Crear el commit, subirlo y esperar a CI. Crear una release de GitHub con tag `vX.Y.Z`, ese commit y los tres archivos. Comprobar que el ZIP puede descargarse sin autenticación.
 5. Publicar una copia idéntica del ZIP firmado en la rama `updates`, ruta `X.Y.Z/AMSpace-universal.zip`, y verificar su descarga pública desde `https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/X.Y.Z/AMSpace-universal.zip`. Mantener esas rutas inmutables. El catálogo utiliza esa URL para evitar depender del host de descargas de releases. Para reparar solo la URL del catálogo de un ZIP existente, usar `prepare-release.py --feed-only`; comprueba versión y ejecutable antes de firmar, sin reemplazar el ZIP.
-6. Solo después, copiar `dist/appcast.xml` a `appcast.xml` en la raíz, hacer commit y push. **No editar manualmente el feed firmado.**
+6. Solo después, copiar `dist/appcast.xml` a `appcast.xml` en la raíz, hacer commit y push. **No editar manualmente el feed firmado.** Verificar la URL exacta de `SUFeedURL` tanto sin compresión como con las cabeceras de Sparkle; comparar los cuerpos descargados con el catálogo firmado local. GitHub usa `Vary: Authorization,Accept-Encoding`: una respuesta sin compresión actualizada no prueba que la variante comprimida ya anuncie la versión. No añadir un parámetro de consulta para esta comprobación: crearía otra clave de caché.
 7. Probar Buscar… desde la versión anterior, instalar y verificar versión y preferencias después del reinicio.
+
+Comprobación de la variante de Sparkle (ajustar el User-Agent a la versión instalada):
+
+```sh
+curl --fail --silent --show-error --compressed \
+  -H 'User-Agent: AMSpace/0.9.6 Sparkle/2.10.1' \
+  -H 'Accept: application/rss+xml,*/*;q=0.1' \
+  -H 'Accept-Language: es-ES,es;q=0.9' \
+  -H 'Accept-Encoding: gzip, deflate, br' \
+  "$(/usr/libexec/PlistBuddy -c 'Print SUFeedURL' assets/Info.plist)" \
+  -o .cache/appcast-sparkle-public.xml
+cmp dist/appcast.xml .cache/appcast-sparkle-public.xml
+```
+
+Si la variante aún anuncia la anterior, conservar las cabeceras `Date`, `Expires`, `Source-Age` y el cuerpo para diagnosticar la propagación. No reemplazar el ZIP publicado, desactivar firmas ni borrar preferencias para resolver una caché HTTP transitoria.
 
 La clave compatible con `generate_keys --account io.github.amartinrojarvis.amspace` debe estar en el Llavero con servicio `https://sparkle-project.org` y protocolo SSH, que forman parte de la consulta de Sparkle. `prepare-release.py` usa únicamente `--account` y comprueba con `generate_keys -p` que la clave pública coincide con `SUPublicEDKey` antes de firmar. No crea ni rota claves. No usar archivos de respaldo como fallback ni extraer el secreto con `security -w`. Mantener una copia de seguridad protegida del Llavero; perder esa clave impide firmar actualizaciones compatibles. No incluir claves privadas en el repositorio, argumentos de proceso ni artefactos.
 
