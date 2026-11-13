@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.14</title><pubDate>Fri, 13 Nov 2026 07:14:40 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.14 — zonas de arrastre mucho más claras.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.15</title><pubDate>Fri, 13 Nov 2026 14:34:09 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.15 — pestañas persistentes y reordenación por arrastre.
 
-- Iconos de hasta 72 puntos, frente a los 20 anteriores, con etiquetas grandes y legibles.
-- Al arrastrar entre huecos del mismo mosaico se ven ambas zonas: apilar como pestaña en el tercio superior e intercambiar posiciones en los dos tercios inferiores.
-- Separador sobre el límite real y resaltado de la zona activa. No cambian los gestos ni las reglas de soltado.
-- Las acciones rechazadas por capacidad o tamaños mínimos aparecen como no disponibles. Los huecos pequeños adaptan iconos y textos.
-- El panel no intercepta el ratón. Moverlo o cruzar entre zonas reutiliza sus vistas; sin nuevos temporizadores, consultas AX ni blur.
+- Las barras conservan sus paneles y controles en el escritorio del grupo, en lugar de retirarlos al cambiar de Space. macOS gestiona su visibilidad con pertenencia nativa comprobada.
+- Arrastra dentro de la barra para reordenar. Una marca indica la posición de inserción; la ventana activa, sus tamaños y la distribución se mantienen.
+- Arrastra fuera de la barra para separar la ventana. Si no cabe un hueco independiente, puedes seguir reordenando las pestañas.
+- El gesto respeta el desplazamiento horizontal. Cancelar, cambiar de contexto o perder la entrega final no modifica el grupo.
+- Sin nuevos temporizadores ni sondeo permanente. Pausar Mosaico, Mostrar escritorio y Mission Control mantienen la ocultación de las barras.
 
-Se conservan las preferencias y el canal firmado de actualizaciones. Las llegadas con divisiones de borde mantienen su preview real.
+Se conservan las preferencias y el canal firmado de actualizaciones. Si macOS no permite confirmar la pertenencia del panel, se conserva la ocultación segura durante la transición.
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y de controles AppKit; no acreditan un arrastre físico completo con otras apps ni hardware Intel/multipantalla. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.14/AMSpace-universal.zip" length="2819881" type="application/octet-stream" sparkle:version="69" sparkle:shortVersionString="0.9.14" sparkle:edSignature="0b1PmFD1j7dNsNRAMdoOqCvIxyLYhjWMgkBRJIp7hHfomqFXp8M6SB3XOsNf9uziThs1m1RS1TXpcvNoIxHNDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: DpZPr7RjljWNA0TD57omdouwN+uGBavoK5KcjQDd7aLNl8KC+X62oTxhFRlEOIdAVaFZ05fUn0SvK/UnwbkLBw==
-length: 2212
+Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y controles AppKit; no acreditan la animación física entre escritorios ni un arrastre completo con otras apps. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.15/AMSpace-universal.zip" length="2836184" type="application/octet-stream" sparkle:version="70" sparkle:shortVersionString="0.9.15" sparkle:edSignature="D0A6Um0P5DcDnFmLhfNSsbU7O8xxAXQPBFmJeWuv/6zIQBCok0oJuX19fW5ga4A1zvq7E11ydbMGMwlHoCdkDg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: XjDMh9hRu6iQXmA/qT7b9wVoR/igzhIqLJgaB0ezmto/tkrP77X63zoO3iQ13UGnVxvzBy0i2JEa+dHunsu+Aw==
+length: 2376
 -->
