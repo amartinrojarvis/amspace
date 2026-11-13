@@ -131,6 +131,7 @@ struct App {
     pause_button: Obj,
     tab_menu: Option<TabMenuState>,
     guide: Option<crate::discovery::Guide>,
+    feedback_panel: Option<crate::discovery::Feedback>,
     notice: Option<crate::discovery::Notice>,
     tab_shortcuts_switch: Obj,
     shortcuts: crate::shortcuts::Service,
@@ -560,6 +561,7 @@ impl App {
                 pause_button: ptr::null_mut(),
                 tab_menu: None,
                 guide: None,
+                feedback_panel: None,
                 notice: None,
                 tab_shortcuts_switch: ptr::null_mut(),
                 shortcuts: Default::default(),
@@ -3178,6 +3180,13 @@ Otras apps pueden tener atajos propios no detectables.",
                 target,
                 113,
             );
+            button(
+                root,
+                rect(240., 0., 176., 30.),
+                "Enviar feedback…",
+                target,
+                116,
+            );
         }
     }
     fn apply_bar_background(&self) {
@@ -3484,6 +3493,12 @@ Otras apps pueden tener atajos propios no detectables.",
             let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(hideNotice:), object:ptr::null::<AnyObject>()];
             let _: () = msg_send![&self.target, performSelector:sel!(hideNotice:), withObject:ptr::null::<AnyObject>(), afterDelay:5f64];
         }
+    }
+    fn show_feedback(&mut self) {
+        let target = Retained::as_ptr(&self.target) as Obj;
+        self.feedback_panel
+            .get_or_insert_with(|| crate::discovery::Feedback::new(target))
+            .show();
     }
     fn show_guide(&mut self) {
         self.show_guide_page(0);
@@ -3891,6 +3906,20 @@ Otras apps pueden tener atajos propios no detectables.",
                 }
                 113 => {
                     self.show_guide();
+                    return;
+                }
+                116 => {
+                    self.show_feedback();
+                    return;
+                }
+                117 | 118 => {
+                    if let Some(panel) = &self.feedback_panel {
+                        if tag == 117 {
+                            panel.prepare_email();
+                        } else {
+                            panel.copy_address();
+                        }
+                    }
                     return;
                 }
                 114 => {
@@ -4463,6 +4492,9 @@ extern "C-unwind" fn about(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn check_updates(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.check_updates());
 }
+extern "C-unwind" fn show_feedback(_: Obj, _: Sel, _: Obj) {
+    with_app(|a| a.show_feedback());
+}
 extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
     with_app(|a| a.change(sender));
 }
@@ -4968,6 +5000,7 @@ unsafe fn make_menu(app: Obj, target: Obj) {
             ("Buscar actualizaciones…", sel!(checkUpdates:), ""),
             ("Ajustes…", sel!(settings:), ","),
             ("Instalación y ayuda…", sel!(showGuide:), ""),
+            ("Enviar feedback…", sel!(showFeedback:), ""),
             ("Pausar / reanudar Mosaico", sel!(toggleMosaicPause:), ""),
             ("Cerrar ventana", sel!(performClose:), "w"),
             ("Salir de AMSpace", sel!(quit:), "q"),
@@ -5039,6 +5072,7 @@ unsafe fn controller() -> Retained<AnyObject> {
             (sel!(tabMenuAction:), tab_menu_action),
             (sel!(toggleMosaicPause:), toggle_mosaic_pause),
             (sel!(showGuide:), show_guide),
+            (sel!(showFeedback:), show_feedback),
             (sel!(showTabGuide:), show_tab_guide),
             (sel!(initialHelp:), initial_help),
             (sel!(hideNotice:), hide_notice),

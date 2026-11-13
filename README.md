@@ -1,8 +1,19 @@
 <p align="center"><img src="assets/icon.png" width="128" alt="Icono de AMSpace"></p>
 <h1 align="center">amspace</h1>
 <p align="center">Tu espacio. Tu foco.<br>Un compañero discreto para la barra de menús de macOS, escrito en Rust.</p>
+<p align="center"><a href="README.md">Español</a> · <a href="README.en.md">English</a></p>
 
 AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escritorio. El activo destaca y los demás aparecen atenuados. Haz clic izquierdo en un número, punto o icono para cambiar a ese escritorio. El clic derecho abre unos ajustes nativos, compactos y adaptados al aspecto claro u oscuro del sistema.
+
+## Contexto
+
+Proyecto personal desarrollado por **Alberto Martín** para su propio uso, utilizando **Astra** y **Qwen 3.8 Flash Next**. La aplicación sigue en español. La optimización y el mínimo consumo de recursos son una prioridad máxima: está pensada para mi portátil y mi estación de escritorio con dos monitores, uno apaisado y otro vertical. Esa configuración guía el diseño, pero no implica compatibilidad o rendimiento máximos universales. [VALIDATION.md](docs/VALIDATION.md) recoge las mediciones, los escenarios realmente comprobados y sus límites.
+
+- Instagram: [@amartinro](https://www.instagram.com/amartinro/)
+- X: [@amartinro](https://x.com/amartinro)
+- GitHub: [amartinrojarvis](https://github.com/amartinrojarvis)
+- Otras webs del autor: [tufotoyvideopromocional.es](https://tufotoyvideopromocional.es/) · [iaparafilmmakers.es](https://www.iaparafilmmakers.es/) · [vilens.es](https://vilens.es/)
+- Contacto: [a.martinro@gmail.com](mailto:a.martinro@gmail.com)
 
 ## Funciones
 
@@ -151,6 +162,10 @@ Las preferencias viven en el dominio `io.github.amartinrojarvis.amspace` de `NSU
 Creado por **Alberto Martín** · [Instagram @amartinro](https://www.instagram.com/amartinro/) · [X @amartinro](https://x.com/amartinro).
 
 [Publicación de actualizaciones](docs/UPDATES.md) · [Licencia de Sparkle](docs/SPARKLE-LICENSE.txt) · [Atribución de foco y puente de ventanas de yabai](docs/YABAI-LICENSE.txt) · [Licencia del protocolo de gestos de iss](docs/ISS-LICENSE.txt) · [Atribución de strafe](docs/STRAFE-LICENSE.txt)
+
+## Enviar feedback
+
+En **Ajustes → General → Enviar feedback…**, o desde el menú de la app, se abre un panel nativo con el correo visible y seleccionable. **Preparar correo** abre un borrador en el cliente predeterminado: revísalo y envíalo tú mismo. No se adjuntan diagnósticos automáticamente. Si no tienes un cliente configurado, usa **Copiar dirección** y escribe desde tu webmail. AMSpace no envía el mensaje ni añade servicios en segundo plano.
 
 ## Tiling por escritorio
 

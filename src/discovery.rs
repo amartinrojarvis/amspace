@@ -166,6 +166,129 @@ impl Guide {
     }
 }
 
+pub struct Feedback {
+    window: Retained<AnyObject>,
+    status: Obj,
+}
+
+impl Feedback {
+    pub fn new(target: Obj) -> Self {
+        unsafe {
+            let window = crate::ui::window(rect(0., 0., 520., 300.), 1 | 2);
+            let _: () = msg_send![&window, setTitle:&*NSString::from_str("AMSpace · Feedback")];
+            let _: () = msg_send![&window, center];
+            let root: Obj = msg_send![&window, contentView];
+            label(
+                root,
+                rect(18., 250., 484., 28.),
+                "Tu experiencia ayuda a mejorar AMSpace",
+                18.,
+                0.4,
+                false,
+            );
+            wrapping_label(
+                root,
+                rect(18., 205., 484., 36.),
+                "Cuéntame un error, una sugerencia o cómo utilizas la app en tu equipo.",
+                13.,
+            );
+            let address = label(
+                root,
+                rect(18., 170., 484., 26.),
+                "a.martinro@gmail.com",
+                15.,
+                0.3,
+                false,
+            );
+            let _: () = msg_send![address, setSelectable:true];
+            wrapping_label(
+                root,
+                rect(18., 105., 484., 56.),
+                "Preparar correo abre un borrador en tu aplicación de correo. Tú decides qué incluir y cuándo enviarlo. No se adjuntan diagnósticos ni datos de tus ventanas.",
+                12.,
+            );
+            crate::ui::button(
+                root,
+                rect(14., 62., 194., 30.),
+                "Preparar correo",
+                target,
+                117,
+            );
+            crate::ui::button(
+                root,
+                rect(218., 62., 174., 30.),
+                "Copiar dirección",
+                target,
+                118,
+            );
+            let status = wrapping_label(
+                root,
+                rect(18., 12., 484., 42.),
+                "Si no tienes un cliente de correo configurado, utiliza esta dirección desde tu webmail.",
+                12.,
+            );
+            Self { window, status }
+        }
+    }
+
+    pub fn show(&self) {
+        unsafe {
+            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, activateIgnoringOtherApps:true];
+            let _: () = msg_send![&self.window, makeKeyAndOrderFront:std::ptr::null::<AnyObject>()];
+        }
+    }
+
+    fn email_url() -> Option<Retained<AnyObject>> {
+        unsafe {
+            let components: Retained<AnyObject> = msg_send![class!(NSURLComponents), new];
+            let _: () = msg_send![&components, setScheme:&*NSString::from_str("mailto")];
+            let _: () =
+                msg_send![&components, setPath:&*NSString::from_str("a.martinro@gmail.com")];
+            let subject: Retained<AnyObject> = msg_send![class!(NSURLQueryItem), queryItemWithName:&*NSString::from_str("subject"), value:&*NSString::from_str(concat!("AMSpace ", env!("CARGO_PKG_VERSION"), " · Feedback"))];
+            let body: Retained<AnyObject> = msg_send![class!(NSURLQueryItem), queryItemWithName:&*NSString::from_str("body"), value:&*NSString::from_str("Hola Alberto:\r\n\r\nMi comentario o sugerencia:\r\n\r\nSi se trata de un error:\r\n- Pasos para reproducirlo:\r\n- Qué esperaba y qué ocurrió:\r\n- Versión de macOS y configuración de pantallas (opcional):\r\n\r\nRevisaré cualquier diagnóstico antes de adjuntarlo; no incluiré datos privados.\r\n")];
+            let items = [Retained::as_ptr(&subject), Retained::as_ptr(&body)];
+            let query: Obj =
+                msg_send![class!(NSArray), arrayWithObjects:items.as_ptr(), count:items.len()];
+            let _: () = msg_send![&components, setQueryItems:query];
+            msg_send![&components, URL]
+        }
+    }
+
+    pub fn prepare_email(&self) {
+        unsafe {
+            let opened = Self::email_url().is_some_and(|url| {
+                let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+                msg_send![workspace, openURL:&*url]
+            });
+            text(
+                self.status,
+                if opened {
+                    "Se ha solicitado abrir el borrador, no enviar el mensaje. Si tu cliente no está configurado, escribe a la dirección desde tu webmail."
+                } else {
+                    "No se pudo abrir el correo. Copia la dirección y escribe desde tu cliente o webmail."
+                },
+            );
+        }
+    }
+
+    pub fn copy_address(&self) {
+        unsafe {
+            let pasteboard: Obj = msg_send![class!(NSPasteboard), generalPasteboard];
+            let _: isize = msg_send![pasteboard, clearContents];
+            let copied: bool = msg_send![pasteboard, setString:&*NSString::from_str("a.martinro@gmail.com"), forType:&*NSString::from_str("public.utf8-plain-text")];
+            text(
+                self.status,
+                if copied {
+                    "Dirección copiada. No se ha enviado ningún mensaje."
+                } else {
+                    "No se pudo copiar. Selecciona la dirección de arriba y cópiala manualmente."
+                },
+            );
+        }
+    }
+}
+
 /// Allocated on the first user-facing notice; no focus changes or periodic timer.
 pub struct Notice {
     window: Retained<AnyObject>,

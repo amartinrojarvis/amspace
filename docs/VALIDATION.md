@@ -1,3 +1,12 @@
+## Publicación 0.9.13/build 68: feedback y README bilingüe
+
+- README completo en español e inglés, navegación entre idiomas y paridad de comandos comprobadas. Enlaces locales y anclas válidos. Contexto personal, Astra, Qwen 3.8 Flash Next, portátil y estación horizontal/vertical, webs, redes y contacto; la prioridad de optimización no se presenta como una medición universal.
+- Feedback accesible desde General y el menú de la app. Panel AppKit creado al solicitarlo y reutilizado al cerrar/abrir, sin nuevos temporizadores, dependencias ni servicios. Las acciones no guardan preferencias ni activan reconciliaciones de ventanas.
+- El correo utiliza `NSURLComponents`/`NSURLQueryItem`: destinatario, versión, acentos y saltos CRLF comprobados mediante construcción y lectura nativas. No se adjuntan diagnósticos. La apertura se solicita al cliente predeterminado; su aceptación no se presenta como un mensaje enviado. Dirección seleccionable y copia manual disponibles para quien utiliza webmail.
+- `./scripts/check.sh`: **233 pruebas correctas**, ocho ignoradas, formato, Clippy sin warnings y plist válido. `./scripts/bundle.sh --universal`: arm64/x86_64 y firma del bundle correctos. ZIP, catálogo y DMG preparados, firmados y verificados.
+- Sonda desechable de las vistas y callbacks reales: botón de General y acción del menú, cierre y reapertura de la misma ventana, preferencias aisladas sin cambios y sin temporizador de Ajustes. Capturas de ventanas reales inspeccionadas en Aqua/DarkAqua: textos, botones y contacto legibles, sin solapamientos. Las primeras capturas de `contentView` omitían el fondo del compositor; se sustituyeron por capturas de las ventanas propias.
+- Límites: se comprobó la disponibilidad de un manejador de `mailto`, pero no se abrió el cliente ni se envió correo. No se modificó el portapapeles del usuario ni se verificó físicamente su botón de copia. No se modificaron permisos, documentos ni preferencias funcionales del usuario. Sin nueva prueba física Intel/multipantalla ni instalación limpia con Gatekeeper/TCC.
+
 ## Publicación 0.9.12/build 67: instalación guiada y descubribilidad
 
 - Menú AppKit por clic derecho o Control-clic: separar, hacer flotante, mover a otro grupo del mismo escritorio y cerrar mediante la petición nativa existente. La identidad se comprueba al abrir y al ejecutar; las reorganizaciones requieren que la solicitud de activación sea aceptada antes de confirmar el modelo. Los títulos solo se consultan al abrir el menú.
