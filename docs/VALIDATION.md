@@ -8,6 +8,7 @@
 - Límites: se comprobó la disponibilidad de un manejador de `mailto`, pero no se abrió el cliente ni se envió correo. No se modificó el portapapeles del usuario ni se verificó físicamente su botón de copia. No se modificaron permisos, documentos ni preferencias funcionales del usuario. Sin nueva prueba física Intel/multipantalla ni instalación limpia con Gatekeeper/TCC.
 - Código publicado en `v0.9.13`, commit `b69451b`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43379297810). Los cinco archivos de la publicación se descargaron sin autenticación y coinciden byte a byte con los originales; checksums correctos. DMG descargado: versión/build, arquitecturas x86_64/arm64, firma del bundle, alias `Aplicaciones` a `/Applications`, guía RTF y encuadre guardado de 800 × 642 pt comprobados.
 - ZIP publicado en `updates/0.9.13/AMSpace-universal.zip`, commit `2f918e4`; descarga raw pública idéntica al original. No se modificaron versiones anteriores. El anuncio del catálogo se realiza después de estas comprobaciones.
+- Catálogo público anunciado y comprobado sin parámetros anticaché: respuestas normales y comprimidas con las cabeceras de Sparkle idénticas al catálogo firmado. La API pública `checkForUpdateInformation`, con el bundle instalado **0.9.12/build 67**, verificó la firma y encontró **0.9.13/build 68**. No se descargó, instaló ni reinició la app; la consulta informativa puede actualizar la fecha de última búsqueda de Sparkle.
 
 ## Publicación 0.9.12/build 67: instalación guiada y descubribilidad
 
