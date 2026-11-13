@@ -35,11 +35,11 @@ El borde, el foco y el tiling están desactivados inicialmente: actívalos cuand
 
 ## Instalar
 
-Requiere **macOS 13 Ventura o posterior**. [**Descargar el instalador 0.9.15**](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.15/AMSpace-installer.dmg). El paquete universal contiene Apple Silicon e Intel; la ejecución local se comprueba en Apple Silicon. Consulta las novedades y archivos de la [publicación oficial](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.15).
+Requiere **macOS 13 Ventura o posterior**. [**Descargar el instalador 0.9.16**](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.16/AMSpace-installer.dmg). El paquete universal contiene Apple Silicon e Intel; la ejecución local se comprueba en Apple Silicon. Consulta las novedades y archivos de la [publicación oficial](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.16).
 
 La distribución actual está firmada **ad hoc**, sin certificado Developer ID ni notarización de Apple. Un archivo descargado puede requerir autorización explícita en Privacidad y seguridad. No desactives Gatekeeper ni SIP; también puedes compilarlo localmente.
 
-Abre el **DMG**, arrastra AMSpace a **Aplicaciones** y lee **Léeme primero.rtf** antes de abrir la copia instalada. La ventana explica los pasos y el permiso necesario. Consulta la [guía de instalación, permisos y privacidad](docs/INSTALLATION.md). También está disponible el [ZIP](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.15/AMSpace-universal.zip).
+Abre el **DMG**, arrastra AMSpace a **Aplicaciones** y lee **Léeme primero.rtf** antes de abrir la copia instalada. La ventana explica los pasos y el permiso necesario. Consulta la [guía de instalación, permisos y privacidad](docs/INSTALLATION.md). También está disponible el [ZIP](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.16/AMSpace-universal.zip).
 
 1. Abre AMSpace. Solo aparece en la barra de menús, sin icono permanente en el Dock.
 2. Haz clic derecho en un escritorio de la barra para abrir los ajustes.
@@ -265,7 +265,7 @@ El cambio de escritorio conserva el mecanismo nativo por saltos, también para l
 
 ## Plantillas personalizadas (0.8)
 
-[Última publicada: 0.9.15](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.15/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.15).
+[Última publicada: 0.9.16](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.16/AMSpace-universal.zip) · [Notas publicadas](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.16).
 
 La versión 0.8.0 añade **Mosaico → Rejilla y plantillas**: escribe un nombre y pulsa **Guardar actual** para conservar las divisiones y proporciones de esa pantalla. Elige una plantilla para ver su preview y aplicarla a otro escritorio con el mismo número de ventanas en mosaico. Las aplicaciones no se abren automáticamente; se conserva la rejilla del destino. Puedes eliminar diseños sin modificar el mosaico aplicado. La copia rápida por escritorio sigue disponible.
 
