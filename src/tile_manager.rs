@@ -270,7 +270,16 @@ struct TabDrag {
     panel_number: isize,
     baseline: Desktop,
     released_at: Option<Instant>,
-    proposed: Desktop,
+    proposed: Option<Desktop>,
+    reorder: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabDragOutcome {
+    Rejected,
+    Tracking,
+    Reordered,
+    Detached,
 }
 
 fn tab_detach_proposal(
@@ -713,9 +722,19 @@ impl MembershipGrace {
             .collect()
     }
 }
+#[derive(Clone, Copy)]
+enum StripSpaceBinding {
+    Pending(Instant),
+    Confirmed,
+    Fallback,
+}
+
 /// A reused strip panel and the content last painted into it.
 struct TabStrip {
     panel: Retained<AnyObject>,
+    space: Workspace,
+    binding: StripSpaceBinding,
+    marker: Option<Retained<AnyObject>>,
     signature: Vec<(String, Option<Retained<AnyObject>>)>,
     members: Vec<u32>,
     active: usize,
@@ -724,6 +743,7 @@ struct TabStrip {
 }
 impl TabStrip {
     fn show_at(&mut self, frame: NSRect, primary: f64) {
+        self.confirm_space();
         unsafe {
             if self.frame != frame {
                 let _: () = msg_send![&*self.panel,setFrame:appkit(frame, primary),display:true];
@@ -735,6 +755,114 @@ impl TabStrip {
                 let root: Obj = msg_send![&*self.panel, contentView];
                 sync_strip_hover(&*root);
             }
+        }
+    }
+
+    fn confirm_space(&mut self) {
+        let StripSpaceBinding::Pending(until) = self.binding else {
+            return;
+        };
+        let number: isize = unsafe { msg_send![&*self.panel, windowNumber] };
+        let membership = u32::try_from(number).ok().and_then(spaces::window_spaces);
+        match membership.as_deref() {
+            Some([space]) if *space == self.space.1 => {
+                self.binding = StripSpaceBinding::Confirmed;
+            }
+            // WindowServer publishes a newly ordered panel after the run loop
+            // returns. The existing tiling cadence supplies bounded retries.
+            Some([]) if Instant::now() < until => {}
+            _ => {
+                self.binding = StripSpaceBinding::Fallback;
+                unsafe {
+                    let _: () = msg_send![&*self.panel, setCollectionBehavior:((1usize << 0) | (1 << 3) | (1 << 6))];
+                }
+            }
+        }
+    }
+
+    fn accepts_input(&self) -> bool {
+        unsafe { msg_send![&*self.panel, isVisible] && msg_send![&*self.panel, isOnActiveSpace] }
+    }
+
+    fn clear_marker(&mut self) {
+        if let Some(marker) = self.marker.take() {
+            unsafe {
+                let _: () = msg_send![&*marker, removeFromSuperview];
+            }
+        }
+    }
+
+    /// Coordinates come from the recognizer's window, not the global cursor.
+    /// The document conversion includes horizontal scrolling.
+    fn reorder_target(&mut self, id: u32, location: NSPoint, scroll: bool) -> Option<usize> {
+        unsafe {
+            let viewport: Obj = msg_send![&*self.panel, contentView];
+            let document: Obj = msg_send![viewport, documentView];
+            let mut point: NSPoint =
+                msg_send![document, convertPoint:location, fromView:ptr::null::<AnyObject>()];
+            let mut visible: NSRect = msg_send![document, visibleRect];
+            let corridor = rect(
+                visible.origin.x - 24.,
+                visible.origin.y - 12.,
+                visible.size.width + 48.,
+                visible.size.height + 24.,
+            );
+            if !point.x.is_finite() || !point.y.is_finite() || !contains(corridor, point) {
+                self.clear_marker();
+                return None;
+            }
+            if scroll {
+                let step = if point.x < visible.origin.x + 16. {
+                    -24.
+                } else if point.x > visible.origin.x + visible.size.width - 16. {
+                    24.
+                } else {
+                    0.
+                };
+                if step != 0. {
+                    let bounds: NSRect = msg_send![document, bounds];
+                    let x = (visible.origin.x + step)
+                        .clamp(0., (bounds.size.width - visible.size.width).max(0.));
+                    let clip: Obj = msg_send![viewport, contentView];
+                    let _: () = msg_send![clip, scrollToPoint:NSPoint::new(x, visible.origin.y)];
+                    let _: () = msg_send![viewport, reflectScrolledClipView:clip];
+                    point = msg_send![document, convertPoint:location, fromView:ptr::null::<AnyObject>()];
+                    visible = msg_send![document, visibleRect];
+                }
+            }
+            let (index, x) = tab_reorder_target(
+                &self.members,
+                self.signature.iter().map(|(name, _)| tab_width(name)),
+                id,
+                point.x,
+            )?;
+            if self.members.get(index) == Some(&id) {
+                self.clear_marker();
+            } else {
+                let marker = self.marker.get_or_insert_with(|| {
+                    let marker = alloc_view(class!(NSView), NSRect::ZERO);
+                    let _: () = msg_send![&marker, setWantsLayer:true];
+                    let layer: Obj = msg_send![&marker, layer];
+                    let cg: *const crate::native::CgColor =
+                        msg_send![color(1., 1., 1., 0.95), CGColor];
+                    let _: () = msg_send![layer, setBackgroundColor:cg];
+                    let _: () = msg_send![layer, setCornerRadius:1f64];
+                    let _: () = msg_send![document, addSubview:&*marker];
+                    marker
+                });
+                let left = visible.origin.x + 1.;
+                let x = x.clamp(left, (visible.origin.x + visible.size.width - 3.).max(left));
+                let _: () = msg_send![&**marker, setFrame:rect(x, 3., 2., TAB_BAR_HEIGHT - 6.)];
+            }
+            Some(index)
+        }
+    }
+}
+
+impl Drop for TabStrip {
+    fn drop(&mut self) {
+        unsafe {
+            let _: () = msg_send![&*self.panel, orderOut:ptr::null::<AnyObject>()];
         }
     }
 }
@@ -986,40 +1114,39 @@ impl Manager {
         }
     }
 
-    /// AppKit recognizes the drag threshold and suppresses the button's click.
-    /// Only the ended gesture commits; cancellation leaves the group unchanged.
-    pub fn tab_drag(&mut self, button: Obj, state: isize) -> bool {
-        if matches!(state, 4 | 5) {
-            self.cancel_tab_drag();
-            return false;
-        }
-        if button.is_null()
+    /// AppKit owns the threshold/click suppression. Only Ended changes the model.
+    pub fn tab_drag(&mut self, button: Obj, state: isize, location: NSPoint) -> TabDragOutcome {
+        use TabDragOutcome::*;
+        if matches!(state, 4 | 5)
+            || button.is_null()
             || self.presentation_blocks_input()
             || self.space_quiet_until.is_some()
             || self.space_reentry.is_some()
+            || !location.x.is_finite()
+            || !location.y.is_finite()
             || !ax::trusted()
             || crate::focus::secure_input()
         {
             self.cancel_tab_drag();
-            return false;
+            return Rejected;
         }
         let (id, panel_number) = unsafe {
             let tag: isize = msg_send![button, tag];
             let window: Option<Retained<AnyObject>> = msg_send![button, window];
             let Some(window) = window else {
                 self.cancel_tab_drag();
-                return false;
+                return Rejected;
             };
             let Ok(id) = u32::try_from(tag) else {
-                return false;
+                return Rejected;
             };
             if !self.strips.iter().any(|strip| {
                 Retained::as_ptr(&strip.panel) == Retained::as_ptr(&window)
                     && strip.members.contains(&id)
-                    && msg_send![&*strip.panel, isVisible]
+                    && strip.accepts_input()
             }) {
                 self.cancel_tab_drag();
-                return false;
+                return Rejected;
             }
             (id, msg_send![&*window, windowNumber])
         };
@@ -1028,20 +1155,26 @@ impl Manager {
                 self.cancel_tab_drag();
                 self.pressed = true;
                 if self.drag.is_some() || self.pending_drop.is_some() {
-                    return false;
+                    return Rejected;
                 }
                 let Some(window) = self.windows.get(&id) else {
-                    return false;
+                    return Rejected;
                 };
                 let Some((_, area)) = self
                     .active_areas
                     .iter()
                     .find(|(key, _)| *key == window.space)
                 else {
-                    return false;
+                    return Rejected;
                 };
                 let Some(desktop) = self.desktops.get(&window.space) else {
-                    return false;
+                    return Rejected;
+                };
+                let Some((members, _)) = desktop
+                    .tab_strip(id)
+                    .filter(|(members, _)| members.len() > 1)
+                else {
+                    return Rejected;
                 };
                 if self.floating.contains(&id)
                     || spaces::window_space(id) != Some(window.space.1)
@@ -1049,20 +1182,10 @@ impl Manager {
                     || !ax::tileable(window.element.0)
                     || !ws::all_window_ids().is_some_and(|ids| ids.contains(&(window.pid, id)))
                 {
-                    return false;
+                    return Rejected;
                 }
-                let Some(proposed) = tab_detach_proposal(desktop, id, *area, &self.minimum_sizes)
-                else {
-                    self.interaction_error = Some(DETACH_CAPACITY.to_string());
-                    return false;
-                };
-                let Some((_, frame)) = proposed
-                    .window_frames(*area, 10.)
-                    .into_iter()
-                    .find(|(member, _)| *member == id)
-                else {
-                    return false;
-                };
+                // A strip may be reorderable even when no independent tile fits.
+                let proposed = tab_detach_proposal(desktop, id, *area, &self.minimum_sizes);
                 self.tab_drag = Some(TabDrag {
                     id,
                     pid: window.pid,
@@ -1072,36 +1195,36 @@ impl Manager {
                     released_at: None,
                     baseline: desktop.clone(),
                     proposed,
+                    reorder: members.iter().position(|member| *member == id),
                 });
-                self.show_preview(frame);
-                true
+                self.preview_tab_drag(location, false);
+                Tracking
             }
-            2 => {
-                let valid = self.tab_drag.as_ref().is_some_and(|drag| {
+            2 | 3 => {
+                if !self.tab_drag.as_ref().is_some_and(|drag| {
                     drag.id == id
                         && drag.panel_number == panel_number
                         && self.tab_drag_matches(drag)
-                });
-                if !valid {
+                }) {
                     self.cancel_tab_drag();
+                    return Rejected;
                 }
-                valid
-            }
-            3 => {
-                let Some(drag) = self.tab_drag.take() else {
-                    return false;
-                };
+                self.preview_tab_drag(location, state == 2);
+                if state == 2 {
+                    return Tracking;
+                }
+                let drag = self.tab_drag.take().unwrap();
                 self.hide_preview_panels();
-                if drag.id != id
-                    || drag.panel_number != panel_number
-                    || !self.tab_drag_matches(&drag)
-                    || !spaces::visible_desktops().contains(&drag.space)
+                for strip in &mut self.strips {
+                    strip.clear_marker();
+                }
+                if !spaces::visible_desktops().contains(&drag.space)
                     || area(drag.space.0) != Some(drag.area)
                 {
-                    return false;
+                    return Rejected;
                 }
                 let Some(ids) = ws::all_window_ids() else {
-                    return false;
+                    return Rejected;
                 };
                 if drag
                     .baseline
@@ -1115,20 +1238,69 @@ impl Manager {
                             .is_some_and(|w| ids.contains(&(w.pid, *member)))
                     })
                 {
-                    return false;
+                    return Rejected;
                 }
                 let window = &self.windows[&id];
                 if spaces::window_space(id) != Some(drag.space.1)
                     || ax::window_id(window.element.0) != Some(id)
                     || !ax::tileable(window.element.0)
-                    || !ax::focus(window.element.0, window.pid)
                 {
-                    return false;
+                    return Rejected;
+                }
+                if let Some(index) = drag.reorder {
+                    self.commit_tab_reorder(drag.space, id, index);
+                    return Reordered;
+                }
+                if drag.proposed.is_none() {
+                    self.interaction_error = Some(DETACH_CAPACITY.to_string());
+                    return Rejected;
+                }
+                if !ax::focus(window.element.0, window.pid) {
+                    return Rejected;
                 }
                 self.commit_tab_detach(drag);
-                true
+                Detached
             }
-            _ => false,
+            _ => Rejected,
+        }
+    }
+
+    fn preview_tab_drag(&mut self, location: NSPoint, scroll: bool) {
+        let Some(drag) = &self.tab_drag else {
+            return;
+        };
+        let Some(strip) = self.strips.iter_mut().find(|strip| {
+            let number: isize = unsafe { msg_send![&*strip.panel, windowNumber] };
+            number == drag.panel_number && strip.space == drag.space
+        }) else {
+            return;
+        };
+        let reorder = strip.reorder_target(drag.id, location, scroll);
+        let changed = reorder != drag.reorder;
+        let frame = if changed && reorder.is_none() {
+            drag.proposed.as_ref().and_then(|desktop| {
+                desktop
+                    .window_frames(drag.area, 10.)
+                    .into_iter()
+                    .find_map(|(id, frame)| (id == drag.id).then_some(frame))
+            })
+        } else {
+            None
+        };
+        self.tab_drag.as_mut().unwrap().reorder = reorder;
+        if let Some(frame) = frame {
+            self.show_preview(frame);
+        } else if changed {
+            self.hide_preview_panels();
+        }
+    }
+
+    fn commit_tab_reorder(&mut self, space: Workspace, id: u32, index: usize) {
+        if let Some(desktop) = self.desktops.get_mut(&space)
+            && desktop.reorder_tab(id, index)
+        {
+            // No focus, AX writes or cancellation of unrelated placements.
+            self.dirty = true;
         }
     }
 
@@ -1143,7 +1315,9 @@ impl Manager {
     }
 
     fn commit_tab_detach(&mut self, drag: TabDrag) {
-        self.commit_tab_model(drag.space, drag.id, drag.proposed);
+        if let Some(proposed) = drag.proposed {
+            self.commit_tab_model(drag.space, drag.id, proposed);
+        }
     }
 
     fn commit_tab_model(&mut self, space: Workspace, id: u32, proposed: Desktop) {
@@ -1177,6 +1351,9 @@ impl Manager {
     pub fn cancel_tab_drag(&mut self) {
         if self.tab_drag.take().is_some() {
             self.hide_preview_panels();
+            for strip in &mut self.strips {
+                strip.clear_marker();
+            }
         }
     }
     /// Explicit user pause: keep every tree, membership and original frame,
@@ -1673,6 +1850,7 @@ impl Manager {
         // Do not let a deferred write run before the next membership scan.
         let pressed = self.pressed;
         self.cancel_drag();
+        self.strips.clear(); // Native ownership/coordinates may have changed.
         self.space_reentry = Some(SpaceReentry::default());
         self.reentry_preserved.clear();
         self.pressed = pressed; // Never recapture a gesture already in progress.
@@ -1704,7 +1882,22 @@ impl Manager {
         self.drag = None;
         self.tab_drag = None;
         self.gesture_candidates.clear();
-        self.hide_preview();
+        self.hide_preview_panels();
+        // Native per-Space panels travel with the desktop. Keep their controls
+        // alive through the quiet/reentry barrier; fallback overlays cannot.
+        for strip in &mut self.strips {
+            strip.clear_marker();
+            if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
+                unsafe {
+                    let _: () = msg_send![&*strip.panel, orderOut:ptr::null::<AnyObject>()];
+                }
+            }
+        }
+        for badge in &self.badges {
+            unsafe {
+                let _: () = msg_send![&*badge.panel, orderOut:ptr::null::<AnyObject>()];
+            }
+        }
         self.invalidate();
         // During the native slide both visibility and global bounds are transient.
         // Retain the trees without sampling/reconciling or writing any geometry.
@@ -1958,7 +2151,7 @@ impl Manager {
             self.invalidate();
         }
         self.drag = None;
-        self.tab_drag = None;
+        self.cancel_tab_drag();
         self.gesture_candidates.clear();
         self.pending_drop = None;
         self.pressed = false;
@@ -2081,6 +2274,7 @@ impl Manager {
     /// rebuilt when the strip's identity or geometry actually changed.
     fn draw_strips(
         &mut self,
+        space: Workspace,
         desktop: &Desktop,
         frames: &[(u32, NSRect)],
         primary: f64,
@@ -2097,10 +2291,26 @@ impl Manager {
             let Some((_, slot)) = frames.iter().find(|(id, _)| *id == leaf) else {
                 continue;
             };
+            // Active panels occupy the prefix. Never reuse another Space's panel
+            // just because its group happened to have the same ordinal.
+            let existing = self
+                .strips
+                .iter()
+                .enumerate()
+                .skip(used)
+                .find_map(|(index, strip)| {
+                    (strip.space == space
+                        && strip.members.iter().any(|id| group.members.contains(id)))
+                    .then_some(index)
+                });
+            if let Some(index) = existing {
+                self.strips.swap(used, index);
+            }
             // During a native gesture only geometry changes. Reuse captions and
             // icons instead of synchronous AX title reads at the gesture cadence.
             // The first reconciliation after release refreshes them normally.
-            if self.pressed
+            if existing.is_some()
+                && self.pressed
                 && let Some(strip) = self.strips.get_mut(used)
                 && strip.members == group.members
                 && strip.active == group.active
@@ -2125,7 +2335,7 @@ impl Manager {
             }
             let total = strip_width(tabs.iter().map(|(name, _)| tab_width(name)));
             let panel = tab_bar_frame(*slot, total, centered);
-            match self.strips.get_mut(used) {
+            match existing.map(|_| &mut self.strips[used]) {
                 Some(strip) => {
                     let same = strip.signature.len() == tabs.len()
                         && strip
@@ -2170,6 +2380,13 @@ impl Manager {
                 }
                 None => {
                     let panel_obj = unsafe { new_overlay(panel, primary) };
+                    // No CanJoinAllSpaces or MoveToActiveSpace: AppKit owns the
+                    // slide, rather than hiding/redrawing a sticky overlay.
+                    unsafe {
+                        let _: () =
+                            msg_send![&panel_obj, setCollectionBehavior:((1usize << 3) | (1 << 6))];
+                        let _: () = msg_send![&panel_obj, setHidesOnDeactivate:false];
+                    }
                     let root = unsafe {
                         strip_content(
                             &tabs,
@@ -2188,14 +2405,22 @@ impl Manager {
                         let _: () = msg_send![&panel_obj, orderFrontRegardless];
                         sync_strip_hover(&root);
                     }
-                    self.strips.push(TabStrip {
-                        panel: panel_obj,
-                        signature: tabs,
-                        members: group.members.clone(),
-                        active: group.active,
-                        built: panel,
-                        frame: panel,
-                    });
+                    let binding =
+                        StripSpaceBinding::Pending(Instant::now() + Duration::from_secs(1));
+                    self.strips.insert(
+                        used,
+                        TabStrip {
+                            panel: panel_obj,
+                            space,
+                            binding,
+                            marker: None,
+                            signature: tabs,
+                            members: group.members.clone(),
+                            active: group.active,
+                            built: panel,
+                            frame: panel,
+                        },
+                    );
                 }
             }
             used += 1;
@@ -2236,17 +2461,20 @@ impl Manager {
             }
         }
     }
-    /// Retire the overlays this tick did not use, so stale strips never linger.
+    /// Retain live inactive groups, not anonymous spare panels.
     fn trim_overlays(&mut self, strips: usize, badges: usize) {
-        for strip in self.strips.iter().skip(strips) {
-            unsafe {
-                let visible: bool = msg_send![&*strip.panel, isVisible];
-                if visible {
-                    let _: () = msg_send![&*strip.panel,orderOut:ptr::null::<AnyObject>()];
-                }
-            }
-        }
-        self.strips.truncate(strips);
+        let mut index = 0;
+        self.strips.retain(|strip| {
+            let used = index < strips;
+            index += 1;
+            used || (!self.active_areas.iter().any(|(key, _)| *key == strip.space)
+                && self.desktops.get(&strip.space).is_some_and(|desktop| {
+                    desktop
+                        .groups()
+                        .iter()
+                        .any(|group| group.members.len() > 1 && group.members == strip.members)
+                }))
+        });
         for badge in self.badges.iter().skip(badges) {
             unsafe {
                 let visible: bool = msg_send![&*badge.panel, isVisible];
@@ -3151,7 +3379,7 @@ impl Manager {
             self.cancel_window_placement(id);
         }
         self.drag = None;
-        self.tab_drag = None;
+        self.cancel_tab_drag();
         self.gesture_candidates.clear();
         self.pending_drop = None;
         self.hide_preview();
@@ -3296,9 +3524,10 @@ impl Manager {
         // Native strip buttons own these clicks, not the titlebar below them.
         if down
             && self.drag.is_none()
-            && self.strips.iter().any(|strip| {
-                contains(strip.frame, p) && unsafe { msg_send![&*strip.panel, isVisible] }
-            })
+            && self
+                .strips
+                .iter()
+                .any(|strip| contains(strip.frame, p) && strip.accepts_input())
         {
             self.pressed = true;
             return;
@@ -3569,7 +3798,8 @@ impl Manager {
                         .cloned()
                     {
                         let frames = desktop.window_frames(area, 10.);
-                        strips = self.draw_strips(&desktop, &frames, primary, strips, centered);
+                        strips =
+                            self.draw_strips(key, &desktop, &frames, primary, strips, centered);
                     }
                 }
                 if let Some(frames) = resize_preview {
@@ -4127,7 +4357,7 @@ impl Manager {
             if !d.groups().is_empty() {
                 let snapshot = d.clone();
                 strips_drawn =
-                    self.draw_strips(&snapshot, &frames, primary, strips_drawn, centered);
+                    self.draw_strips(space, &snapshot, &frames, primary, strips_drawn, centered);
             }
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
@@ -5224,6 +5454,32 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
         paint_hint(&plates, hint);
         (root, plates)
     }
+}
+
+/// Insertion gaps exclude the dragged tab, but use the unchanged painted widths.
+fn tab_reorder_target(
+    members: &[u32],
+    widths: impl Iterator<Item = f64>,
+    id: u32,
+    point: f64,
+) -> Option<(usize, f64)> {
+    if !point.is_finite() || !members.contains(&id) {
+        return None;
+    }
+    let mut x = 4.;
+    let mut index = 0;
+    let mut marker = 2.;
+    for (member, width) in members.iter().zip(widths) {
+        if *member != id {
+            if point < x + width / 2. {
+                return Some((index, x - 2.));
+            }
+            index += 1;
+            marker = x + width + 2.;
+        }
+        x += width + 4.;
+    }
+    Some((index, marker))
 }
 
 fn tab_width(name: &str) -> f64 {
@@ -8510,7 +8766,8 @@ mod tests {
             area,
             panel_number: 10,
             baseline: desktop,
-            proposed,
+            proposed: Some(proposed),
+            reorder: None,
             released_at: None,
         });
         manager
@@ -8533,6 +8790,49 @@ mod tests {
             assert!(manager.desktops[&(1, 7)] == before);
             assert_eq!(manager.applied, applied);
         }
+    }
+
+    #[test]
+    fn reordering_without_detach_capacity_preserves_pending_geometry() {
+        let mut manager = pending_tab_detach(1);
+        let before = manager.desktops[&(1, 7)].window_frames(manager.active_areas[0].1, 10.);
+        let applied = manager.applied.clone();
+        let other = Desktop::configured(Layout::Grid, None);
+        manager.desktops.insert((2, 9), other.clone());
+        let drag = manager.tab_drag.as_mut().unwrap();
+        drag.proposed = None;
+        drag.reorder = Some(2);
+        manager.observe_tab_pointer(false, Instant::now());
+        let drag = manager.tab_drag.take().unwrap();
+        manager.commit_tab_reorder(drag.space, drag.id, drag.reorder.unwrap());
+        assert_eq!(
+            manager.desktops[&drag.space].tab_strip(1),
+            Some((&[3, 4, 1][..], 1))
+        );
+        assert_eq!(
+            manager.desktops[&drag.space].window_frames(drag.area, 10.),
+            before
+        );
+        assert_eq!(manager.applied, applied);
+        for (id, frame) in &applied {
+            assert_eq!(manager.verifications[id].target, *frame);
+        }
+        assert!(manager.desktops[&(2, 9)] == other);
+    }
+
+    #[test]
+    fn reorder_hit_testing_uses_variable_width_centers_and_excludes_the_dragged_tab() {
+        let members = [1, 2, 3];
+        let target =
+            |id, point| tab_reorder_target(&members, [60., 200., 80.].into_iter(), id, point);
+        assert_eq!(target(2, 0.), Some((0, 2.)));
+        assert_eq!(target(2, 33.), Some((0, 2.)));
+        assert_eq!(target(2, 34.), Some((1, 270.)));
+        assert_eq!(target(2, 312.), Some((2, 354.)));
+        assert_eq!(target(1, 168.), Some((1, 270.)));
+        assert_eq!(target(3, 400.), Some((2, 270.)));
+        assert_eq!(target(9, 0.), None);
+        assert_eq!(target(1, f64::NAN), None);
     }
 
     #[test]
@@ -8570,11 +8870,16 @@ mod tests {
 
     #[test]
     fn cancelled_or_undelivered_tab_drag_never_detaches_the_group() {
-        for cancellation in 0..4 {
+        for cancellation in 0..8 {
             let mut manager = pending_tab_detach(1);
+            if cancellation >= 4 {
+                let drag = manager.tab_drag.as_mut().unwrap();
+                drag.reorder = Some(2);
+                drag.proposed = None;
+            }
             let before = manager.desktops[&(1, 7)].clone();
             let now = Instant::now();
-            match cancellation {
+            match cancellation % 4 {
                 0 => manager.cancel_tab_drag(),
                 1 => manager.space_changed_at(now),
                 2 => manager.screens_changed(),

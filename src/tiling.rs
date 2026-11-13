@@ -844,6 +844,37 @@ impl Desktop {
             .find(|group| group.members.contains(&id))?;
         Some((&group.members, group.active))
     }
+    /// Reorder one strip without changing its active window or layout leaf.
+    /// `index` is the final position, not an insertion gap in the old order.
+    pub fn reorder_tab(&mut self, id: u32, index: usize) -> bool {
+        let Some(group) = self.groups.iter_mut().find(|g| g.members.contains(&id)) else {
+            return false;
+        };
+        if index >= group.members.len() {
+            return false;
+        }
+        let from = group
+            .members
+            .iter()
+            .position(|member| *member == id)
+            .unwrap();
+        if from < index {
+            group.members[from..=index].rotate_left(1);
+            if group.active > from && group.active <= index {
+                group.active -= 1;
+            } else if group.active == from {
+                group.active = index;
+            }
+        } else if from > index {
+            group.members[index..=from].rotate_right(1);
+            if group.active >= index && group.active < from {
+                group.active += 1;
+            } else if group.active == from {
+                group.active = index;
+            }
+        }
+        true
+    }
     /// Make `id` the visible tab. Returns the previously visible id so the
     /// caller can retire its cached geometry.
     pub fn select_tab(&mut self, id: u32) -> Option<u32> {
@@ -3952,6 +3983,43 @@ mod tests {
         // An already-visible leaf is left untouched.
         adopted.sync_tabs(&[1, 2, 3]);
         assert_eq!(adopted.order, vec![1, 2, 3]);
+    }
+    #[test]
+    fn reordering_tabs_preserves_active_identity_geometry_and_other_groups() {
+        let area = rect(-900., 30., 2000., 1200.);
+        for layout in Layout::ALL {
+            let mut desktop = Desktop::configured(layout, Some((12, 6)));
+            desktop.reconcile(&[1, 2, 3], area, 10.);
+            for (id, target) in [(4, 2), (5, 4), (6, 3)] {
+                desktop = desktop
+                    .proposed_drop(id, DropIntent::Group(target), area, 10.)
+                    .unwrap();
+            }
+            let before = desktop.clone();
+            desktop.max_group_tabs = 1; // Admission limits do not forbid reordering.
+            for (id, index, members, active) in [
+                (2, 2, [4, 5, 2], 1),
+                (5, 0, [5, 4, 2], 0),
+                (2, 0, [2, 5, 4], 1),
+                (5, 2, [2, 4, 5], 2),
+                (4, 1, [2, 4, 5], 2),
+            ] {
+                assert!(desktop.reorder_tab(id, index));
+                assert_eq!(desktop.tab_strip(id), Some((&members[..], active)));
+                assert_eq!(desktop.order, before.order);
+                assert_eq!(
+                    desktop.window_frames(area, 10.),
+                    before.window_frames(area, 10.)
+                );
+                assert_eq!(desktop.groups()[1], before.groups()[1]);
+                assert_layout_invariants(&desktop, area);
+            }
+            let unchanged = desktop.clone();
+            assert!(!desktop.reorder_tab(99, 0));
+            assert!(!desktop.reorder_tab(1, 0)); // Ungrouped window.
+            assert!(!desktop.reorder_tab(2, 3));
+            assert!(desktop == unchanged);
+        }
     }
     #[test]
     fn closing_hidden_members_preserves_active_identity_and_slot_in_every_layout() {

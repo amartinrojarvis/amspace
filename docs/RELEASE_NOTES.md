@@ -1,11 +1,11 @@
-AMSpace 0.9.14 — zonas de arrastre mucho más claras.
+AMSpace 0.9.15 — pestañas persistentes y reordenación por arrastre.
 
-- Iconos de hasta 72 puntos, frente a los 20 anteriores, con etiquetas grandes y legibles.
-- Al arrastrar entre huecos del mismo mosaico se ven ambas zonas: apilar como pestaña en el tercio superior e intercambiar posiciones en los dos tercios inferiores.
-- Separador sobre el límite real y resaltado de la zona activa. No cambian los gestos ni las reglas de soltado.
-- Las acciones rechazadas por capacidad o tamaños mínimos aparecen como no disponibles. Los huecos pequeños adaptan iconos y textos.
-- El panel no intercepta el ratón. Moverlo o cruzar entre zonas reutiliza sus vistas; sin nuevos temporizadores, consultas AX ni blur.
+- Las barras conservan sus paneles y controles en el escritorio del grupo, en lugar de retirarlos al cambiar de Space. macOS gestiona su visibilidad con pertenencia nativa comprobada.
+- Arrastra dentro de la barra para reordenar. Una marca indica la posición de inserción; la ventana activa, sus tamaños y la distribución se mantienen.
+- Arrastra fuera de la barra para separar la ventana. Si no cabe un hueco independiente, puedes seguir reordenando las pestañas.
+- El gesto respeta el desplazamiento horizontal. Cancelar, cambiar de contexto o perder la entrega final no modifica el grupo.
+- Sin nuevos temporizadores ni sondeo permanente. Pausar Mosaico, Mostrar escritorio y Mission Control mantienen la ocultación de las barras.
 
-Se conservan las preferencias y el canal firmado de actualizaciones. Las llegadas con divisiones de borde mantienen su preview real.
+Se conservan las preferencias y el canal firmado de actualizaciones. Si macOS no permite confirmar la pertenencia del panel, se conserva la ocultación segura durante la transición.
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y de controles AppKit; no acreditan un arrastre físico completo con otras apps ni hardware Intel/multipantalla. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
+Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y controles AppKit; no acreditan la animación física entre escritorios ni un arrastre completo con otras apps. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md

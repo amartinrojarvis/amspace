@@ -54,7 +54,7 @@ impl Guide {
                         ),
                         (
                             "Separar y reorganizar",
-                            "Arrastra una pestaña fuera del grupo para independizarla. Clic derecho o Control-clic abre Separar, Hacer flotante, Mover a otro grupo y Cerrar ventana. Los destinos incompatibles indican el motivo: capacidad o tamaño mínimo.",
+                            "Arrastra dentro de la barra para reordenar; fuera de ella para separar la ventana. La marca indica dónde quedará. Clic derecho o Control-clic: Separar, Hacer flotante, Mover a otro grupo y Cerrar. Si no cabe, la distribución no cambia.",
                         ),
                         (
                             "Atajos y pausa a mano",

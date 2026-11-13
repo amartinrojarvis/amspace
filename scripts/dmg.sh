@@ -15,7 +15,9 @@ fi
 codesign --verify --deep --strict "$APP"
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
 WORK=$(mktemp -d "$ROOT/dist/.amspace-dmg.XXXXXX")
-MOUNT="$WORK/mount"
+# Finder reduces a root-folder alias to a disk-name specifier. Its basename
+# must be unique even when another application's installer is already mounted.
+MOUNT="$WORK/AMSpace-${WORK##*.}"
 ATTACHED=0
 cleanup() {
   if [[ "$ATTACHED" == 1 ]]; then
@@ -44,6 +46,7 @@ hdiutil attach -quiet -readwrite -nobrowse -mountpoint "$MOUNT" "$WORK/writable.
 osascript - "$MOUNT" <<'APPLESCRIPT'
 on run argv
     set mountAlias to (POSIX file (item 1 of argv)) as alias
+    set backgroundAlias to (POSIX file ((item 1 of argv) & "/.background/background.png")) as alias
     tell application "Finder"
         set installerFolder to folder mountAlias
         open installerFolder
@@ -56,7 +59,7 @@ on run argv
         set arrangement of options to not arranged
         set icon size of options to 96
         set text size of options to 13
-        set background picture of options to file ".background:background.png" of installerFolder
+        set background picture of options to backgroundAlias
         set position of item "AMSpace.app" of installerFolder to {205, 210}
         set position of item "Aplicaciones" of installerFolder to {595, 210}
         set position of item "Léeme primero.rtf" of installerFolder to {683, 505}

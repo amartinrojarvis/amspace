@@ -103,6 +103,8 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 
 El diagnóstico de controles también recorre las zonas de soltado: agrupación, intercambio, grupo no disponible y hueco compacto. Comprueba que el panel ignora el ratón y que moverlo o cruzar el separador reutiliza sus vistas mientras cambia el resaltado. Guarda `.cache/drop-zones-group.png`, `.cache/drop-zones-swap.png`, `.cache/drop-zones-unavailable.png` y `.cache/drop-zones-compact.png`.
 
+El mismo diagnóstico comprueba el marcador de reordenación, los destinos inicial/final y la conversión con un `NSClipView` desplazado. Verifica la pertenencia nativa de un panel propio y ejecuta 20 ciclos de barrera/reentrada sin ocultarlo ni reconstruir sus controles, además de pausa y retirada al desaparecer el modelo. Capturas `.cache/tab-reorder.png` y `.cache/tab-space-resident.png`. No cambia físicamente de escritorio: no acredita la animación del compositor ni varios monitores.
+
 Trazas optativas disponibles: `AMSPACE_TRACE_SPACES`, `AMSPACE_TRACE_FOCUS`, `AMSPACE_TRACE_TILING` y `AMSPACE_TRACE_TRANSFERS`. Por ejemplo, con la instancia normal cerrada:
 
 ```sh

@@ -34,11 +34,14 @@ extern "C-unwind" fn drag(_: Obj, _: Sel, recognizer: Obj) {
     unsafe {
         let phase: isize = msg_send![recognizer, state];
         let button: Option<Retained<AnyObject>> = msg_send![recognizer, view];
+        let location: NSPoint = msg_send![recognizer, locationInView:ptr::null::<AnyObject>()];
         STATE.with(|state| {
             if let Some(manager) = state.borrow_mut().as_mut() {
                 if let Some(button) = button {
                     let id: isize = msg_send![&button, tag];
-                    if manager.tab_drag(Retained::as_ptr(&button) as Obj, phase) && phase == 3 {
+                    if manager.tab_drag(Retained::as_ptr(&button) as Obj, phase, location)
+                        == TabDragOutcome::Detached
+                    {
                         DETACHED.with(|detached| *detached.borrow_mut() = u32::try_from(id).ok());
                     }
                 } else {
@@ -279,6 +282,9 @@ pub fn check_controls() -> Result<(), String> {
             pressed: true,
             strips: vec![TabStrip {
                 panel: panel.clone(),
+                space: (0, 0),
+                binding: StripSpaceBinding::Fallback,
+                marker: None,
                 signature: names.to_vec(),
                 members: vec![1, 2, 3],
                 active: 1,
@@ -288,7 +294,7 @@ pub fn check_controls() -> Result<(), String> {
             ..Manager::default()
         };
         for window in [rect(324., 342., 620., 400.), slot] {
-            manager.draw_strips(&desktop, &[(2, window)], primary_height(), 0, false);
+            manager.draw_strips((0, 0), &desktop, &[(2, window)], primary_height(), 0, false);
             let root: Obj = msg_send![&panel, contentView];
             let actual: NSRect = msg_send![&panel, frame];
             let expected = appkit(tab_bar_frame(window, total, false), primary_height());
@@ -296,6 +302,8 @@ pub fn check_controls() -> Result<(), String> {
                 return Err("Mover la tira reconstruyó los controles o perdió su posición.".into());
             }
         }
+        check_reorder_presentation(&mut manager.strips[0])?;
+        check_strip_lifecycle(&target)?;
         capture_control(
             Retained::as_ptr(&content) as Obj,
             ".cache/tab-accent-before.png",
@@ -394,6 +402,145 @@ pub fn check_controls() -> Result<(), String> {
         );
         Ok(())
     }
+}
+
+fn check_reorder_presentation(strip: &mut TabStrip) -> Result<(), String> {
+    unsafe {
+        let viewport: Obj = msg_send![&*strip.panel, contentView];
+        let document: Obj = msg_send![viewport, documentView];
+        let location = |point: NSPoint| -> NSPoint {
+            msg_send![document, convertPoint:point, toView:ptr::null::<AnyObject>()]
+        };
+        let last: Obj = msg_send![document, viewWithTag:3isize];
+        let tab: Obj = msg_send![last, superview];
+        let last_frame: NSRect = msg_send![tab, frame];
+        for (point, expected) in [
+            (NSPoint::new(5., 11.), Some(0)),
+            (
+                NSPoint::new(last_frame.origin.x + last_frame.size.width - 2., 11.),
+                Some(2),
+            ),
+            (NSPoint::new(5., -40.), None),
+        ] {
+            let result = strip.reorder_target(2, location(point), false);
+            if result != expected {
+                return Err(format!(
+                    "Destino de reordenación incorrecto: {point:?} → {result:?}"
+                ));
+            }
+        }
+        strip.reorder_target(2, location(NSPoint::new(5., 11.)), false);
+        capture_control(viewport, ".cache/tab-reorder.png")?;
+        if strip.marker.is_none() {
+            return Err("Falta el indicador de inserción".into());
+        }
+        strip.clear_marker();
+        // Exercise real NSClipView coordinates, not a guessed scroll offset.
+        let original: NSRect = msg_send![viewport, frame];
+        let _: () =
+            msg_send![viewport, setFrameSize:objc2_foundation::NSSize::new(180., TAB_BAR_HEIGHT)];
+        let clip: Obj = msg_send![viewport, contentView];
+        let _: () = msg_send![clip, scrollToPoint:NSPoint::new(last_frame.origin.x, 0.)];
+        let _: () = msg_send![viewport, reflectScrolledClipView:clip];
+        let visible: NSRect = msg_send![document, visibleRect];
+        let inside = location(NSPoint::new(
+            last_frame.origin.x + last_frame.size.width * 0.75,
+            11.,
+        ));
+        let target = strip.reorder_target(2, inside, false);
+        strip.clear_marker();
+        let _: () = msg_send![viewport, setFrame:original];
+        let _: () = msg_send![clip, scrollToPoint:NSPoint::ZERO];
+        let _: () = msg_send![viewport, reflectScrolledClipView:clip];
+        if visible.origin.x <= 0. || target != Some(2) {
+            return Err(format!(
+                "Reordenar con scroll perdió el destino: {visible:?}, {target:?}"
+            ));
+        }
+        let root: Obj = msg_send![&*strip.panel, contentView];
+        if root != viewport {
+            return Err("El gesto reconstruyó la tira".into());
+        }
+        println!(
+            "PASS: inserción al principio/final, salida para separar, marcador y coordenadas con scroll; sin reconstruir controles."
+        );
+    }
+    Ok(())
+}
+
+fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
+    let (space, area) = spaces::visible_desktops()
+        .into_iter()
+        .find_map(|key| area(key.0).map(|area| (key, area)))
+        .ok_or("Sin escritorio visible para comprobar la pertenencia de la tira")?;
+    let mut desktop = Desktop::default();
+    desktop.reconcile_at(&[1], area, 10., None);
+    desktop = desktop
+        .proposed_drop(2, DropIntent::Group(1), area, 10.)
+        .ok_or("Sin grupo de diagnóstico")?;
+    let frames = desktop.window_frames(area, 10.);
+    let mut manager = Manager {
+        tab_target: Some(target.clone()),
+        active_areas: vec![(space, area)],
+        ..Manager::default()
+    };
+    manager.desktops.insert(space, desktop.clone());
+    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    // Like the production tick, wait for WindowServer's first membership
+    // publication without sleeping/blocking the production main thread.
+    pump(0.15);
+    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    let strip = &manager.strips[0];
+    if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
+        return Err("AppKit no asignó la tira a su Space nativo".into());
+    }
+    let panel = strip.panel.clone();
+    let root: Retained<AnyObject> = unsafe { msg_send![&*panel, contentView] };
+    let number: isize = unsafe { msg_send![&*panel, windowNumber] };
+    for _ in 0..20 {
+        manager.space_changed_with_visible_at(Instant::now(), &[]);
+        manager.active_areas.clear();
+        manager.trim_overlays(0, 0);
+        let visible: bool = unsafe { msg_send![&*panel, isVisible] };
+        if manager.strips.len() != 1
+            || !visible
+            || spaces::window_space(number as u32) != Some(space.1)
+        {
+            return Err("La transición retiró o desancló la tira retenida".into());
+        }
+        manager.active_areas.push((space, area));
+        manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+        let current: Obj = unsafe { msg_send![&*manager.strips[0].panel, contentView] };
+        if !ptr::eq(current, Retained::as_ptr(&root))
+            || !ptr::eq(
+                Retained::as_ptr(&manager.strips[0].panel),
+                Retained::as_ptr(&panel),
+            )
+        {
+            return Err("Volver al contexto reconstruyó panel o controles".into());
+        }
+    }
+    unsafe {
+        capture_control(
+            Retained::as_ptr(&root) as Obj,
+            ".cache/tab-space-resident.png",
+        )?;
+    }
+    manager.cancel_drag();
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Pausar dejó una tira visible".into());
+    }
+    manager.active_areas.clear();
+    manager.desktops.clear();
+    manager.trim_overlays(0, 0);
+    if !manager.strips.is_empty() {
+        return Err("Una tira sin grupo quedó retenida".into());
+    }
+    println!(
+        "PASS: panel nativo del Space {}, 20 ciclos de barrera/caché sin ocultar ni reconstruir, pausa y retirada. No se cambió físicamente de escritorio.",
+        space.1
+    );
+    Ok(())
 }
 
 fn check_saved_picker() -> Result<(), String> {
@@ -797,7 +944,7 @@ pub fn check() -> Result<(), String> {
         manager.place_hidden_tab(id, frame);
     }
     manager.desktops.insert(space, desktop.clone());
-    manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
+    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
     STATE.with(|state| *state.borrow_mut() = Some(manager));
     let _panels = Panels;
     pump(0.2);
@@ -851,7 +998,7 @@ pub fn check() -> Result<(), String> {
                 let manager = state.as_mut().unwrap();
                 let desktop = manager.desktops[&space].clone();
                 let frames = desktop.window_frames(area, 10.);
-                manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
+                manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
             })
         });
     }
@@ -931,7 +1078,7 @@ pub fn check() -> Result<(), String> {
             }
         }
         manager.desktops.insert(space, desktop.clone());
-        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
+        let count = manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         Ok(logical_slot)
     })?;
@@ -981,7 +1128,7 @@ pub fn check() -> Result<(), String> {
         {
             return Err("Cerrar la activa no conservó el hueco de su hermana".into());
         }
-        let count = manager.draw_strips(&desktop, &frames, primary_height(), 0, false);
+        let count = manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         if manager
             .strips

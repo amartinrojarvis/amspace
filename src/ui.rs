@@ -4810,11 +4810,11 @@ extern "C-unwind" fn close_tile_tab(_: Obj, _: Sel, sender: Obj) {
         // No settle_focus here: the application's save dialog owns focus.
     });
 }
-/// One pan gesture per tab button: the manager owns validation, the
-/// provisional frame and the final detachment of the dragged leaf.
+/// Native pan coordinates choose reordering in the strip or detachment outside.
 extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
     let state: isize = unsafe { msg_send![sender, state] };
     let view: Option<Retained<AnyObject>> = unsafe { msg_send![sender, view] };
+    let location: NSPoint = unsafe { msg_send![sender, locationInView:ptr::null::<AnyObject>()] };
     with_app(|a| {
         if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
             a.tile_manager.cancel_tab_drag();
@@ -4824,17 +4824,19 @@ extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
             a.tile_manager.cancel_tab_drag();
             return;
         };
-        if a.tile_manager
-            .tab_drag(Retained::as_ptr(&view) as Obj, state)
+        use crate::tile_manager::TabDragOutcome;
+        match a
+            .tile_manager
+            .tab_drag(Retained::as_ptr(&view) as Obj, state, location)
         {
-            a.hover_resume = Instant::now() + Duration::from_millis(600);
-            a.update_tile_timer();
-            // Only the released gesture moves focus; the preview keeps it.
-            if state == 3 {
-                a.settle_focus();
+            TabDragOutcome::Rejected => a.tile_manager.cancel_tab_drag(),
+            outcome => {
+                a.hover_resume = Instant::now() + Duration::from_millis(600);
+                a.update_tile_timer();
+                if outcome == TabDragOutcome::Detached {
+                    a.settle_focus();
+                }
             }
-        } else {
-            a.tile_manager.cancel_tab_drag();
         }
         if let Some(error) = a.tile_manager.interaction_error.take() {
             a.show_notice(&error);
