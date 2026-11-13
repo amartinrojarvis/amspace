@@ -1,10 +1,11 @@
-AMSpace 0.9.13 — feedback directo y documentación bilingüe.
+AMSpace 0.9.14 — zonas de arrastre mucho más claras.
 
-- Nueva opción «Enviar feedback…» en General y en el menú de la app: muestra el contacto, permite copiarlo y prepara un borrador en tu aplicación de correo.
-- Tú revisas y envías el mensaje. AMSpace no envía correos ni adjunta diagnósticos automáticamente; si no tienes cliente configurado, puedes escribir manualmente a a.martinro@gmail.com.
-- README completo en español e inglés, con enlaces entre idiomas, instalación, permisos, uso, seguridad y límites.
-- Contexto del proyecto personal de Alberto Martín, desarrollado usando Astra y Qwen 3.8 Flash Next, con prioridad a la eficiencia en su portátil y su estación de dos monitores, horizontal y vertical. Redes, webs y contacto incluidos.
+- Iconos de hasta 72 puntos, frente a los 20 anteriores, con etiquetas grandes y legibles.
+- Al arrastrar entre huecos del mismo mosaico se ven ambas zonas: apilar como pestaña en el tercio superior e intercambiar posiciones en los dos tercios inferiores.
+- Separador sobre el límite real y resaltado de la zona activa. No cambian los gestos ni las reglas de soltado.
+- Las acciones rechazadas por capacidad o tamaños mínimos aparecen como no disponibles. Los huecos pequeños adaptan iconos y textos.
+- El panel no intercepta el ratón. Moverlo o cruzar entre zonas reutiliza sus vistas; sin nuevos temporizadores, consultas AX ni blur.
 
-Sin nuevos temporizadores, servicios en segundo plano ni dependencias. Se conservan preferencias, funciones de ventanas y canal firmado de actualizaciones.
+Se conservan las preferencias y el canal firmado de actualizaciones. Las llegadas con divisiones de borde mantienen su preview real.
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. La configuración personal del autor no acredita compatibilidad física universal. [Comprobaciones y límites](https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md).
+Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y de controles AppKit; no acreditan un arrastre físico completo con otras apps ni hardware Intel/multipantalla. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md

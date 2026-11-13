@@ -1,3 +1,11 @@
+## Versión 0.9.14/build 69: destinos de arrastre legibles
+
+- Sustituido el badge de 34 pt, con icono de 20 pt, por iconos de hasta **72 pt**, textos explícitos y dos áreas visibles sobre el hueco gestionado original. Tercio superior para apilar como pestaña y dos tercios inferiores para intercambiar; separador en el mismo límite del hit-test, sin cambiar las reglas ni las preferencias.
+- Grupo lleno o restricciones de tamaño: la zona no se anuncia como aceptable. La propuesta contraria se obtiene de la misma caché; no añade consultas AX ni sondeo. Las llegadas con divisiones de borde conservan su destino real. Panel no activable y transparente al ratón; sin blur nuevo. Posición y selección reutilizan vistas, y solo se repintan los colores al cruzar zonas.
+- `./scripts/check.sh`: **235 pruebas correctas**, ocho ignoradas; formato, Clippy y plist correctos. Regresiones de correspondencia entre divisor visible/hit-test en coordenadas normales y negativas, conservación del hueco original, grupos llenos, agrupación desactivada y llegadas entre pantallas.
+- `./scripts/bundle.sh --universal`: compilación arm64/x86_64 y firma correctas. `--check-tab-controls` desde ese bundle: correcto. Paneles y controles AppKit reales, reutilización, ratón ignorado y cambio visible de resaltado. Capturas de agrupación, intercambio, grupo sin capacidad y hueco compacto inspeccionadas: iconos grandes, etiquetas y división legibles, sin solapamientos.
+- No se movieron ventanas ajenas ni se modificaron preferencias del usuario. Esta comprobación de presentación no acredita un arrastre físico completo con otras apps ni hardware Intel/multipantalla. No se ha sustituido la instalación existente.
+
 ## Publicación 0.9.13/build 68: feedback y README bilingüe
 
 - README completo en español e inglés, navegación entre idiomas y paridad de comandos comprobadas. Enlaces locales y anclas válidos. Contexto personal, Astra, Qwen 3.8 Flash Next, portátil y estación horizontal/vertical, webs, redes y contacto; la prioridad de optimización no se presenta como una medición universal.

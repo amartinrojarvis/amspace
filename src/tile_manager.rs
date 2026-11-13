@@ -5,8 +5,8 @@ use crate::{
     native::{Obj, alloc_view, color, rect},
     spaces,
     tiling::{
-        Desktop, DropIntent, Group, Layout, TAB_BAR_GAP, TAB_BAR_HEIGHT, Zone, ax_screen_rect,
-        contains, drop_intent,
+        Desktop, DropIntent, GROUP_DROP_FRACTION, Group, Layout, TAB_BAR_GAP, TAB_BAR_HEIGHT, Zone,
+        ax_screen_rect, contains, drop_intent,
     },
     window_server as ws,
 };
@@ -349,27 +349,67 @@ impl DropPreviewCache {
         &self.context(input).slots
     }
     fn preview(&mut self, input: DropContext<'_>, intent: DropIntent) -> Option<NSRect> {
+        self.context(input).preview(intent)
+    }
+
+    fn hint(
+        &mut self,
+        input: DropContext<'_>,
+        intent: DropIntent,
+        grouped: bool,
+        preview: Option<NSRect>,
+    ) -> Option<DropHint> {
         let context = self.context(input);
-        if let Some((_, frame)) = context.proposals.iter().find(|(key, _)| *key == intent) {
+        // Managed slots have exactly two actions. Arrivals can also split edges:
+        // keep their actual proposed destination instead of advertising a swap.
+        if grouped && context.slots.iter().any(|(id, _)| *id == input.id) {
+            let target = match intent {
+                DropIntent::Group(id) | DropIntent::Window(id, Zone::Center) => Some(id),
+                _ => None,
+            };
+            if let Some((target, frame)) = target
+                .and_then(|target| context.slots.iter().find(|(id, _)| *id == target).copied())
+            {
+                let available = [
+                    context.preview(DropIntent::Group(target)).is_some(),
+                    context
+                        .preview(DropIntent::Window(target, Zone::Center))
+                        .is_some(),
+                ];
+                return Some(DropHint {
+                    frame,
+                    kind: HintKind::Zones,
+                    available,
+                    active: preview.map(|_| usize::from(!matches!(intent, DropIntent::Group(_)))),
+                });
+            }
+        }
+        preview.map(|frame| DropHint::single(intent, frame))
+    }
+}
+
+impl PreviewContext {
+    fn preview(&mut self, intent: DropIntent) -> Option<NSRect> {
+        if let Some((_, frame)) = self.proposals.iter().find(|(key, _)| *key == intent) {
             return *frame;
         }
         let frame = arrival_proposal(
-            input.desktop,
-            input.id,
+            &self.desktop,
+            self.id,
             Some(intent),
-            input.area,
-            Some(input.minimums),
+            self.area,
+            Some(&self.minimums),
         )
         .and_then(|d| {
-            d.window_frames(input.area, 10.)
+            d.window_frames(self.area, 10.)
                 .into_iter()
-                .find(|(id, _)| *id == input.id)
+                .find(|(id, _)| *id == self.id)
                 .map(|(_, r)| r)
         });
-        if context.proposals.len() == 32 {
-            context.proposals.remove(0);
+        if self.proposals.len() == 32 {
+            self.proposals.remove(0);
         }
-        context.proposals.push((intent, frame));
+        self.proposals.push((intent, frame));
         frame
     }
 }
@@ -698,11 +738,48 @@ impl TabStrip {
         }
     }
 }
-/// A reused drop-hint panel and the SF Symbol last painted into it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HintKind {
+    Zones,
+    Group,
+    Place,
+}
+
+#[derive(Clone, Copy)]
+struct DropHint {
+    frame: NSRect,
+    kind: HintKind,
+    available: [bool; 2],
+    active: Option<usize>,
+}
+
+impl DropHint {
+    fn single(intent: DropIntent, slot: NSRect) -> Self {
+        let width = slot.size.width.min(280.);
+        let height = slot.size.height.min(156.);
+        Self {
+            frame: rect(
+                slot.origin.x + (slot.size.width - width) / 2.,
+                slot.origin.y + (slot.size.height - height) / 2.,
+                width,
+                height,
+            ),
+            kind: if matches!(intent, DropIntent::Group(_)) {
+                HintKind::Group
+            } else {
+                HintKind::Place
+            },
+            available: [true, false],
+            active: Some(0),
+        }
+    }
+}
+
+/// Cached plates: moving the destination or crossing its divider reuses views.
 struct HintBadge {
     panel: Retained<AnyObject>,
-    symbol: &'static str,
-    frame: NSRect,
+    hint: DropHint,
+    plates: [Obj; 2],
 }
 #[derive(Default)]
 pub struct Manager {
@@ -2125,53 +2202,37 @@ impl Manager {
         }
         used
     }
-    /// SF Symbol over the pending destination: stacked tab or exchanged slots.
-    fn show_badge(&mut self, intent: DropIntent, slot: NSRect, primary: f64) {
-        let symbol: &'static str = match intent {
-            DropIntent::Group(_) => "square.topthird.inset.filled",
-            DropIntent::Window(..) | DropIntent::Screen(_) => "arrow.left.arrow.right",
-        };
-        let panel = rect(
-            slot.origin.x + (slot.size.width - BADGE_SIZE) / 2.,
-            slot.origin.y + (slot.size.height - BADGE_SIZE) / 2.,
-            BADGE_SIZE,
-            BADGE_SIZE,
-        );
-        match self.badges.get_mut(0) {
-            Some(badge) => {
-                if badge.frame != panel {
-                    unsafe {
-                        let _: () =
-                            msg_send![&*badge.panel,setFrame:appkit(panel, primary),display:true];
-                    }
-                    badge.frame = panel;
-                }
-                if badge.symbol != symbol {
-                    let root = unsafe { badge_content(symbol) };
-                    unsafe {
-                        let _: () = msg_send![&*badge.panel,setContentView:&*root];
-                    }
-                    badge.symbol = symbol;
-                }
-                unsafe {
-                    let visible: bool = msg_send![&*badge.panel, isVisible];
-                    if !visible {
-                        let _: () = msg_send![&*badge.panel, orderFrontRegardless];
-                    }
-                }
-            }
-            None => {
-                let panel_obj = unsafe { new_overlay(panel, primary) };
-                let root = unsafe { badge_content(symbol) };
-                unsafe {
-                    let _: () = msg_send![&panel_obj,setContentView:&*root];
-                    let _: () = msg_send![&panel_obj, orderFrontRegardless];
-                }
+    fn show_badge(&mut self, hint: DropHint, primary: f64) {
+        unsafe {
+            if self.badges.is_empty() {
+                let panel = new_overlay(hint.frame, primary);
+                let (root, plates) = badge_content(hint);
+                let _: () = msg_send![&panel, setContentView:&*root];
                 self.badges.push(HintBadge {
-                    panel: panel_obj,
-                    symbol,
-                    frame: panel,
+                    panel,
+                    hint,
+                    plates,
                 });
+            }
+            let badge = &mut self.badges[0];
+            let rebuilt = badge.hint.kind != hint.kind
+                || badge.hint.available != hint.available
+                || badge.hint.frame.size != hint.frame.size;
+            if badge.hint.frame != hint.frame {
+                let _: () =
+                    msg_send![&badge.panel, setFrame:appkit(hint.frame, primary), display:true];
+            }
+            if rebuilt {
+                let (root, plates) = badge_content(hint);
+                let _: () = msg_send![&badge.panel, setContentView:&*root];
+                badge.plates = plates;
+            } else if badge.hint.active != hint.active {
+                paint_hint(&badge.plates, hint);
+            }
+            badge.hint = hint;
+            let visible: bool = msg_send![&badge.panel, isVisible];
+            if !visible {
+                let _: () = msg_send![&badge.panel, orderFrontRegardless];
             }
         }
     }
@@ -3393,7 +3454,7 @@ impl Manager {
         );
         if down || self.drag.is_some() {
             let mut preview = None;
-            let mut hint: Option<(DropIntent, NSRect)> = None;
+            let mut hint: Option<DropHint> = None;
             if let Some(drag) = &mut self.drag {
                 if !active
                     .iter()
@@ -3437,8 +3498,16 @@ impl Manager {
                                 (frames.is_empty() && contains(*area, p))
                                     .then_some(DropIntent::Screen(Zone::Left))
                             })?;
-                            drag.previews.preview(context, intent)?;
-                            Some((*key, intent))
+                            let proposed = drag.previews.preview(context, intent);
+                            if proposed.is_none() {
+                                hint = drag.previews.hint(
+                                    context,
+                                    intent,
+                                    pref_or(defaults, "tile.groups", 1) != 0,
+                                    None,
+                                );
+                            }
+                            proposed.map(|_| (*key, intent))
                         });
                     drag.update_drop(candidate, Instant::now(), !down);
                     if let Some((key, intent)) = drag.drop {
@@ -3454,7 +3523,24 @@ impl Manager {
                                     },
                                     intent,
                                 );
-                                hint = preview.map(|r| (intent, r));
+                                if hint.is_none() {
+                                    hint = drag.previews.hint(
+                                        DropContext {
+                                            workspace: key,
+                                            id: drag.id,
+                                            area: *area,
+                                            desktop: d,
+                                            minimums: &self.minimum_sizes,
+                                        },
+                                        intent,
+                                        pref_or(defaults, "tile.groups", 1) != 0,
+                                        preview,
+                                    );
+                                } else {
+                                    // An unavailable hovered zone must not advertise
+                                    // the previous destination during hysteresis.
+                                    preview = None;
+                                }
                             }
                         }
                     }
@@ -3493,8 +3579,8 @@ impl Manager {
                 } else {
                     self.hide_preview_panels();
                 }
-                let badges = if let Some((intent, slot)) = hint {
-                    self.show_badge(intent, slot, primary);
+                let badges = if let Some(hint) = hint {
+                    self.show_badge(hint, primary);
                     1
                 } else {
                     0
@@ -4473,8 +4559,6 @@ fn committed_during_settling(settling: bool, applied: Option<NSRect>, target: NS
     settling && applied.is_some_and(|applied| near(applied, target))
 }
 
-const BADGE_SIZE: f64 = 34.;
-
 /// Strip geometry inside a logical slot: left-aligned with an 8 pt inset by
 /// default, symmetric when `centered`. Both edges stay inside the slot, so a
 /// narrow window clamps the strip instead of overflowing it. Left alignment
@@ -4952,22 +5036,193 @@ fn hidden_tab_frames(desktop: &Desktop, frames: &[(u32, NSRect)]) -> Vec<(u32, N
     hidden
 }
 
-unsafe fn badge_content(symbol: &str) -> Retained<AnyObject> {
+fn hint_regions(frame: NSRect) -> [NSRect; 2] {
+    let top = frame.size.height * GROUP_DROP_FRACTION;
+    [
+        rect(frame.origin.x, frame.origin.y, frame.size.width, top),
+        rect(
+            frame.origin.x,
+            frame.origin.y + top,
+            frame.size.width,
+            frame.size.height - top,
+        ),
+    ]
+}
+
+unsafe fn paint_hint(plates: &[Obj; 2], hint: DropHint) {
     unsafe {
-        let root = translucent_card(rect(0., 0., BADGE_SIZE, BADGE_SIZE));
-        let image: *mut AnyObject = msg_send![class!(NSImage),imageWithSystemSymbolName:&*NSString::from_str(symbol),accessibilityDescription:&*NSString::from_str(symbol)];
-        if !image.is_null() {
-            let view: Allocated<AnyObject> = msg_send![class!(NSImageView), alloc];
-            let view: Retained<AnyObject> =
-                msg_send![view,initWithFrame:rect(7., 7., BADGE_SIZE - 14., BADGE_SIZE - 14.)];
-            let _: () = msg_send![&view,setImage:image];
-            let _: () = msg_send![&view,setImageScaling:3isize];
-            let tint: Obj =
-                msg_send![class!(NSColor), colorWithSRGBRed:0.96,green:0.97,blue:1.,alpha:1.];
-            let _: () = msg_send![&view,setContentTintColor:tint];
-            let _: () = msg_send![&root,addSubview:&*view];
+        for (index, plate) in plates.iter().copied().enumerate() {
+            if plate.is_null() {
+                continue;
+            }
+            let active = hint.active == Some(index) && hint.available[index];
+            let layer: Obj = msg_send![plate, layer];
+            let fill = if active {
+                color(0.12, 0.28, 0.52, 0.96)
+            } else {
+                color(0.08, 0.09, 0.12, 0.92)
+            };
+            let outline = if active {
+                color(0.50, 0.77, 1., 1.)
+            } else {
+                color(1., 1., 1., 0.45)
+            };
+            let fill: *const crate::native::CgColor = msg_send![fill, CGColor];
+            let outline: *const crate::native::CgColor = msg_send![outline, CGColor];
+            let _: () = msg_send![layer, setBackgroundColor:fill];
+            let _: () = msg_send![layer, setBorderColor:outline];
+            let _: () = msg_send![layer, setBorderWidth:if active { 3f64 } else { 1f64 }];
         }
-        root
+    }
+}
+
+unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
+    unsafe {
+        let bounds = rect(0., 0., hint.frame.size.width, hint.frame.size.height);
+        let root = alloc_view(class!(NSView), bounds);
+        let mut plates = [ptr::null_mut(); 2];
+        let regions = if hint.kind == HintKind::Zones {
+            hint_regions(bounds)
+        } else {
+            [bounds, rect(0., 0., 0., 0.)]
+        };
+        for (index, region) in regions.into_iter().enumerate() {
+            if region.size.width <= 0. || region.size.height <= 0. {
+                continue;
+            }
+            let inset = 6f64
+                .min(region.size.height / 8.)
+                .min(region.size.width / 8.);
+            let region = appkit(region, bounds.size.height);
+            let plate = rounded_plate(
+                Retained::as_ptr(&root) as Obj,
+                rect(
+                    region.origin.x + inset,
+                    region.origin.y + inset,
+                    region.size.width - inset * 2.,
+                    region.size.height - inset * 2.,
+                ),
+                [0.08, 0.09, 0.12],
+                0.92,
+                12.,
+            );
+            plates[index] = plate;
+            let width = region.size.width - inset * 2.;
+            let height = region.size.height - inset * 2.;
+            let group =
+                hint.kind == HintKind::Group || (hint.kind == HintKind::Zones && index == 0);
+            let title = if group {
+                if width >= 240. {
+                    "Apilar como pestaña"
+                } else {
+                    "Pestañas"
+                }
+            } else if hint.kind == HintKind::Zones {
+                if width >= 240. {
+                    "Intercambiar posiciones"
+                } else if width >= 130. {
+                    "Intercambiar"
+                } else {
+                    "Posición"
+                }
+            } else {
+                "Colocar aquí"
+            };
+            let font = if width >= 240. { 18. } else { 12. };
+            let title_height = 24f64.min(height);
+            let status_height = if !hint.available[index] && height >= 100. {
+                18.
+            } else {
+                0.
+            };
+            let title = if !hint.available[index] && status_height == 0. {
+                if width >= 130. {
+                    "No disponible"
+                } else {
+                    "No cabe"
+                }
+            } else {
+                title
+            };
+            let icon_size = (height - title_height - status_height - 26.)
+                .min(width - 24.)
+                .clamp(0., 72.);
+            let icon_size = if icon_size >= 12. { icon_size } else { 0. };
+            let gap = if icon_size > 0. { 10. } else { 0. };
+            let bottom = ((height - icon_size - gap - title_height - status_height) / 2.).max(0.);
+            let tint = color(
+                0.97,
+                0.98,
+                1.,
+                if hint.available[index] { 1. } else { 0.65 },
+            );
+            let label = crate::native::label(
+                plate,
+                rect(
+                    4.,
+                    bottom + status_height,
+                    (width - 8.).max(0.),
+                    title_height,
+                ),
+                title,
+                font,
+                0.4,
+                false,
+            );
+            let _: () = msg_send![label, setAlignment:1isize];
+            let _: () = msg_send![label, setTextColor:tint];
+            if status_height > 0. {
+                let label = crate::native::label(
+                    plate,
+                    rect(4., bottom, (width - 8.).max(0.), status_height),
+                    "No disponible",
+                    12.,
+                    0.,
+                    false,
+                );
+                let _: () = msg_send![label, setAlignment:1isize];
+                let _: () = msg_send![label, setTextColor:tint];
+            }
+            if icon_size > 0. {
+                let symbol = if group {
+                    "rectangle.stack"
+                } else {
+                    "arrow.left.arrow.right"
+                };
+                let image: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(symbol), accessibilityDescription:&*NSString::from_str(title)];
+                if !image.is_null() {
+                    let view = alloc_view(
+                        class!(NSImageView),
+                        rect(
+                            (width - icon_size) / 2.,
+                            bottom + status_height + title_height + gap,
+                            icon_size,
+                            icon_size,
+                        ),
+                    );
+                    let _: () = msg_send![&view, setImage:image];
+                    let _: () = msg_send![&view, setImageScaling:3isize];
+                    let _: () = msg_send![&view, setContentTintColor:tint];
+                    let _: () = msg_send![plate, addSubview:&*view];
+                }
+            }
+        }
+        if hint.kind == HintKind::Zones {
+            rounded_plate(
+                Retained::as_ptr(&root) as Obj,
+                rect(
+                    6.,
+                    bounds.size.height * (1. - GROUP_DROP_FRACTION) - 1.,
+                    (bounds.size.width - 12.).max(0.),
+                    2.,
+                ),
+                [0.85, 0.90, 1.],
+                0.85,
+                0.,
+            );
+        }
+        paint_hint(&plates, hint);
+        (root, plates)
     }
 }
 
@@ -5091,21 +5346,94 @@ fn strip_sits_above_window_without_overflowing_its_logical_slot() {
         tight_centered.origin.x - narrow.origin.x,
         (narrow.size.width - tight_centered.size.width) / 2.
     );
-    // The badge is centered on the same slot and never overflows it.
-    let badge = rect(
-        slot.origin.x + (slot.size.width - BADGE_SIZE) / 2.,
-        slot.origin.y + (slot.size.height - BADGE_SIZE) / 2.,
-        BADGE_SIZE,
-        BADGE_SIZE,
-    );
-    assert!(badge.origin.x >= slot.origin.x);
-    assert!(badge.origin.y >= slot.origin.y);
-    assert!(badge.origin.x + badge.size.width <= slot.origin.x + slot.size.width + 0.001);
-    assert!(badge.origin.y + badge.size.height <= slot.origin.y + slot.size.height + 0.001);
-    // The y-flip uses the primary height, not the slot's own height.
-    let flipped = appkit(badge, 1000.);
-    assert_eq!(flipped.origin.y, 1000. - badge.origin.y - BADGE_SIZE);
     assert_eq!(strip_width(std::iter::empty()), 0.);
+}
+
+#[test]
+fn drop_hint_divider_matches_hit_testing_and_keeps_the_original_slot() {
+    for area in [rect(0., 30., 1600., 900.), rect(-950., -500., 900., 1400.)] {
+        let mut desktop = Desktop::configured(Layout::Grid, None);
+        desktop.reconcile(&[1, 2, 3], area, 10.);
+        let frames = desktop.frames(area, 10.);
+        let target = frames.iter().find(|(id, _)| *id == 2).unwrap().1;
+        let minimums = HashMap::new();
+        let input = DropContext {
+            workspace: (1, 1),
+            id: 1,
+            area,
+            desktop: &desktop,
+            minimums: &minimums,
+        };
+        let mut cache = DropPreviewCache::default();
+        let [top, bottom] = hint_regions(target);
+        assert_eq!(top.origin, target.origin);
+        assert_eq!(top.size.width, target.size.width);
+        assert_eq!(bottom.origin.y, top.origin.y + top.size.height);
+        assert!(
+            (bottom.origin.y + bottom.size.height - target.origin.y - target.size.height).abs()
+                < 1e-9
+        );
+        for (offset, expected, active) in [
+            (-0.01, DropIntent::Group(2), 0),
+            (0.01, DropIntent::Window(2, Zone::Center), 1),
+        ] {
+            let point = NSPoint::new(
+                target.origin.x + target.size.width / 2.,
+                bottom.origin.y + offset,
+            );
+            let intent = drop_intent(area, &frames, 1, point, true, true).unwrap();
+            assert_eq!(intent, expected);
+            let preview = cache.preview(input, intent);
+            assert!(preview.is_some());
+            let hint = cache.hint(input, intent, true, preview).unwrap();
+            assert!(matches!(hint.kind, HintKind::Zones));
+            assert_eq!(hint.frame, target);
+            assert_eq!(hint.active, Some(active));
+            assert_eq!(hint.available, [true, true]);
+            // Native local coordinates place the same divider at the top third.
+            let local = appkit(top, 1800.);
+            assert!((local.origin.y - (1800. - bottom.origin.y)).abs() < 1e-9);
+        }
+    }
+}
+
+#[test]
+fn drop_hints_do_not_offer_full_groups_or_invent_zones_for_arrivals() {
+    let area = rect(0., 30., 1600., 900.);
+    let mut desktop = Desktop::configured(Layout::Grid, None);
+    desktop.reconcile(&[1, 2, 3], area, 10.);
+    let mut desktop = desktop
+        .proposed_drop(3, DropIntent::Group(2), area, 10.)
+        .unwrap();
+    desktop.max_group_tabs = 2;
+    let minimums = HashMap::new();
+    let input = DropContext {
+        workspace: (1, 1),
+        id: 1,
+        area,
+        desktop: &desktop,
+        minimums: &minimums,
+    };
+    let mut cache = DropPreviewCache::default();
+    let rejected = cache.preview(input, DropIntent::Group(3));
+    assert!(rejected.is_none());
+    let hint = cache
+        .hint(input, DropIntent::Group(3), true, rejected)
+        .unwrap();
+    assert_eq!(hint.available, [false, true]);
+    assert_eq!(hint.active, None);
+    let swap = DropIntent::Window(3, Zone::Center);
+    let preview = cache.preview(input, swap);
+    let hint = cache.hint(input, swap, false, preview).unwrap();
+    assert!(!matches!(hint.kind, HintKind::Zones));
+    let arrival = DropContext { id: 4, ..input };
+    let intent = DropIntent::Screen(Zone::Left);
+    let preview = cache.preview(arrival, intent);
+    let hint = cache.hint(arrival, intent, true, preview).unwrap();
+    assert!(matches!(hint.kind, HintKind::Place));
+    assert!(hint.frame.size.width <= preview.unwrap().size.width);
+    assert!(hint.frame.size.height <= preview.unwrap().size.height);
+    assert_eq!(desktop.tab_strip(3).unwrap().0, &[2, 3]);
 }
 #[cfg(test)]
 mod tests {

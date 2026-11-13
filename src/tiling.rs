@@ -4,6 +4,7 @@ use objc2_foundation::{NSPoint, NSRect};
 
 pub const TAB_BAR_HEIGHT: f64 = 22.;
 pub const TAB_BAR_GAP: f64 = 4.;
+pub const GROUP_DROP_FRACTION: f64 = 1. / 3.;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {
@@ -222,7 +223,7 @@ pub fn drop_intent(
 }
 /// The top third of a slot groups; the lower two thirds take its place.
 fn in_top_third(r: NSRect, p: NSPoint) -> bool {
-    contains(r, p) && (p.y - r.origin.y) / r.size.height < 1. / 3.
+    contains(r, p) && (p.y - r.origin.y) / r.size.height < GROUP_DROP_FRACTION
 }
 fn distance_to_rect(r: NSRect, p: NSPoint) -> f64 {
     let dx = (r.origin.x - p.x)

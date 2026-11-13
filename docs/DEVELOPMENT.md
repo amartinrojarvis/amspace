@@ -101,6 +101,8 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 
 `--space-transfer-fixture` y `--tab-group-fixture` son entradas internas de diagnósticos, no segundas apps de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.
 
+El diagnóstico de controles también recorre las zonas de soltado: agrupación, intercambio, grupo no disponible y hueco compacto. Comprueba que el panel ignora el ratón y que moverlo o cruzar el separador reutiliza sus vistas mientras cambia el resaltado. Guarda `.cache/drop-zones-group.png`, `.cache/drop-zones-swap.png`, `.cache/drop-zones-unavailable.png` y `.cache/drop-zones-compact.png`.
+
 Trazas optativas disponibles: `AMSPACE_TRACE_SPACES`, `AMSPACE_TRACE_FOCUS`, `AMSPACE_TRACE_TILING` y `AMSPACE_TRACE_TRANSFERS`. Por ejemplo, con la instancia normal cerrada:
 
 ```sh

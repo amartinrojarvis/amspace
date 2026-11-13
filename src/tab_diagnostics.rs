@@ -313,22 +313,57 @@ pub fn check_controls() -> Result<(), String> {
             return Err("Cambiar el color no actualizó la pestaña activa.".into());
         }
         manager.set_tab_accent([0.42, 0.48, 0.95]);
-        manager.show_badge(DropIntent::Group(2), slot, primary_height());
+        let mut hint = DropHint {
+            frame: slot,
+            kind: HintKind::Zones,
+            available: [true, true],
+            active: Some(0),
+        };
+        manager.show_badge(hint, primary_height());
         let badge: Retained<AnyObject> = msg_send![&*manager.badges[0].panel, contentView];
-        manager.show_badge(
-            DropIntent::Group(2),
-            rect(324., 342., 620., 400.),
-            primary_height(),
-        );
+        let ignores_mouse: bool = msg_send![&*manager.badges[0].panel, ignoresMouseEvents];
+        if !ignores_mouse {
+            return Err("Las zonas de soltado interceptan el arrastre.".into());
+        }
+        pump(0.05);
+        capture_control(
+            Retained::as_ptr(&badge) as Obj,
+            ".cache/drop-zones-group.png",
+        )?;
+        hint.frame = rect(324., 342., 620., 400.);
+        manager.show_badge(hint, primary_height());
         let moved_badge: Obj = msg_send![&*manager.badges[0].panel, contentView];
         if !ptr::eq(moved_badge, Retained::as_ptr(&badge)) {
             return Err("Mover el indicador de agrupación reconstruyó su contenido.".into());
         }
-        manager.show_badge(DropIntent::Screen(Zone::Left), slot, primary_height());
-        let changed_badge: Obj = msg_send![&*manager.badges[0].panel, contentView];
-        if ptr::eq(changed_badge, Retained::as_ptr(&badge)) {
-            return Err("Cambiar la intención no actualizó el indicador.".into());
+        hint.active = Some(1);
+        manager.show_badge(hint, primary_height());
+        let selected_badge: Obj = msg_send![&*manager.badges[0].panel, contentView];
+        if !ptr::eq(selected_badge, Retained::as_ptr(&badge)) {
+            return Err("Cruzar las zonas reconstruyó los controles del indicador.".into());
         }
+        pump(0.05);
+        capture_control(selected_badge, ".cache/drop-zones-swap.png")?;
+        if std::fs::read(".cache/drop-zones-group.png").map_err(|e| e.to_string())?
+            == std::fs::read(".cache/drop-zones-swap.png").map_err(|e| e.to_string())?
+        {
+            return Err("Cruzar las zonas no cambió el resaltado visible.".into());
+        }
+        hint.available[0] = false;
+        hint.active = None;
+        manager.show_badge(hint, primary_height());
+        pump(0.05);
+        let unavailable: Obj = msg_send![&*manager.badges[0].panel, contentView];
+        capture_control(unavailable, ".cache/drop-zones-unavailable.png")?;
+        hint.frame = rect(324., 342., 180., 180.);
+        manager.show_badge(hint, primary_height());
+        pump(0.05);
+        let compact: Obj = msg_send![&*manager.badges[0].panel, contentView];
+        capture_control(compact, ".cache/drop-zones-compact.png")?;
+        manager.show_badge(
+            DropHint::single(DropIntent::Screen(Zone::Left), slot),
+            primary_height(),
+        );
         manager.trim_overlays(1, 0);
         capture_control(Retained::as_ptr(&content) as Obj, ".cache/tab-controls.png")?;
         render_tab_presentation(&names, &target)?;
