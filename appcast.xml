@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.13</title><pubDate>Fri, 13 Nov 2026 06:28:41 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.13 — feedback directo y documentación bilingüe.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.14</title><pubDate>Fri, 13 Nov 2026 07:14:40 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.14 — zonas de arrastre mucho más claras.
 
-- Nueva opción «Enviar feedback…» en General y en el menú de la app: muestra el contacto, permite copiarlo y prepara un borrador en tu aplicación de correo.
-- Tú revisas y envías el mensaje. AMSpace no envía correos ni adjunta diagnósticos automáticamente; si no tienes cliente configurado, puedes escribir manualmente a a.martinro@gmail.com.
-- README completo en español e inglés, con enlaces entre idiomas, instalación, permisos, uso, seguridad y límites.
-- Contexto del proyecto personal de Alberto Martín, desarrollado usando Astra y Qwen 3.8 Flash Next, con prioridad a la eficiencia en su portátil y su estación de dos monitores, horizontal y vertical. Redes, webs y contacto incluidos.
+- Iconos de hasta 72 puntos, frente a los 20 anteriores, con etiquetas grandes y legibles.
+- Al arrastrar entre huecos del mismo mosaico se ven ambas zonas: apilar como pestaña en el tercio superior e intercambiar posiciones en los dos tercios inferiores.
+- Separador sobre el límite real y resaltado de la zona activa. No cambian los gestos ni las reglas de soltado.
+- Las acciones rechazadas por capacidad o tamaños mínimos aparecen como no disponibles. Los huecos pequeños adaptan iconos y textos.
+- El panel no intercepta el ratón. Moverlo o cruzar entre zonas reutiliza sus vistas; sin nuevos temporizadores, consultas AX ni blur.
 
-Sin nuevos temporizadores, servicios en segundo plano ni dependencias. Se conservan preferencias, funciones de ventanas y canal firmado de actualizaciones.
+Se conservan las preferencias y el canal firmado de actualizaciones. Las llegadas con divisiones de borde mantienen su preview real.
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. La configuración personal del autor no acredita compatibilidad física universal. [Comprobaciones y límites](https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md).
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.13/AMSpace-universal.zip" length="2814431" type="application/octet-stream" sparkle:version="68" sparkle:shortVersionString="0.9.13" sparkle:edSignature="zAy7ItPdTZNDQw48byb2k7uDgdsJ39b9HB09eUIopifeIkjOvNd8frVItnrikD0Se2oQJx2wjHZyhphUlIQHCQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: aNHa9qoFhtwVd6Nho43OMzhPIHq0+EcyXbdGNn9i8k8l70dUk1wBU4ZXPku7HZUk3Aq2QICPwihfGG/XcAY6Bg==
-length: 2278
+Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y de controles AppKit; no acreditan un arrastre físico completo con otras apps ni hardware Intel/multipantalla. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.14/AMSpace-universal.zip" length="2819881" type="application/octet-stream" sparkle:version="69" sparkle:shortVersionString="0.9.14" sparkle:edSignature="0b1PmFD1j7dNsNRAMdoOqCvIxyLYhjWMgkBRJIp7hHfomqFXp8M6SB3XOsNf9uziThs1m1RS1TXpcvNoIxHNDw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: DpZPr7RjljWNA0TD57omdouwN+uGBavoK5KcjQDd7aLNl8KC+X62oTxhFRlEOIdAVaFZ05fUn0SvK/UnwbkLBw==
+length: 2212
 -->

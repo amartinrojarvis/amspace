@@ -5,6 +5,8 @@
 - `./scripts/check.sh`: **235 pruebas correctas**, ocho ignoradas; formato, Clippy y plist correctos. Regresiones de correspondencia entre divisor visible/hit-test en coordenadas normales y negativas, conservación del hueco original, grupos llenos, agrupación desactivada y llegadas entre pantallas.
 - `./scripts/bundle.sh --universal`: compilación arm64/x86_64 y firma correctas. `--check-tab-controls` desde ese bundle: correcto. Paneles y controles AppKit reales, reutilización, ratón ignorado y cambio visible de resaltado. Capturas de agrupación, intercambio, grupo sin capacidad y hueco compacto inspeccionadas: iconos grandes, etiquetas y división legibles, sin solapamientos.
 - No se movieron ventanas ajenas ni se modificaron preferencias del usuario. Esta comprobación de presentación no acredita un arrastre físico completo con otras apps ni hardware Intel/multipantalla. No se ha sustituido la instalación existente.
+- Publicación `v0.9.14`, commit `58934ec`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43384455689). Repetidas las comprobaciones y el diagnóstico de controles desde el bundle **0.9.14/build 69**. ZIP, DMG y catálogo firmados y verificados; los cinco archivos de GitHub descargados sin autenticación coinciden byte a byte con los originales, con checksums correctos.
+- DMG descargado montado en solo lectura: versión/build, arquitecturas x86_64/arm64, firma, alias `Aplicaciones`, guía RTF y encuadre de 800 × 642 pt comprobados. ZIP inmutable publicado en `updates/0.9.14/AMSpace-universal.zip`, commit `9a8ca19`; descarga raw pública idéntica. No se modificaron versiones anteriores. El catálogo se anuncia después de verificar estos archivos.
 
 ## Publicación 0.9.13/build 68: feedback y README bilingüe
 
