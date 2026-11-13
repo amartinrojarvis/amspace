@@ -7,6 +7,7 @@
 - No se movieron ventanas ajenas ni se modificaron preferencias del usuario. Esta comprobación de presentación no acredita un arrastre físico completo con otras apps ni hardware Intel/multipantalla. No se ha sustituido la instalación existente.
 - Publicación `v0.9.14`, commit `58934ec`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/43384455689). Repetidas las comprobaciones y el diagnóstico de controles desde el bundle **0.9.14/build 69**. ZIP, DMG y catálogo firmados y verificados; los cinco archivos de GitHub descargados sin autenticación coinciden byte a byte con los originales, con checksums correctos.
 - DMG descargado montado en solo lectura: versión/build, arquitecturas x86_64/arm64, firma, alias `Aplicaciones`, guía RTF y encuadre de 800 × 642 pt comprobados. ZIP inmutable publicado en `updates/0.9.14/AMSpace-universal.zip`, commit `9a8ca19`; descarga raw pública idéntica. No se modificaron versiones anteriores. El catálogo se anuncia después de verificar estos archivos.
+- Catálogo anunciado y comprobado en la URL exacta de `SUFeedURL`, sin parámetros anticaché: variantes normal y comprimida de Sparkle idénticas al catálogo firmado. `checkForUpdateInformation` con el bundle instalado **0.9.13/build 68** verificó la firma y detectó **0.9.14/build 69**. No se descargó, instaló ni reinició la app; la consulta puede actualizar la fecha de última búsqueda de Sparkle. No se ha comprobado una primera instalación en una cuenta limpia.
 
 ## Publicación 0.9.13/build 68: feedback y README bilingüe
 
