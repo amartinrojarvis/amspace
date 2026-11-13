@@ -733,6 +733,7 @@ enum StripSpaceBinding {
 struct TabStrip {
     panel: Retained<AnyObject>,
     space: Workspace,
+    area: Option<NSRect>,
     binding: StripSpaceBinding,
     marker: Option<Retained<AnyObject>>,
     signature: Vec<(String, Option<Retained<AnyObject>>)>,
@@ -749,6 +750,11 @@ impl TabStrip {
                 let _: () = msg_send![&*self.panel,setFrame:appkit(frame, primary),display:true];
                 self.frame = frame;
             }
+            self.show();
+        }
+    }
+    fn show(&self) {
+        unsafe {
             let visible: bool = msg_send![&*self.panel, isVisible];
             if !visible {
                 let _: () = msg_send![&*self.panel, orderFrontRegardless];
@@ -1863,6 +1869,35 @@ impl Manager {
     pub fn space_changed(&mut self) {
         self.space_changed_with_visible_at(Instant::now(), &spaces::visible_desktops());
     }
+    /// Presentation only: never wait for AX reconciliation to restore a cached
+    /// native strip. The UI calls this only while tiling is enabled and unpaused.
+    pub fn resume_space_strips(&mut self) {
+        if !self.strips.is_empty() {
+            self.restore_space_strips(&spaces::visible_desktops());
+        }
+    }
+    fn restore_space_strips(&mut self, visible: &[Workspace]) {
+        if self.presentation != crate::desktop_mode::Mode::Normal || crate::desktop_mode::active() {
+            return;
+        }
+        for strip in &self.strips {
+            if matches!(strip.binding, StripSpaceBinding::Confirmed)
+                && visible.contains(&strip.space)
+                && self.desktops.get(&strip.space).is_some_and(|desktop| {
+                    desktop.groups().iter().any(|group| {
+                        group.members.len() > 1
+                            && group.members == strip.members
+                            && group.active == strip.active
+                    })
+                })
+                && strip
+                    .area
+                    .is_some_and(|saved| area(strip.space.0) == Some(saved))
+            {
+                strip.show();
+            }
+        }
+    }
     #[cfg(test)]
     fn space_changed_at(&mut self, now: Instant) {
         self.space_changed_with_visible_at(now, &[]);
@@ -1887,6 +1922,7 @@ impl Manager {
         // alive through the quiet/reentry barrier; fallback overlays cannot.
         for strip in &mut self.strips {
             strip.clear_marker();
+            strip.confirm_space();
             if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
                 unsafe {
                     let _: () = msg_send![&*strip.panel, orderOut:ptr::null::<AnyObject>()];
@@ -2282,6 +2318,10 @@ impl Manager {
         centered: bool,
     ) -> usize {
         let mut used = start;
+        let workspace_area = self
+            .active_areas
+            .iter()
+            .find_map(|(key, area)| (*key == space).then_some(*area));
         let groups: &[Group] = desktop.groups();
         for group in groups {
             if group.members.len() < 2 {
@@ -2305,6 +2345,7 @@ impl Manager {
                 });
             if let Some(index) = existing {
                 self.strips.swap(used, index);
+                self.strips[used].area = workspace_area;
             }
             // During a native gesture only geometry changes. Reuse captions and
             // icons instead of synchronous AX title reads at the gesture cadence.
@@ -2412,6 +2453,7 @@ impl Manager {
                         TabStrip {
                             panel: panel_obj,
                             space,
+                            area: workspace_area,
                             binding,
                             marker: None,
                             signature: tabs,
@@ -3991,7 +4033,10 @@ impl Manager {
         } else {
             None
         };
-        let mut app_window_ids = HashMap::new();
+        // Enumerate each app once, including a failed read. Repeating AXWindows
+        // for every newly discovered sibling makes cold start quadratic in AX
+        // ID lookups and multiplies timeouts in an unresponsive application.
+        let mut app_windows = HashMap::new();
         let mut transferred: HashSet<u32> = self.handoffs.keys().copied().collect();
         // Offscreen Spaces retain their trees; closed/hidden/minimized windows on
         // visible Spaces leave the current tree and rejoin when visible again.
@@ -4041,11 +4086,18 @@ impl Manager {
             // geometry-based rejection has already removed its layout slot.
             let known = self.windows.contains_key(&id);
             let retain_uncertain = self.windows.get(&id).is_some_and(|w| w.space.1 == space);
-            let Some(mut element) = self
-                .windows
-                .get(&id)
-                .map(|w| w.element.clone())
-                .or_else(|| ax::window_for_id(pid, id))
+            let Some(mut element) =
+                self.windows
+                    .get(&id)
+                    .map(|w| w.element.clone())
+                    .or_else(|| {
+                        app_windows
+                            .entry(pid)
+                            .or_insert_with(|| ax::application_windows(pid))
+                            .as_ref()?
+                            .get(&id)
+                            .cloned()
+                    })
             else {
                 if retain_uncertain {
                     uncertain.insert(id);
@@ -4057,7 +4109,12 @@ impl Manager {
             }
             let mut geometry = ax::geometry(element.0);
             if geometry.is_none()
-                && let Some(fresh) = ax::window_for_id(pid, id)
+                && let Some(fresh) = app_windows
+                    .entry(pid)
+                    .or_insert_with(|| ax::application_windows(pid))
+                    .as_ref()
+                    .and_then(|windows| windows.get(&id))
+                    .cloned()
                 && ax::tileable(fresh.0)
             {
                 element = fresh;
@@ -4165,16 +4222,18 @@ impl Manager {
                             // The first tab creates a group after the outgoing
                             // AXWindow has become unreadable. Bootstrap only from
                             // one live slot at this frame, absent from AXWindows.
-                            let ax_ids = app_window_ids
+                            let ax_windows = app_windows
                                 .entry(pid)
-                                .or_insert_with(|| ax::application_window_ids(pid));
+                                .or_insert_with(|| ax::application_windows(pid));
                             let previous = self
                                 .constrained
                                 .get(&old)
                                 .map(|(_, actual)| *actual)
                                 .or_else(|| self.applied.get(&old).copied())
                                 .or_else(|| ws::bounds(old));
-                            if ax_ids.as_ref().is_some_and(|ids| !ids.contains(&old))
+                            if ax_windows
+                                .as_ref()
+                                .is_some_and(|windows| !windows.contains_key(&old))
                                 && previous.is_some_and(|previous| same_tab_frame(previous, frame))
                             {
                                 first_tabs.push(old);

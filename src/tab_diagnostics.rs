@@ -283,6 +283,7 @@ pub fn check_controls() -> Result<(), String> {
             strips: vec![TabStrip {
                 panel: panel.clone(),
                 space: (0, 0),
+                area: None,
                 binding: StripSpaceBinding::Fallback,
                 marker: None,
                 signature: names.to_vec(),
@@ -530,8 +531,67 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
     if unsafe { msg_send![&*panel, isVisible] } {
         return Err("Pausar dejó una tira visible".into());
     }
+    let now = Instant::now();
+    manager.space_changed_with_visible_at(now, &[space]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("El aviso de Space anuló una pausa sin autorización de la UI".into());
+    }
+    manager.restore_space_strips(&[(space.0, space.1.wrapping_add(1))]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Se restauró una tira de otro escritorio".into());
+    }
+    manager.strips[0].area = Some(rect(
+        area.origin.x,
+        area.origin.y,
+        area.size.width + 100.,
+        area.size.height,
+    ));
+    manager.restore_space_strips(&[space]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Se reutilizaron coordenadas anteriores a un cambio de área".into());
+    }
+    manager.strips[0].area = Some(area);
+    manager.strips[0].binding = StripSpaceBinding::Fallback;
+    manager.restore_space_strips(&[space]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Se restauró un panel sin pertenencia nativa confirmada".into());
+    }
+    manager.strips[0].binding = StripSpaceBinding::Confirmed;
+    manager.set_presentation_at(crate::desktop_mode::Mode::Overview, now, None);
+    manager.restore_space_strips(&[space]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Se restauró una tira durante la presentación del escritorio".into());
+    }
+    manager.set_presentation_at(crate::desktop_mode::Mode::Normal, now, None);
+    // Same authorized path as configure_tiling, before any AX scan or redraw.
+    let started = Instant::now();
+    manager.resume_space_strips();
+    let elapsed = started.elapsed();
+    let current: Obj = unsafe { msg_send![&*panel, contentView] };
+    if !unsafe { msg_send![&*panel, isVisible] }
+        || !manager.waiting_for_space(now)
+        || manager.space_reentry.is_none()
+        || !ptr::eq(current, Retained::as_ptr(&root))
+    {
+        return Err("Volver de presentación no restauró la tira antes de reconciliar".into());
+    }
+    println!(
+        "PASS: restauración de tira en {:.3} ms, barrera geométrica aún activa; aislamiento por Space/área/pausa/pertenencia.",
+        elapsed.as_secs_f64() * 1000.
+    );
+    unsafe {
+        capture_control(
+            Retained::as_ptr(&root) as Obj,
+            ".cache/tab-space-restored.png",
+        )?;
+    }
+    manager.cancel_drag();
     manager.active_areas.clear();
     manager.desktops.clear();
+    manager.restore_space_strips(&[space]);
+    if unsafe { msg_send![&*panel, isVisible] } {
+        return Err("Se restauró una tira cuyo grupo ya no existe".into());
+    }
     manager.trim_overlays(0, 0);
     if !manager.strips.is_empty() {
         return Err("Una tira sin grupo quedó retenida".into());

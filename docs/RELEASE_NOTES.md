@@ -1,11 +1,11 @@
-AMSpace 0.9.15 — pestañas persistentes y reordenación por arrastre.
+AMSpace 0.9.16 — corrección de la reaparición de pestañas y optimización del arranque.
 
-- Las barras conservan sus paneles y controles en el escritorio del grupo, en lugar de retirarlos al cambiar de Space. macOS gestiona su visibilidad con pertenencia nativa comprobada.
-- Arrastra dentro de la barra para reordenar. Una marca indica la posición de inserción; la ventana activa, sus tamaños y la distribución se mantienen.
-- Arrastra fuera de la barra para separar la ventana. Si no cabe un hueco independiente, puedes seguir reordenando las pestañas.
-- El gesto respeta el desplazamiento horizontal. Cancelar, cambiar de contexto o perder la entrega final no modifica el grupo.
-- Sin nuevos temporizadores ni sondeo permanente. Pausar Mosaico, Mostrar escritorio y Mission Control mantienen la ocultación de las barras.
+- Corregida una ruta que volvía a ocultar las barras de pestañas durante los cambios de escritorio solicitados desde la barra de menús.
+- Al volver de Mission Control, los paneles confirmados pueden reaparecer sin esperar a la reconciliación AX. Se conservan las protecciones de geometría, pausa, pertenencia y cambios de pantalla.
+- El descubrimiento inicial reutiliza una lista AX de ventanas por aplicación y pasada, evitando enumeraciones repetidas y multiplicar los fallos de consulta.
+- Corregida la cadencia inicial del mosaico; el puente de traslado no se resuelve si no hay atajos de envío que lo necesiten.
+- Se mantienen la reordenación por arrastre, separación, cierre y preferencias existentes. Sin nuevos temporizadores ni sondeo permanente.
 
-Se conservan las preferencias y el canal firmado de actualizaciones. Si macOS no permite confirmar la pertenencia del panel, se conserva la ocultación segura durante la transición.
+Verificado con pruebas del modelo y controles AppKit, incluida la restauración de un panel oculto antes de reconciliar. No se ha medido el arranque completo en la sesión del usuario ni verificado una transición física entre escritorios.
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Pruebas del modelo y controles AppKit; no acreditan la animación física entre escritorios ni un arrastre completo con otras apps. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
+Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md

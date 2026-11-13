@@ -1885,7 +1885,11 @@ impl App {
         } else {
             crate::shortcuts::bindings(defaults, tiling)
         };
-        if !crate::window_move::space_moves_available() {
+        if bindings
+            .iter()
+            .any(|binding| matches!(binding.action, crate::tile_hotkey::Action::SendSpace(_)))
+            && !crate::window_move::space_moves_available()
+        {
             bindings.retain(|b| !matches!(b.action, crate::tile_hotkey::Action::SendSpace(_)));
         }
         let priority = crate::tile_manager::pref(defaults, "shortcuts.priority") != 0;
@@ -2158,8 +2162,9 @@ impl App {
                 });
             });
             self.refresh_picker_hint();
-            self.update_tile_timer();
             self.tile_manager.invalidate();
+            self.tile_manager.resume_space_strips();
+            self.update_tile_timer();
         }
     }
     fn update_tile_timer(&mut self) {
@@ -4854,7 +4859,8 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
                 return;
             }
             if a.switching.is_some() {
-                a.tile_manager.cancel_drag();
+                // The switch already cancelled incompatible work at its start.
+                // General cancellation here would hide the retained tab strips.
                 a.update_tile_timer();
                 return;
             }
@@ -4901,6 +4907,9 @@ extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj
         a.pending_focus = None;
         a.layout_picker = None;
         a.tile_manager.space_changed();
+        if a.tile_timer.is_some() && !a.tiling_paused && !a.sleeping {
+            a.tile_manager.resume_space_strips();
+        }
     });
     workspace(target, selector, notification);
 }

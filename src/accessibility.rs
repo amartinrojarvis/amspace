@@ -261,9 +261,20 @@ pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     }
     None
 }
-pub fn application_window_ids(pid: i32) -> Option<Vec<u32>> {
+/// One per-process snapshot for a reconciliation pass. A failed read is not an
+/// empty application; callers cache that failure only until the next pass.
+pub fn application_windows(pid: i32) -> Option<std::collections::HashMap<u32, Owned>> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
-    Some(array(windows.0).filter_map(window_id).collect())
+    if unsafe { CFGetTypeID(windows.0) != CFArrayGetTypeID() } {
+        return None;
+    }
+    Some(
+        array(windows.0)
+            .filter_map(|window| {
+                Some((window_id(window)?, Owned::new(unsafe { CFRetain(window) })?))
+            })
+            .collect(),
+    )
 }
 /// The AXTabGroup element identifies the native tabbed window across selected
 /// NSWindow IDs. Retain that identity; tab buttons and titles are not stable.
