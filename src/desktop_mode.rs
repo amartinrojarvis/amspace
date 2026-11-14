@@ -43,6 +43,13 @@ unsafe extern "C" {
         context: *mut c_void,
         callback: extern "C" fn(*mut c_void),
     );
+    fn dispatch_after_f(
+        when: u64,
+        queue: *const c_void,
+        context: *mut c_void,
+        callback: extern "C" fn(*mut c_void),
+    );
+    fn dispatch_time(when: u64, delta: i64) -> u64;
 }
 pub fn active() -> bool {
     MODE.load(Ordering::Acquire) != 0
@@ -109,7 +116,22 @@ extern "C" fn deliver(context: *mut c_void) {
         2 => Mode::Desktop,
         _ => Mode::Normal,
     };
-    objc2::rc::autoreleasepool(|_| crate::ui::desktop_presentation_changed(mode));
+    // A deferred obsolete transition must not stop clocks after a newer resume.
+    if mode != current() {
+        return;
+    }
+    if !objc2::rc::autoreleasepool(|_| crate::ui::desktop_presentation_changed(mode)) {
+        // AX can dispatch this callback with the UI already borrowed. Retain the
+        // transition until that call returns; never poll after it is delivered.
+        unsafe {
+            dispatch_after_f(
+                dispatch_time(0, 10_000_000),
+                std::ptr::addr_of!(_dispatch_main_q),
+                context,
+                deliver,
+            );
+        }
+    }
 }
 #[cfg(test)]
 mod tests {

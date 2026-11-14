@@ -1,17 +1,20 @@
-AMSpace 0.9.20 — español/inglés y suelta fiable en la zona flotante.
+AMSpace 0.9.21 — cierre fiable de pestañas y transiciones más robustas.
 
-- Interfaz completa en español e inglés, incluidas ayuda, feedback e instrucciones del instalador. Sigue el primer idioma compatible de macOS; usa inglés si no hay ninguno.
-- Selector en Ajustes → General → Idioma. Guarda la elección para la próxima apertura, sin cambiar el idioma del sistema ni los nombres, plantillas o preferencias personales.
-- Corrige dos carreras que podían perder la suelta en «Hacer flotante» o «Volver al mosaico»: el temporizador ya no consume el gesto antes del evento y las reentradas de AppKit conservan los eventos pendientes.
-- La confirmación usa la posición real al soltar. Los eventos caducados o desbordados cancelan sin ejecutar una acción antigua. Sin nuevos temporizadores permanentes ni dependencias.
+- Corrige pestañas fantasma tras cerrar ventanas cuyo ID y geometría macOS seguía conservando. La retirada exige confirmación nativa y AX; minimizar, ocultar o vetar el cierre no elimina miembros.
+- Los clics de selección y cierre sobreviven a reentradas de Accesibilidad. Las acciones caducadas, pausadas o pertenecientes a controles retirados no se ejecutan después.
+- Conserva las notificaciones de «Mostrar escritorio» durante reentrada y descarta transiciones obsoletas.
+- Evita una división por cero al saturar determinados layouts con muchas ventanas. Sin nuevos temporizadores permanentes ni dependencias.
+- Los enlaces de instalación de las guías apuntan siempre a la última versión publicada.
 
 English
 
-- Full Spanish/English interface, including help, feedback and installer instructions. Follows the first supported macOS language, with English as the fallback.
-- Choose the language in Settings → General → Language; reopen the app to apply it. System language, personal names, templates and existing preferences remain unchanged.
-- Fixes two races that could lose releases over “Make floating” or “Return to tiling”. Confirmation uses the actual release position; stale or overflowing events cancel safely, without a new idle timer.
+- Fixes ghost tabs after closing windows whose IDs and bounds remain retained by macOS. Removal requires native and Accessibility confirmation; minimizing, hiding or vetoing a close preserves group members.
+- Tab selection and close clicks survive Accessibility reentry. Expired, paused or detached-control actions cannot execute later.
+- Preserves Show Desktop notifications during reentry and discards obsolete transitions.
+- Prevents division by zero when many windows exhaust a layout's available space. No new permanent timers or dependencies.
+- Installation guides now link to the latest published version.
 
-Verificación / Verification: 273 pruebas correctas / tests passed, ocho ignoradas / eight ignored; controles AppKit en ambos idiomas / AppKit controls in both languages; compilación universal / universal build. No se ha comprobado el arrastre físico completo con ventanas ajenas ni la ejecución en hardware Intel / Full physical dragging of other apps’ windows and execution on Intel hardware have not been verified.
+Verificación / Verification: 274 pruebas correctas / tests passed, ocho ignoradas / eight ignored; cierre AX y controles AppKit con ventanas desechables / AX closing and AppKit controls using disposable windows; compilación universal / universal build. No acredita todas las aplicaciones, carga prolongada ni ejecución física en Intel / Does not establish coverage of every app, prolonged workloads or execution on Intel hardware.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md

@@ -1255,10 +1255,20 @@ impl Desktop {
         let size = (span - gap * (nodes.len() - 1) as f64) / nodes.len() as f64;
         Node::branch(
             vertical,
-            size / (span - gap),
+            Self::chain_ratio(size, span - gap),
             nodes[0].clone(),
             Self::equal_chain(&nodes[1..], vertical, span - size - gap, gap),
         )
+    }
+    /// A chain's division ratio. A gap that consumes the whole span leaves no
+    /// positive denominator: keep a finite symmetric ratio instead of the
+    /// `0 / 0` that would poison every slot and its saved distribution.
+    fn chain_ratio(size: f64, available: f64) -> f64 {
+        if available > 0. {
+            size / available
+        } else {
+            0.5
+        }
     }
     fn spiral(ids: &[u32], depth: usize) -> Node {
         if ids.len() == 1 {
@@ -1872,6 +1882,36 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saturated_layout_gaps_never_produce_nan_frames() {
+        // Ninety-one secondary slots consume exactly the 900-point height in
+        // gaps. The last split used to divide 0 / 0, poisoning its rectangles.
+        for (layout, area, count) in [
+            (Layout::Master, rect(-1600., 30., 1600., 900.), 92),
+            (Layout::Grid, rect(0., 0., 80., 80.), 81),
+        ] {
+            let ids: Vec<u32> = (1..=count).collect();
+            let mut desktop = Desktop::configured(layout, None);
+            desktop.reconcile(&ids, area, 10.);
+            let frames = desktop.frames(area, 10.);
+            assert_eq!(frames.len(), ids.len());
+            for (id, frame) in frames {
+                assert!(ids.contains(&id));
+                assert!(
+                    [
+                        frame.origin.x,
+                        frame.origin.y,
+                        frame.size.width,
+                        frame.size.height,
+                    ]
+                    .into_iter()
+                    .all(f64::is_finite)
+                );
+                assert!(frame.size.width >= 0. && frame.size.height >= 0.);
+            }
+        }
+    }
+
     #[test]
     fn floating_geometry_is_readable_centered_and_inside_its_own_display() {
         assert_eq!(

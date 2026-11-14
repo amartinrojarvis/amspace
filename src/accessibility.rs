@@ -252,6 +252,19 @@ pub fn request_close(window: Cf) -> bool {
     }
     unsafe { AXUIElementPerformAction(button.0, cf(ns_string!("AXPress"))) == 0 }
 }
+
+/// Only the native invalid-element error confirms destruction. A timeout,
+/// missing attribute or unavailable permission is not evidence of a close.
+pub fn destroyed(window: Cf) -> bool {
+    if window.is_null() || unsafe { CFGetTypeID(window) != AXUIElementGetTypeID() } {
+        return false;
+    }
+    let mut value = ptr::null();
+    let status =
+        unsafe { AXUIElementCopyAttributeValue(window, cf(ns_string!("AXRole")), &mut value) };
+    let _value = Owned::new(value);
+    status == -25202 // kAXErrorInvalidUIElement
+}
 pub fn window_for_id(pid: i32, id: u32) -> Option<Owned> {
     let windows = attr(application(pid)?.0, "AXWindows")?;
     for window in array(windows.0) {

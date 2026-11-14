@@ -36,6 +36,14 @@ fn main() {
         objc2::rc::autoreleasepool(|_| window_move::run_transfer_fixture());
     } else if std::env::args().any(|a| a == "--tab-group-fixture") {
         objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::run_fixture());
+    } else if std::env::args().any(|a| a == "--tab-close-fixture") {
+        objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::run_fixture());
+    } else if std::env::args().any(|a| a == "--check-tab-close") {
+        let result = objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::check());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
     } else if std::env::args().any(|a| a == "--check-tab-controls") {
         let result = objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::check_controls());
         if let Err(error) = result {

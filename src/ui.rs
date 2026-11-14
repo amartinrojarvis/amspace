@@ -21,6 +21,8 @@ use std::{
 pub(crate) mod diagnostics;
 #[path = "ui_mouse.rs"]
 mod mouse_delivery;
+#[path = "ui_tabs.rs"]
+mod tab_delivery;
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
 #[link(name = "QuartzCore", kind = "framework")]
@@ -2256,6 +2258,7 @@ impl App {
     }
     fn configure_tiling(&mut self) {
         mouse_delivery::clear(Retained::as_ptr(&self.target) as Obj);
+        tab_delivery::clear(Retained::as_ptr(&self.target) as Obj);
         self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.tile_timer.take() {
@@ -4851,8 +4854,8 @@ extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
         }
     });
 }
-pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
-    with_app(|a| {
+pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) -> bool {
+    try_with_app(|a| {
         a.pending_focus = None;
         a.focus_target = None;
         a.layout_picker = None;
@@ -4882,7 +4885,7 @@ pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
                 0.65,
             );
         }
-    });
+    })
 }
 extern "C-unwind" fn desktop_lifecycle(_: Obj, _: Sel, _: Obj) {
     with_app(|a| a.ensure_desktop_observer());
@@ -5122,45 +5125,47 @@ fn show_tab_menu(button: Obj, event: Obj) {
     }
 }
 
-extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
-    let id: isize = unsafe { msg_send![sender, tag] };
-    with_app(|a| {
-        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
-            // A paused manager must never be reactivated by an already queued UI action.
-            return;
-        }
-        if let Ok(id) = u32::try_from(id)
-            && a.tile_manager.activate_tab(id)
-        {
-            a.hover_resume = Instant::now() + Duration::from_millis(600);
-            a.update_tile_timer();
-            a.settle_focus();
-            a.show_tip(4, crate::i18n::tr("Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana."));
-        }
-    });
+extern "C-unwind" fn select_tile_tab(target: Obj, _: Sel, sender: Obj) {
+    tab_delivery::enqueue(target, sender, tab_delivery::Action::Select);
 }
-extern "C-unwind" fn close_tile_tab(_: Obj, _: Sel, sender: Obj) {
-    let tag: isize = unsafe { msg_send![sender, tag] };
-    let Some(id) = tag
-        .checked_add(2)
-        .and_then(isize::checked_neg)
-        .and_then(|id| u32::try_from(id).ok())
-    else {
+extern "C-unwind" fn close_tile_tab(target: Obj, _: Sel, sender: Obj) {
+    tab_delivery::enqueue(target, sender, tab_delivery::Action::Close);
+}
+fn apply_tab_click(a: &mut App, sender: Obj, action: tab_delivery::Action) {
+    if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
+        // A queued click must never reactivate a paused or transitioning manager.
         return;
-    };
-    with_app(|a| {
-        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
-            return;
+    }
+    let tag: isize = unsafe { msg_send![sender, tag] };
+    match action {
+        tab_delivery::Action::Select => {
+            if let Ok(id) = u32::try_from(tag)
+                && a.tile_manager.activate_tab(id)
+            {
+                a.hover_resume = Instant::now() + Duration::from_millis(600);
+                a.update_tile_timer();
+                a.settle_focus();
+                a.show_tip(4, crate::i18n::tr("Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana."));
+            }
         }
-        if a.tile_manager.close_tab(id) {
-            a.hover_resume = Instant::now() + Duration::from_millis(600);
-            a.update_tile_timer();
+        tab_delivery::Action::Close => {
+            let Some(id) = tag
+                .checked_add(2)
+                .and_then(isize::checked_neg)
+                .and_then(|id| u32::try_from(id).ok())
+            else {
+                return;
+            };
+            if a.tile_manager.close_tab(id) {
+                a.hover_resume = Instant::now() + Duration::from_millis(600);
+                a.update_tile_timer();
+            }
+            if let Some(error) = a.tile_manager.last_error.take() {
+                a.show_notice(&error);
+            }
+            // No settle_focus here: the application's save dialog owns focus.
         }
-        if let Some(error) = a.tile_manager.last_error.take() {
-            a.show_notice(&error);
-        }
-        // No settle_focus here: the application's save dialog owns focus.
-    });
+    }
 }
 /// Native pan coordinates choose reordering in the strip or detachment outside.
 extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
@@ -5420,6 +5425,7 @@ unsafe fn controller() -> Retained<AnyObject> {
             (sel!(tileMouseEvent:), mouse_delivery::drain),
             (sel!(selectTileTab:), select_tile_tab),
             (sel!(closeTileTab:), close_tile_tab),
+            (sel!(tileTabClick:), tab_delivery::drain),
             (sel!(dragTileTab:), drag_tile_tab),
             (sel!(layoutChoice:), layout_choice),
             (sel!(screensChanged:), screens_changed),

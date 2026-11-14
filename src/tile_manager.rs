@@ -24,6 +24,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "tab_close_diagnostics.rs"]
+pub mod close_diagnostics;
 #[path = "tab_diagnostics.rs"]
 pub mod diagnostics;
 
@@ -4703,21 +4705,7 @@ impl Manager {
                 uncertain.insert(*id);
             }
         }
-        let gone: Vec<_> = self
-            .windows
-            .iter()
-            .filter(|(id, w)| {
-                all_ids
-                    .as_ref()
-                    .is_some_and(|ids| !ids.contains(&(w.pid, **id)))
-                    && ws::bounds(**id).is_none()
-                    && ws::ordered_in(**id) != Some(true)
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        for id in gone {
-            self.forget_window(id);
-        }
+        self.retire_closed_windows(&visible_ids, all_ids.as_ref());
         for id in &uncertain {
             // Retaining a leaf preserves its layout, not permission to continue
             // writing through an AX/native-visibility uncertainty.
@@ -4902,6 +4890,45 @@ impl Manager {
             .or_else(|| stable_overlap_workspace(native, frame, areas, previous));
         retained_workspace(native, frame, areas, retained)
     }
+    /// A closed NSWindow can remain retained in both CGWindowList and SkyLight.
+    /// Only probe withdrawn windows: hidden/minimized apps keep valid AX
+    /// elements, and windows on another Space remain ordered in.
+    fn retire_closed_windows(
+        &mut self,
+        visible: &HashSet<u32>,
+        identities: Option<&HashSet<(i32, u32)>>,
+    ) {
+        let Some(identities) = identities else {
+            return;
+        };
+        let mut applications = HashMap::new();
+        let gone: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|(id, w)| {
+                if visible.contains(id) {
+                    return false;
+                }
+                let ordered = ws::ordered_in(**id);
+                (ordered == Some(false)
+                    && !self.inactive_tabs.contains(id)
+                    && ax::destroyed(w.element.0)
+                    && applications
+                        .entry(w.pid)
+                        .or_insert_with(|| ax::application_windows(w.pid))
+                        .as_ref()
+                        .is_some_and(|windows| !windows.contains_key(id)))
+                    || (!identities.contains(&(w.pid, **id))
+                        && ordered != Some(true)
+                        && ws::bounds(**id).is_none())
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in gone {
+            self.forget_window(id);
+        }
+    }
+
     fn forget_window(&mut self, id: u32) {
         if self.tab_drag.as_ref().is_some_and(|drag| {
             drag.baseline.order.contains(&id) || drag.baseline.tab_role(id).is_some()

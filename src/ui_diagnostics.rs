@@ -236,6 +236,44 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             println!(
                 "Mouse delivery: native press/release retained through nested AppKit delivery and drained in order."
             );
+            APP.with(|cell| {
+                let mut borrowed = cell.borrow_mut();
+                borrowed.as_mut().unwrap().sleeping = false;
+                crate::desktop_mode::update(crate::desktop_mode::Mode::Desktop);
+                pump(0.025);
+            });
+            pump(0.035);
+            if APP.with(|cell| cell.borrow().as_ref().unwrap().presentation_timer.is_none()) {
+                return Err(
+                    "La entrada a Mostrar escritorio se perdió durante reentrada AX.".into(),
+                );
+            }
+            APP.with(|cell| {
+                let mut borrowed = cell.borrow_mut();
+                // Never resume a real tiler/hover monitor in this isolated UI.
+                borrowed.as_mut().unwrap().sleeping = true;
+                crate::desktop_mode::update(crate::desktop_mode::Mode::Normal);
+                pump(0.025);
+            });
+            pump(0.035);
+            if APP.with(|cell| cell.borrow().as_ref().unwrap().presentation_timer.is_some()) {
+                return Err("La salida de Mostrar escritorio dejó un reloj activo.".into());
+            }
+            APP.with(|cell| {
+                let _borrowed = cell.borrow_mut();
+                crate::desktop_mode::update(crate::desktop_mode::Mode::Desktop);
+                pump(0.025);
+                crate::desktop_mode::update(crate::desktop_mode::Mode::Normal);
+            });
+            pump(0.035);
+            if APP.with(|cell| cell.borrow().as_ref().unwrap().presentation_timer.is_some()) {
+                return Err(
+                    "Una transición de presentación obsoleta se entregó tras la salida.".into(),
+                );
+            }
+            println!(
+                "Presentation delivery: entry/exit survive AX reentry; stale transitions do not restart the presentation clock."
+            );
             let started = Instant::now();
             for _ in 0..16 {
                 APP.with(|cell| {
@@ -321,9 +359,97 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             Ok(())
         })();
         let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        crate::desktop_mode::update(crate::desktop_mode::Mode::Normal);
         mouse_delivery::clear(target_ptr);
         if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
             app.hide_flash();
+            if let Some(timer) = app.presentation_timer.take() {
+                let _: () = msg_send![&timer, invalidate];
+            }
+            let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+            let _: () = msg_send![bar, removeStatusItem:&*app.status];
+        }
+        let _: () = msg_send![&*defaults, removePersistentDomainForName:&*suite];
+        result
+    }
+}
+
+/// Exercise the production × callback against a disposable foreign window.
+pub(crate) fn check_reentrant_close(
+    manager: &mut crate::tile_manager::Manager,
+    id: u32,
+) -> Result<(), String> {
+    if APP.with(|cell| cell.borrow().is_some()) {
+        return Err("El diagnóstico de cierre requiere una instancia UI aislada.".into());
+    }
+    unsafe {
+        let suite = NSString::from_str(&format!("amspace.ui.close.{}", std::process::id()));
+        let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![defaults, initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        let _: () = msg_send![&defaults, setBool:true, forKey:ns_string!("tile.enabled")];
+        let target = controller();
+        let target_ptr = Retained::as_ptr(&target) as Obj;
+        let mut app = App::build(target.clone(), defaults.clone());
+        app.border_enabled = false;
+        app.tile_manager = std::mem::take(manager);
+        APP.with(|cell| *cell.borrow_mut() = Some(app));
+        let panel = window(rect(100., 200., 160., 50.), 128);
+        let _: () = msg_send![&*panel, setLevel:3isize];
+        let root: Obj = msg_send![&*panel, contentView];
+        let close = button(
+            root,
+            rect(60., 8., 40., 32.),
+            "×",
+            target_ptr,
+            -(id as isize) - 2,
+        );
+        let _: () = msg_send![close, setAction:sel!(closeTileTab:)];
+        let _: () = msg_send![&*panel, orderFrontRegardless];
+        pump(0.05);
+        let result = (|| -> Result<(), String> {
+            // A destructive action must expire while AX keeps the UI busy.
+            APP.with(|cell| {
+                let _borrowed = cell.borrow_mut();
+                let _: bool = msg_send![close, sendAction:sel!(closeTileTab:), to:target_ptr];
+                pump(0.38);
+            });
+            if tab_delivery::pending_count() != 0 || ws::ordered_in(id) != Some(true) {
+                return Err("Un cierre caducado se entregó o quedó pendiente.".into());
+            }
+            // Pausing after the click, before delivery, must keep the window open.
+            APP.with(|cell| {
+                let mut borrowed = cell.borrow_mut();
+                let _: bool = msg_send![close, sendAction:sel!(closeTileTab:), to:target_ptr];
+                borrowed.as_mut().unwrap().tiling_paused = true;
+            });
+            pump(0.035);
+            if tab_delivery::pending_count() != 0 || ws::ordered_in(id) != Some(true) {
+                return Err("Un cierre encolado ignoró la pausa de Mosaico.".into());
+            }
+            APP.with(|cell| -> Result<(), String> {
+                let mut borrowed = cell.borrow_mut();
+                borrowed.as_mut().unwrap().tiling_paused = false;
+                let _: bool = msg_send![close, sendAction:sel!(closeTileTab:), to:target_ptr];
+                pump(0.025);
+                if tab_delivery::pending_count() != 1 || ws::ordered_in(id) != Some(true) {
+                    return Err(
+                        "El clic de cierre se perdió o ejecutó durante reentrada AX.".into(),
+                    );
+                }
+                Ok(())
+            })?;
+            pump(0.05);
+            if tab_delivery::pending_count() != 0 {
+                return Err("El clic de cierre no se entregó al liberar la UI.".into());
+            }
+            Ok(())
+        })();
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        tab_delivery::clear(target_ptr);
+        let _: () = msg_send![&*panel, orderOut:ptr::null::<AnyObject>()];
+        if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
+            *manager = std::mem::take(&mut app.tile_manager);
             let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
             let _: () = msg_send![bar, removeStatusItem:&*app.status];
         }

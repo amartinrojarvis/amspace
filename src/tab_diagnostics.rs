@@ -869,7 +869,7 @@ unsafe fn render_tab_palette(target: &AnyObject) -> Result<(), String> {
     }
 }
 
-struct Fixture(Child);
+pub(super) struct Fixture(pub(super) Child);
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -886,7 +886,7 @@ impl Drop for Panels {
         });
     }
 }
-fn pump(seconds: f64) {
+pub(super) fn pump(seconds: f64) {
     let end = Instant::now() + Duration::from_secs_f64(seconds);
     while Instant::now() < end {
         autoreleasepool(|_| unsafe {
@@ -1234,7 +1234,10 @@ pub fn check() -> Result<(), String> {
     STATE.with(|state| -> Result<(), String> {
         let mut state = state.borrow_mut();
         let manager = state.as_mut().unwrap();
-        manager.forget_window(closing);
+        manager.retire_closed_windows(&HashSet::new(), ws::all_window_ids().as_ref());
+        if manager.windows.contains_key(&closing) {
+            return Err("La reconciliación conservó una pestaña nativa ya cerrada".into());
+        }
         let desktop = manager.desktops[&space].clone();
         let frames = desktop.window_frames(area, 10.);
         if !frames
