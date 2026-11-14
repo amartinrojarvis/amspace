@@ -88,6 +88,43 @@ pub(crate) fn check_localizations() -> Result<(), String> {
                 });
                 pump(0.08);
                 capture_window(&panel, &format!(".cache/locale-{code}-settings-{page}.png"))?;
+                if page == 2 {
+                    let content: Obj = msg_send![&panel, contentView];
+                    for (tag, layout) in [
+                        (77isize, crate::tiling::Layout::CenteredWide),
+                        (78isize, crate::tiling::Layout::ThreeBands),
+                    ] {
+                        let choice: Obj = msg_send![content, viewWithTag:tag];
+                        if choice.is_null() {
+                            return Err("Missing orientation default selector.".into());
+                        }
+                        let _: () = msg_send![choice, selectItemAtIndex:layout.selection_index()];
+                        let delivered: bool =
+                            msg_send![choice, sendAction:sel!(change:), to:&*target];
+                        if !delivered
+                            || crate::tile_manager::default_layout(
+                                Retained::as_ptr(&defaults) as Obj,
+                                tag == 78,
+                            ) != layout
+                            || APP.with(|cell| cell.borrow().as_ref().unwrap().tile_timer.is_some())
+                        {
+                            return Err("Orientation defaults were not saved independently or started tiling.".into());
+                        }
+                    }
+                    pump(0.08);
+                    capture_window(
+                        &panel,
+                        &format!(".cache/locale-{code}-settings-defaults.png"),
+                    )?;
+                    let choice: Obj = msg_send![content, viewWithTag:77isize];
+                    let document: Obj = msg_send![choice, superview];
+                    let _: () = msg_send![document, scrollPoint:NSPoint::new(0., 0.)];
+                    pump(0.08);
+                    capture_window(
+                        &panel,
+                        &format!(".cache/locale-{code}-settings-tiling-bottom.png"),
+                    )?;
+                }
             }
             let content: Obj = msg_send![&panel, contentView];
             let selector: Obj = msg_send![content, viewWithTag:120isize];

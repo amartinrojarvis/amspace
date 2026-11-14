@@ -62,6 +62,7 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | PID + ID de ventana | Identidad de proceso/ventana; no es portable entre sesiones |
 | Número de escritorio mostrado | Posición de los escritorios normales en Mission Control; puede cambiar |
 | `tile.layout.<SpaceID>.<DisplayID>` | Plantilla por contexto; tiene prioridad sobre la clave histórica `tile.layout.<SpaceID>` |
+| `tile.default.landscape`, `tile.default.portrait` | Plantillas de reserva según el área útil de destino; ausentes/ID inválido → Espiral. Solo se usan si no existe ninguna clave `tile.layout` del contexto ni histórica. Guardan IDs estables 1–8, no índices de menú; un área cuadrada usa apaisada |
 | `tile.templates.v1` | Diccionario UUID → nombre/distribución con huecos ordinales; biblioteca global, aplicación a una pantalla |
 | `tile.off.<SpaceID>` | Exclusión de mosaico por Space |
 | `tile.grid.*` | Activación y dimensiones de la rejilla virtual |

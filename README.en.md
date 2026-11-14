@@ -108,6 +108,8 @@ The border follows the window focused by AMSpace and respects its position in th
 
 The settings support keyboard navigation and Accessibility labels. With the app active: `⌘,` opens settings, `⌘W` closes its window and `⌘Q` quits. Closing the settings leaves the indicator working.
 
+In **Settings → Tiling → Default layouts**, choose one of the eight built-in layouts for landscape displays and another for portrait displays. Each display uses the orientation of its usable area, including when transferring a window to another desktop or monitor. Both initially use Spiral. Explicit desktop/display choices, including saved distributions you have applied, take precedence and are not replaced when these defaults change. Desktops without their own layout adopt changes through the existing reconciliation; changing defaults does not move windows while tiling is disabled or paused.
+
 The mosaic placements are interpolated with a smooth curve (160 ms, one write per changed attribute in each frame). You can disable that interpolation with **Animate placements** in Tiling: each window moves to its destination with a single AX write and the timer returns to the repair rhythm. When re-selecting the already active desktop there is no native slide, so AMSpace draws a soft full-screen red frame as confirmation; it turns off with **Border on re-selecting the desktop** in Menu bar. Both switches save their value in `tile.animate` and `flash`.
 
 ### Tabs and helpers

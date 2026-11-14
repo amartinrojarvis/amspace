@@ -122,12 +122,28 @@ pub fn pref_or(defaults: Obj, key: &str, fallback: isize) -> isize {
 fn layout_key(space: Workspace) -> String {
     format!("tile.layout.{}.{}", space.1, space.0)
 }
-fn layout_pref(defaults: Obj, space: Workspace) -> Layout {
-    Layout::from_index(pref_or(
-        defaults,
-        &layout_key(space),
-        pref(defaults, &format!("tile.layout.{}", space.1)),
-    ))
+pub(crate) fn default_layout_key(portrait: bool) -> &'static str {
+    if portrait {
+        "tile.default.portrait"
+    } else {
+        "tile.default.landscape"
+    }
+}
+pub(crate) fn default_layout(defaults: Obj, portrait: bool) -> Layout {
+    Layout::from_index(pref(defaults, default_layout_key(portrait)))
+}
+fn layout_pref(defaults: Obj, space: Workspace, area: NSRect) -> Layout {
+    let local = layout_key(space);
+    let exists: Obj = unsafe { msg_send![defaults,objectForKey:&*NSString::from_str(&local)] };
+    if !exists.is_null() {
+        return Layout::from_index(pref(defaults, &local));
+    }
+    let legacy = format!("tile.layout.{}", space.1);
+    let exists: Obj = unsafe { msg_send![defaults,objectForKey:&*NSString::from_str(&legacy)] };
+    if !exists.is_null() {
+        return Layout::from_index(pref(defaults, &legacy));
+    }
+    default_layout(defaults, area.size.height > area.size.width)
 }
 pub(crate) fn pointer_display() -> Option<u32> {
     point_display(pointer()?)
@@ -2704,9 +2720,10 @@ impl Manager {
         let tiled =
             tracked && pref(defaults, &format!("tile.off.{}", destination.1)) == 0 && !floating;
         let desktop = if tiled {
+            let layout = layout_pref(defaults, destination, destination_area);
             let mut base = self.desktops.get(&destination).cloned().unwrap_or_else(|| {
                 Desktop::configured(
-                    layout_pref(defaults, destination),
+                    layout,
                     if pref(defaults, "tile.grid.enabled") != 0 {
                         Some((
                             grid_count(defaults, "tile.grid.columns", 120, 240),
@@ -2717,6 +2734,10 @@ impl Manager {
                     },
                 )
             });
+            // A hidden destination may predate a default or orientation change.
+            if base.layout != layout {
+                base.reset_template(layout, destination_area);
+            }
             let snapshot = ws::transition_windows().ok_or(crate::i18n::tr(
                 "No se puede comprobar el escritorio de destino.",
             ))?;
@@ -3417,7 +3438,12 @@ impl Manager {
     }
     pub fn current_layout(&self, defaults: Obj) -> Layout {
         self.current_workspace()
-            .map(|key| layout_pref(defaults, key))
+            .and_then(|key| {
+                self.active_areas
+                    .iter()
+                    .find(|(candidate, _)| *candidate == key)
+                    .map(|(_, area)| layout_pref(defaults, key, *area))
+            })
             .unwrap_or_default()
     }
     pub fn picker_context(&self) -> Option<PickerContext> {
@@ -3896,10 +3922,10 @@ impl Manager {
         }
         let active = self.active_areas.clone();
         let group_limit = max_group_tabs(defaults);
-        for (key, _) in &active {
+        for (key, area) in &active {
             let desktop = self.desktops.entry(*key).or_insert_with(|| {
                 Desktop::configured(
-                    layout_pref(defaults, *key),
+                    layout_pref(defaults, *key, *area),
                     if pref(defaults, "tile.grid.enabled") != 0 {
                         Some((
                             grid_count(defaults, "tile.grid.columns", 120, 240),
@@ -4776,7 +4802,7 @@ impl Manager {
             } else {
                 None
             };
-            let layout = layout_pref(defaults, space);
+            let layout = layout_pref(defaults, space, r);
             if d.layout != layout {
                 d.layout = layout;
                 self.dirty = true;
@@ -7076,7 +7102,7 @@ mod tests {
             assert_eq!(manager.applied.len(), 1);
             assert_eq!(manager.verifications.len(), 1);
             assert_eq!(pref(raw, "tile.grid.enabled"), 0);
-            assert_eq!(layout_pref(raw, key), Layout::Spiral);
+            assert_eq!(layout_pref(raw, key, portrait), Layout::Spiral);
             for area in [
                 rect(0., 0., 0., 1000.),
                 rect(f64::NAN, 0., 1000., 1000.),
@@ -7123,14 +7149,14 @@ mod tests {
                 } else {
                     assert!(manager.desktops[&key] == current);
                     assert_eq!(pref(raw, "tile.grid.enabled"), 0);
-                    assert_eq!(layout_pref(raw, key), Layout::Spiral);
+                    assert_eq!(layout_pref(raw, key, portrait), Layout::Spiral);
                 }
             }
             manager.desktops.insert(key, current);
             assert!(manager.restore_distribution_at(raw, key, &text, landscape));
             assert_eq!(manager.desktops[&key].frames(landscape, 10.).len(), 2);
             assert_eq!(pref(raw, "tile.grid.enabled"), 1);
-            assert_eq!(layout_pref(raw, key), Layout::Grid);
+            assert_eq!(layout_pref(raw, key, portrait), Layout::Grid);
             assert!(manager.verifications.is_empty());
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
         });
@@ -8828,14 +8854,61 @@ mod tests {
             let defaults: Retained<AnyObject> = msg_send![defaults,initWithSuiteName:&*suite];
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
             let raw = Retained::as_ptr(&defaults) as Obj;
+            let landscape = rect(0., 30., 1600., 900.);
+            let portrait = rect(-900., -400., 900., 1600.);
+            save(raw, default_layout_key(false), Layout::Grid.index());
+            save(
+                raw,
+                default_layout_key(true),
+                Layout::VerticalMaster.index(),
+            );
+            assert_eq!(layout_pref(raw, (1, 7), landscape), Layout::Grid);
+            assert_eq!(layout_pref(raw, (2, 7), portrait), Layout::VerticalMaster);
             save(raw, "tile.layout.7", 1);
-            assert_eq!(layout_pref(raw, (1, 7)), Layout::Spiral);
-            assert_eq!(layout_pref(raw, (2, 7)), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (1, 7), landscape), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (2, 7), portrait), Layout::Spiral);
             save(raw, &layout_key((1, 7)), 4);
-            assert_eq!(layout_pref(raw, (1, 7)), Layout::ThreeBands);
-            assert_eq!(layout_pref(raw, (2, 7)), Layout::Spiral);
-            assert_eq!(layout_pref(raw, (1, 8)), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (1, 7), landscape), Layout::ThreeBands);
+            assert_eq!(layout_pref(raw, (2, 7), portrait), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (1, 8), landscape), Layout::Grid);
+            assert_eq!(layout_pref(raw, (2, 8), portrait), Layout::VerticalMaster);
+            // An explicit retired id still migrates to Spiral, not to the default.
+            save(raw, &layout_key((2, 8)), 0);
+            assert_eq!(layout_pref(raw, (2, 8), portrait), Layout::Spiral);
             let _: () = msg_send![&defaults,removePersistentDomainForName:&*suite];
+        });
+    }
+
+    #[test]
+    fn orientation_defaults_follow_the_destination_area_and_preserve_stable_ids() {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let suite =
+                NSString::from_str(&format!("amspace.tests.orientation.{}", std::process::id()));
+            let allocated: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+            let defaults: Retained<AnyObject> = msg_send![allocated, initWithSuiteName:&*suite];
+            let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+            let raw = Retained::as_ptr(&defaults) as Obj;
+            let landscape = rect(10., 30., 1600., 900.);
+            let portrait = rect(-900., -400., 900., 1600.);
+            let square = rect(0., 0., 1000., 1000.);
+            for area in [landscape, portrait, square] {
+                assert_eq!(layout_pref(raw, (1, 7), area), Layout::Spiral);
+            }
+            for (index, horizontal) in Layout::ALL.into_iter().enumerate() {
+                let vertical = Layout::ALL[(index + 1) % Layout::ALL.len()];
+                save(raw, default_layout_key(false), horizontal.index());
+                save(raw, default_layout_key(true), vertical.index());
+                // Display identity, Space identity and origin are not orientation.
+                assert_eq!(layout_pref(raw, (1, 7), landscape), horizontal);
+                assert_eq!(layout_pref(raw, (2, 7), portrait), vertical);
+                assert_eq!(layout_pref(raw, (1, 7), portrait), vertical);
+                assert_eq!(layout_pref(raw, (2, 8), landscape), horizontal);
+                assert_eq!(layout_pref(raw, (1, 7), square), horizontal);
+            }
+            save(raw, default_layout_key(true), 999);
+            assert_eq!(layout_pref(raw, (2, 7), portrait), Layout::Spiral);
+            assert_eq!(layout_pref(raw, (1, 7), landscape), Layout::VerticalMaster);
+            let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
         });
     }
 

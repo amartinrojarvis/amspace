@@ -81,6 +81,12 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         // Tiling page.
         "Activar mosaico" => "Enable tiling",
         "Mosaico en este escritorio" => "Tiling on this desktop",
+        "Distribuciones predeterminadas" => "Default layouts",
+        "Pantalla apaisada" => "Landscape display",
+        "Pantalla vertical" => "Portrait display",
+        "Se usan si el escritorio no tiene una plantilla propia." => {
+            "Used when the desktop has no layout of its own."
+        }
         "Selecciona un escritorio" => "Select a desktop",
         "Configura los atajos en la sección Atajos." => {
             "Configure shortcuts in the Shortcuts section."

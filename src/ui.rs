@@ -476,16 +476,18 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
         }
     }
 }
+const SETTINGS_PAGE_HEIGHT: f64 = 690.;
+
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = 690. + rows.saturating_sub(2) as f64 * 108.;
+    let height = SETTINGS_PAGE_HEIGHT + 152. + rows.saturating_sub(2) as f64 * 108.;
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
             rect(
                 8. + (i % columns) as f64 * (card_width + 16.),
-                height - 217. - (i / columns) as f64 * 108.,
+                height - 369. - (i / columns) as f64 * 108.,
                 card_width,
                 90.,
             )
@@ -1523,8 +1525,7 @@ impl App {
             };
             let width = (visible.size.width - 48.).clamp(700., 960.);
             let content_width = width - 268.;
-            let height = (settings_tile_geometry(content_width.max(560.)).0 + 156.)
-                .min(visible.size.height - 52.);
+            let height = (SETTINGS_PAGE_HEIGHT + 156.).min(visible.size.height - 52.);
             let tab_height = height - 156.;
             let w = window(rect(0., 0., width, height), 1 | 2 | 4 | 32768);
             let _: () =
@@ -1580,9 +1581,8 @@ impl App {
             let _: () = msg_send![&tabs, setTabViewType:6usize];
             for i in 0..5 {
                 let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
-                // Keep all Mosaic controls visible, including on smaller displays.
-                // Matching frame and bounds aspect ratios scales the whole page uniformly.
-                let tile_height = settings_tile_geometry(content_width.max(560.)).0;
+                // Keep a stable readable scale; longer pages scroll natively.
+                let tile_height = SETTINGS_PAGE_HEIGHT;
                 let scale = (tab_height / tile_height).min(content_width / 560.).min(1.);
                 let page_width = if i == 2 || i == 3 {
                     content_width / scale
@@ -2396,8 +2396,15 @@ impl App {
         unsafe {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             let bounds: NSRect = msg_send![root, bounds];
-            let width = bounds.size.width;
+            let scroll = alloc_view(class!(NSScrollView), bounds);
+            let _: () = msg_send![&scroll, setHasVerticalScroller:true];
+            let _: () = msg_send![&scroll, setAutohidesScrollers:true];
+            let _: () = msg_send![&scroll, setDrawsBackground:false];
+            let _: () = msg_send![root, addSubview:&*scroll];
+            let width = bounds.size.width - 16.;
             let (height, cards) = settings_tile_geometry(width);
+            let document = alloc_view(class!(NSView), rect(0., 0., width, height));
+            let root = Retained::as_ptr(&document) as Obj;
             card(root, rect(0., height - 64., width, 64.));
             label(
                 root,
@@ -2416,9 +2423,63 @@ impl App {
                 40,
                 crate::tile_manager::pref(defaults, "tile.enabled") != 0,
             );
+            card(root, rect(0., height - 218., width, 140.));
+            label(
+                root,
+                rect(18., height - 113., width - 36., 24.),
+                crate::i18n::tr("Distribuciones predeterminadas"),
+                14.,
+                0.3,
+                false,
+            );
+            for (portrait, y, tag, title, area) in [
+                (
+                    false,
+                    height - 149.,
+                    77isize,
+                    "Pantalla apaisada",
+                    rect(0., 0., 1600., 900.),
+                ),
+                (
+                    true,
+                    height - 183.,
+                    78isize,
+                    "Pantalla vertical",
+                    rect(0., 0., 900., 1600.),
+                ),
+            ] {
+                label(
+                    root,
+                    rect(18., y, 170., 22.),
+                    crate::i18n::tr(title),
+                    13.,
+                    0.,
+                    false,
+                );
+                let names = crate::tiling::Layout::ALL.map(|layout| layout.screen_name(area));
+                let choice = popup(
+                    root,
+                    rect(196., y - 2., width - 214., 26.),
+                    &names,
+                    target,
+                    tag,
+                );
+                let selected =
+                    crate::tile_manager::default_layout(defaults, portrait).selection_index();
+                let _: () = msg_send![choice, selectItemAtIndex:selected];
+                let _: () = msg_send![choice, setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr(title))];
+            }
+            label(
+                root,
+                rect(18., height - 212., width - 36., 20.),
+                crate::i18n::tr("Se usan si el escritorio no tiene una plantilla propia."),
+                11.,
+                0.,
+                true,
+            );
             let title = label(
                 root,
-                rect(18., height - 104., width - 90., 24.),
+                rect(18., height - 256., width - 90., 24.),
                 "",
                 14.,
                 0.3,
@@ -2427,7 +2488,7 @@ impl App {
             let enabled = toggle(
                 root,
                 width - 58.,
-                height - 104.,
+                height - 256.,
                 crate::i18n::tr("Mosaico en este escritorio"),
                 target,
                 41,
@@ -2616,6 +2677,11 @@ impl App {
                 46,
             );
             self.tile_controls = vec![title, enabled, hint];
+            let _: () = msg_send![&scroll, setDocumentView:&*document];
+            let clip: Obj = msg_send![&scroll, contentView];
+            let clip_bounds: NSRect = msg_send![clip, bounds];
+            let _: () = msg_send![clip, scrollToPoint:NSPoint::new(0., (height - clip_bounds.size.height).max(0.))];
+            let _: () = msg_send![&scroll, reflectScrolledClipView:clip];
             self.refresh_tile_controls();
         }
     }
@@ -4047,6 +4113,21 @@ impl App {
                         tag - 70,
                     );
                     self.apply_bar_background();
+                }
+                77 | 78 => {
+                    let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                    let selected: isize = msg_send![sender, indexOfSelectedItem];
+                    let layout = crate::tiling::Layout::from_selection(selected);
+                    crate::tile_manager::save(
+                        defaults,
+                        crate::tile_manager::default_layout_key(tag == 78),
+                        layout.index(),
+                    );
+                    // Discard any gesture/old destination before the existing
+                    // reconciliation applies defaults to inheriting workspaces.
+                    self.tile_manager.cancel_drag();
+                    self.tile_manager.invalidate();
+                    self.refresh_tile_controls();
                 }
                 80..=87 => {
                     let defaults = Retained::as_ptr(&self.defaults) as Obj;

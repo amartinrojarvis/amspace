@@ -1,20 +1,20 @@
-AMSpace 0.9.21 — cierre fiable de pestañas y transiciones más robustas.
+AMSpace 0.9.22 — distribuciones predeterminadas para pantallas apaisadas y verticales.
 
-- Corrige pestañas fantasma tras cerrar ventanas cuyo ID y geometría macOS seguía conservando. La retirada exige confirmación nativa y AX; minimizar, ocultar o vetar el cierre no elimina miembros.
-- Los clics de selección y cierre sobreviven a reentradas de Accesibilidad. Las acciones caducadas, pausadas o pertenecientes a controles retirados no se ejecutan después.
-- Conserva las notificaciones de «Mostrar escritorio» durante reentrada y descarta transiciones obsoletas.
-- Evita una división por cero al saturar determinados layouts con muchas ventanas. Sin nuevos temporizadores permanentes ni dependencias.
-- Los enlaces de instalación de las guías apuntan siempre a la última versión publicada.
+- Ajustes → Mosaico incorpora dos selectores independientes, con las ocho plantillas disponibles: uno para pantallas apaisadas y otro para verticales.
+- La orientación del área útil de destino determina la plantilla de reserva, también al trasladar ventanas a otro escritorio o monitor. Ambas usan Espiral inicialmente.
+- Las plantillas elegidas por escritorio/pantalla y las distribuciones guardadas aplicadas mantienen su prioridad; cambiar los valores predeterminados no las sustituye.
+- Desplazamiento nativo en la página de Mosaico para conservar controles legibles. Interfaz y documentación en español e inglés.
+- Sin nuevos temporizadores permanentes, consultas de pantalla ni dependencias. Cambiar estos ajustes no inicia Mosaico si está desactivado.
 
 English
 
-- Fixes ghost tabs after closing windows whose IDs and bounds remain retained by macOS. Removal requires native and Accessibility confirmation; minimizing, hiding or vetoing a close preserves group members.
-- Tab selection and close clicks survive Accessibility reentry. Expired, paused or detached-control actions cannot execute later.
-- Preserves Show Desktop notifications during reentry and discards obsolete transitions.
-- Prevents division by zero when many windows exhaust a layout's available space. No new permanent timers or dependencies.
-- Installation guides now link to the latest published version.
+- Settings → Tiling adds independent default-layout selectors for landscape and portrait displays, with all eight built-in layouts available.
+- The destination's usable area determines the fallback layout, including window transfers to another desktop or monitor. Both initially use Spiral.
+- Explicit desktop/display choices and applied saved distributions retain priority; changing defaults does not replace them.
+- Native scrolling keeps the Tiling page controls readable. Interface and documentation in Spanish and English.
+- No new permanent timers, display queries or dependencies. Changing these settings does not start disabled tiling.
 
-Verificación / Verification: 274 pruebas correctas / tests passed, ocho ignoradas / eight ignored; cierre AX y controles AppKit con ventanas desechables / AX closing and AppKit controls using disposable windows; compilación universal / universal build. No acredita todas las aplicaciones, carga prolongada ni ejecución física en Intel / Does not establish coverage of every app, prolonged workloads or execution on Intel hardware.
+Verificación / Verification: 275 pruebas correctas / tests passed, ocho ignoradas / eight ignored; controles AppKit propios en ambos idiomas / own AppKit controls in both languages; compilación universal / universal build. Rotación física, traslados reales entre monitores y ejecución física en Intel no comprobados / Physical rotation, real cross-display transfers and execution on Intel hardware not verified.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md

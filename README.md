@@ -108,6 +108,8 @@ El borde sigue la ventana enfocada por AMSpace y respeta su posición en la pila
 
 Los ajustes admiten navegación con teclado y etiquetas de Accesibilidad. Con la app activa: `⌘,` abre ajustes, `⌘W` cierra su ventana y `⌘Q` sale. Cerrar los ajustes deja el indicador en funcionamiento.
 
+En **Ajustes → Mosaico → Distribuciones predeterminadas** puedes elegir una de las ocho plantillas para las pantallas apaisadas y otra para las verticales. Se utiliza la orientación del área útil de cada pantalla, también al trasladar una ventana a otro escritorio o monitor. Sin configurar, ambas usan Espiral. Las plantillas elegidas expresamente por escritorio/pantalla, incluidas las distribuciones guardadas que hayas aplicado, tienen prioridad y no se sustituyen al cambiar estos valores. Los cambios se aplican a los escritorios sin plantilla propia mediante la reconciliación existente; con Mosaico desactivado o pausado, no mueven ventanas.
+
 Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escritura por atributo cambiado en cada fotograma). Puedes desactivar esa interpolación con **Animar colocaciones** en Mosaico: cada ventana pasa a su destino con una única escritura AX y el temporizador vuelve al ritmo de reparación. Al reelegir el escritorio ya activo no hay deslizamiento nativo, así que AMSpace dibuja un marco rojo suave a pantalla completa como confirmación; se apaga con **Borde al reelegir el escritorio** en Barra de menús. Ambos interruptores guardan su valor en `tile.animate` y `flash`.
 
 ### Pestañas y ayudas
