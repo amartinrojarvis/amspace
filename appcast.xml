@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.18</title><pubDate>Sat, 14 Nov 2026 09:09:45 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.18 — agitar para alternar flotante y mosaico.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.19</title><pubDate>Sat, 14 Nov 2026 09:57:57 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.19 — zona superior para alternar flotante y mosaico.
 
-- Agita brevemente una ventana mientras la arrastras: un borde blanco confirma el gesto y, al soltar, alterna entre flotante y mosaico. Se puede desactivar en Ajustes → Mosaico.
-- Reutiliza el tamaño flotante cómodo y las animaciones existentes. Si la ventana no cabe de vuelta en el mosaico, conserva su estado flotante y muestra un aviso.
-- Los atajos numéricos de navegación controlan los escritorios de la pantalla principal aunque el foco esté en otra pantalla. El indicador, los clics y los envíos conservan sus contextos respectivos.
-- Corregidas entregas de eventos perdidas durante reentrada, una liberación de objeto CF nulo y el arranque innecesario del temporizador al cambiar ajustes con mosaico desactivado.
-- Menos cálculo redundante al incorporar ventanas a plantillas no personalizadas. El detector de agitación no asigna memoria ni añade un temporizador en reposo.
-- La biblioteca de plantillas mantiene tarjetas legibles mediante desplazamiento nativo, incluso con 64 plantillas guardadas.
+- Arrastra una ventana al recuadro del centro superior de la pantalla: muestra «Hacer flotante» o «Volver al mosaico», se resalta al entrar y confirma únicamente al soltar dentro. Salir cancela esa acción.
+- Sustituye la agitación por un destino explícito, con el mismo fondo oscuro translúcido, bordes redondeados y resaltado de las zonas de apilar/intercambiar.
+- Conserva los tamaños flotantes cómodos y las animaciones existentes. Si la ventana no cabe de vuelta en el mosaico, permanece flotante y muestra un aviso.
+- Desactivable en Ajustes → Mosaico → Zona superior: flotante / mosaico. Respeta la desactivación guardada del gesto anterior.
+- Reutiliza panel y controles, sin nuevos temporizadores en reposo. Fuera del recuadro se conservan los destinos ordinarios de arrastre.
 
-Verificado con 258 pruebas, compilación universal y controles AppKit propios, incluidas 12.000 solicitudes reentrantes. Pendiente comprobar el gesto físico completo con ventanas de otras aplicaciones y hardware Intel; las pruebas del modelo no sustituyen esa validación.
+Verificación y límites: pruebas del modelo, compilación universal y controles AppKit propios. Pendiente validar el arrastre físico completo con ventanas de otras aplicaciones, varias pantallas reales y ejecución en hardware Intel.
 
 Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.18/AMSpace-universal.zip" length="2871641" type="application/octet-stream" sparkle:version="73" sparkle:shortVersionString="0.9.18" sparkle:edSignature="sbXmlOnbvOT95dgQ5kNVZgiwqAnZyKfaF+fIPCoPm4tIQwdteSJ3SVuysuhmWGzpp5S24pqhlnqV84cM4IcwAg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: NudNnkqTiZhnaZsM/Ckt2KWh+uufiPEyeCU2VDGBMDvwaSA5m+o8nf9PAwJopCvH1CtDHLGdTMswTU66TLDjAw==
-length: 2604
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.19/AMSpace-universal.zip" length="2876336" type="application/octet-stream" sparkle:version="74" sparkle:shortVersionString="0.9.19" sparkle:edSignature="B75JClNSpswmiBWiL490hO3WqSi9/PNHcpRdmhJ20ozb158LYWUpRNazufaqBuGv3PcmCUER95zEYC5lxevHAA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: EV9w4FO/zL1Fzi4WnryJiab3cWDSyviRIIqLxkgb+dqlrRnxBBqRETE2PtVoQe4gvIdi/+IeawU3s/Tgzv5tAw==
+length: 2353
 -->
