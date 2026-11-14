@@ -123,7 +123,7 @@ fn render_selection(
             };
             let mut image: Obj = std::ptr::null_mut();
             if choice != 0 {
-                image = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(ICONS[choice].1), accessibilityDescription:&*NSString::from_str(ICONS[choice].0)];
+                image = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(ICONS[choice].1), accessibilityDescription:&*NSString::from_str(crate::i18n::tr(ICONS[choice].0))];
             }
             if image.is_null() {
                 let title = if style == 0 && !active {

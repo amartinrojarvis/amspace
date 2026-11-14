@@ -42,7 +42,9 @@ impl Template {
 fn valid_name(name: &str) -> Result<String, &'static str> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 60 || name.chars().any(char::is_control) {
-        return Err("Escribe un nombre de entre 1 y 60 caracteres.");
+        return Err(crate::i18n::tr(
+            "Escribe un nombre de entre 1 y 60 caracteres.",
+        ));
     }
     Ok(name.to_string())
 }
@@ -102,19 +104,23 @@ pub fn save(defaults: Obj, name: &str, distribution: String) -> Result<String, &
         .iter()
         .any(|item| item.name.to_lowercase() == name.to_lowercase())
     {
-        return Err("Ya existe una plantilla con ese nombre. Elige otro nombre.");
+        return Err(crate::i18n::tr(
+            "Ya existe una plantilla con ese nombre. Elige otro nombre.",
+        ));
     }
     unsafe {
         let library = mutable_library(defaults);
         let count: usize = msg_send![&library, count];
         if count >= LIMIT {
-            return Err("Puedes guardar hasta 64 plantillas. Elimina una antes de añadir otra.");
+            return Err(crate::i18n::tr(
+                "Puedes guardar hasta 64 plantillas. Elimina una antes de añadir otra.",
+            ));
         }
         let uuid: Obj = msg_send![class!(NSUUID), UUID];
         let id: Obj = msg_send![uuid, UUIDString];
-        let id = string(id).ok_or("No se pudo crear la plantilla.")?;
+        let id = string(id).ok_or(crate::i18n::tr("No se pudo crear la plantilla."))?;
         let template = Template::parse(id.clone(), name, distribution)
-            .ok_or("Esta distribución no se puede guardar.")?;
+            .ok_or(crate::i18n::tr("Esta distribución no se puede guardar."))?;
         let value: Retained<AnyObject> = msg_send![class!(NSMutableDictionary), new];
         let _: () = msg_send![&value,setObject:&*NSString::from_str(&template.name),forKey:&*NSString::from_str("name")];
         let _: () = msg_send![&value,setObject:&*NSString::from_str(&template.distribution),forKey:&*NSString::from_str("distribution")];

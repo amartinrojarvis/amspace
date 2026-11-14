@@ -5,9 +5,15 @@
 
 AMSpace shows where you are at a glance: numbers, dots or icons per desktop. The active one stands out and the others appear dimmed. Left-click a number, dot or icon to switch to that desktop. Right-click opens native settings, compact and adapted to the system's light or dark appearance.
 
+## Language
+
+The interface supports **English and Spanish**. It follows the order of your preferred macOS languages, falling back to English when neither is supported. Choose **Settings → General → Language → System / Español / English** to override it. **Reopen AMSpace** to apply a change, including native update dialogs.
+
+The choice affects AMSpace only: it does not change macOS, shortcuts or saved layouts. Window titles, application names and personal layout names keep their original text.
+
 ## Context
 
-A personal project developed by **Alberto Martín** for his own use, using **Astra** and **Qwen 3.8 Flash Next**. The application remains in Spanish; English control names below are descriptive translations. Optimization and minimal resource use are top priorities: it is designed for my laptop and my desktop workstation with two monitors, one landscape and one portrait. That setup guides the design, but does not imply universal compatibility or the best possible performance on every machine. [VALIDATION.md](docs/VALIDATION.md) records measurements, scenarios actually tested, and their limits.
+A personal project developed by **Alberto Martín** for his own use, using **Astra** and **Qwen 3.8 Flash Next**. The application supports Spanish and English. Optimization and minimal resource use are top priorities: it is designed for my laptop and my desktop workstation with two monitors, one landscape and one portrait. That setup guides the design, but does not imply universal compatibility or the best possible performance on every machine. [VALIDATION.md](docs/VALIDATION.md) records measurements, scenarios actually tested, and their limits.
 
 - Instagram: [@amartinro](https://www.instagram.com/amartinro/)
 - X: [@amartinro](https://x.com/amartinro)
@@ -44,7 +50,7 @@ Open the **DMG**, drag AMSpace to **Applications** and read **Léeme primero.rtf
 1. Open AMSpace. It only appears in the menu bar, with no permanent Dock icon.
 2. Right-click a desktop in the bar to open settings.
 3. Press **Accessibility…** and authorize AMSpace in **System Settings → Privacy & Security → Accessibility**. If it does not appear, add it with `+` from Applications.
-4. Return to AMSpace's settings and enable Border, Focus or Mosaic whenever you wish. If macOS asks to restart the app, quit and open it again.
+4. Return to AMSpace's settings and enable Border, Focus or Tiling whenever you wish. If macOS asks to restart the app, quit and open it again.
 5. Enable **Open at login** if you wish. macOS may ask to confirm the login item.
 
 **The desktop indicator works without Accessibility; switching desktops with a click requires that permission.** Screen Recording and Input Monitoring are not needed. Accessibility is used to query windows, receive focus changes, activate windows and send the native switch to the requested desktop.
@@ -84,7 +90,7 @@ To regenerate the icons: `./scripts/make-icon.sh`. To sign with your certificate
 
 Left-click selects the pressed desktop; pressing the current desktop does nothing. Right-click opens settings without switching desktop. The switch is direct, without opening the Mission Control view, and it respects the natural scrolling setting. For a distant destination it walks through the intermediate spaces and confirms each change. The automatic focus and the border are paused during that transition. Shortcuts and system settings are not modified.
 
-Settings are organized into **Windows**, **Menu bar**, **Mosaic**, **Shortcuts** and **General**. In Menu bar choose Icons and configure each desktop with its menu; you can mix symbols and numbers. Choices are saved per desktop ID, not by position, to follow it when reordered. A new desktop gets its own initial choice.
+Settings are organized into **Windows**, **Menu bar**, **Tiling**, **Shortcuts** and **General**. In Menu bar choose Icons and configure each desktop with its menu; you can mix symbols and numbers. Choices are saved per desktop ID, not by position, to follow it when reordered. A new desktop gets its own initial choice.
 
 In Windows, **Focus follows the cursor** moves the keyboard focus; **Bring to front** separately controls the raising. A partially covered window can receive the keyboard when passing over its visible part without moving the windows covering it.
 
@@ -102,13 +108,13 @@ The border follows the window focused by AMSpace and respects its position in th
 
 The settings support keyboard navigation and Accessibility labels. With the app active: `⌘,` opens settings, `⌘W` closes its window and `⌘Q` quits. Closing the settings leaves the indicator working.
 
-The mosaic placements are interpolated with a smooth curve (160 ms, one write per changed attribute in each frame). You can disable that interpolation with **Animate placements** in Mosaic: each window moves to its destination with a single AX write and the timer returns to the repair rhythm. When re-selecting the already active desktop there is no native slide, so AMSpace draws a soft full-screen red frame as confirmation; it turns off with **Border on re-selecting the desktop** in Menu bar. Both switches save their value in `tile.animate` and `flash`.
+The mosaic placements are interpolated with a smooth curve (160 ms, one write per changed attribute in each frame). You can disable that interpolation with **Animate placements** in Tiling: each window moves to its destination with a single AX write and the timer returns to the repair rhythm. When re-selecting the already active desktop there is no native slide, so AMSpace draws a soft full-screen red frame as confirmation; it turns off with **Border on re-selecting the desktop** in Menu bar. Both switches save their value in `tile.animate` and `flash`.
 
 ### Tabs and helpers
 
 - **Right-click or Control-click on a tab:** detach from the group, make floating, move to another group of the same desktop and screen, or close the window. Closing respects the applications' save confirmations; it does not force their termination.
 - **Configurable shortcuts in Settings → Shortcuts:** previous tab, next tab and detach the active one. Initially off; their proposed combinations are `⌃⌥←`, `⌃⌥→` and `⌃⌥D`. Editing rejects internal conflicts without losing the previous configuration.
-- **Pause Mosaic:** button always visible in the Settings sidebar and an action in the tabs menu. It keeps the layout, cancels pending placements and stops its timer and drag monitor. While paused, windows are not reorganized or moved from AMSpace. Border, focus and desktop navigation remain independent. The pause lasts until resuming or closing the app; it does not change the activation preference.
+- **Pause Tiling:** button always visible in the Settings sidebar and an action in the tabs menu. It keeps the layout, cancels pending placements and stops its timer and drag monitor. While paused, windows are not reorganized or moved from AMSpace. Border, focus and desktop navigation remain independent. The pause lasts until resuming or closing the app; it does not change the activation preference.
 - **Disablable initial help:** installation, permissions, privacy and gestures in a native window. It can be reopened from General → Installation and help. The "Show help on first uses" checkbox controls the initial help, not the error notices.
 - **Concrete reasons:** incompatible destinations explain capacity or minimum sizes; rejected operations show a temporary notice even with Settings closed. There is no new polling for the guide, the menus or the notices.
 - **Integrated color:** the active tab uses the color chosen for the border, darkened only when needed to keep the contrast of the title and the close. The icon keeps its original colors on a neutral base. The color is computed when the preference changes and applied to the existing controls, without polling nor additional title queries.
@@ -118,7 +124,7 @@ Grouping keeps the configurable limit of **5 tabs** by default (2–20), the out
 ## Efficiency
 
 - When idle, there is no window polling with automatic focus and tiling disabled. Automatic update checking is optional, initially disabled, and scheduled once a day.
-- Spaces is queried when switching desktop, application or screen and when opening settings. With Mosaic active there is additionally periodic reconciliation to recover missing notifications.
+- Spaces is queried when switching desktop, application or screen and when opening settings. With Tiling active there is additionally periodic reconciliation to recover missing notifications.
 - The border identifies the window by its WindowServer ID. The movement is applied directly from the compositor notification, without redrawing nor waiting for Accessibility. The size updates on the next main-thread turn, with no artificial delay; there is no permanent animation loop.
 - The optional focus uses a tolerant timer every 80 ms. It only performs AX and WindowServer hit-testing after the cursor stops, once per position; it does not continuously scan all windows.
 - "Show desktop", including the active corner, suspends tiling, focus and border. New windows remain floating on return; previous tiles keep their layout per screen/desktop. On recent macOS the WindowManager presentation is detected from the compositor metadata, with an exit check only while active.
@@ -169,7 +175,7 @@ Open **Ajustes → General → Enviar feedback…** (Settings → General → Se
 
 ## Tiling per desktop
 
-Enable it in **Settings → Mosaic** after granting Accessibility. The general switch enables the manager; the second one allows excluding the current desktop. Each desktop keeps its template by ID, even if reordered in Mission Control. Visible screens are managed independently and their usable area (Dock and menu bar) is respected.
+Enable it in **Settings → Tiling** after granting Accessibility. The general switch enables the manager; the second one allows excluding the current desktop. Each desktop keeps its template by ID, even if reordered in Mission Control. Visible screens are managed independently and their usable area (Dock and menu bar) is respected.
 
 - **Spiral (default):** successive divisions in clockwise direction. Old Dwindle preferences become Spiral.
 - **Symmetric grid:** balanced rows and columns; the last row uses the full width.
@@ -189,13 +195,13 @@ From version 0.9.8 the tabs sit in a translucent dark bar of **22 points**, **ab
 
 Click a tab to activate and raise its window. **Drag within the strip to reorder it**: an insertion marker shows the destination without changing the active window or its size. **Drag outside the strip and release to detach it** into an independent mosaic slot, including an inactive tab; the preview shows its destination. Movements below 6 points remain clicks. If application minimum sizes prevent detachment, reordering is still available. Scroll horizontally when titles do not fit; while dragging, moving the pointer near either end scrolls the content. You can still detach the active window by dragging its title bar. Groups and tab order last for the session and are not saved in templates.
 
-Tab strips retain their panels and controls on their group's desktop through the Space-switch pause. macOS handles visibility on each desktop. If native membership cannot be verified, the safe transition-hiding behavior remains; an interactive strip is never deliberately left on another desktop. Pausing Mosaic, Show Desktop and Mission Control still hide strips.
+Tab strips retain their panels and controls on their group's desktop through the Space-switch pause. macOS handles visibility on each desktop. If native membership cannot be verified, the safe transition-hiding behavior remains; an interactive strip is never deliberately left on another desktop. Pausing Tiling, Show Desktop and Mission Control still hide strips.
 
 From **0.9.9**, each tab includes a **×** to request the close of its window, not only to detach it from the group. The application's normal close is used, without forcing the exit nor discarding documents. If the tab was hidden it is selected first, to show any save notice. Canceling that notice keeps the window; the tab is only removed when the close is confirmed. Releasing outside the × cancels the click.
 
-In **Settings → Mosaic → Maximum tabs** the limit per group is configured: **5 by default**, between 2 and 20. Reducing it does not undo existing groups: it prevents adding new members to those already at the limit.
+In **Settings → Tiling → Maximum tabs** the limit per group is configured: **5 by default**, between 2 and 20. Reducing it does not undo existing groups: it prevents adding new members to those already at the limit.
 
-From **0.9.10**, left alignment with 8 points of margin by default, or centered from **Settings → Mosaic → Tab alignment**. The translucent dark background is limited to the strip, with rounded corners, faint border and discreet shadow. The × is shown on the active tab and when hovering the others, without displacing the title nor changing the close area. The tracking uses native events, adding no polling nor continuous animations.
+From **0.9.10**, left alignment with 8 points of margin by default, or centered from **Settings → Tiling → Tab alignment**. The translucent dark background is limited to the strip, with rounded corners, faint border and discreet shadow. The × is shown on the active tab and when hovering the others, without displacing the title nor changing the close area. The tracking uses native events, adding no polling nor continuous animations.
 
 You can drag between visible monitors, even with different orientations, resolutions and scales. Each monitor/desktop pair keeps its own tree; the usable area in macOS points is used and the Dock, menu and margins are respected. Spiral and Main begin stacked on vertical screens. The layouts are also separated when macOS shares a Space between monitors. You can also send the active window to another desktop from Shortcuts, when macOS supports the native bridge. Floating windows stay outside this placement until explicitly returned to tiling.
 
@@ -205,7 +211,7 @@ With many saved templates, the gallery scrolls vertically instead of shrinking c
 
 **⌃⌥T** toggles the active window between floating and tiled. In the settings you can choose modifiers and key among the available combinations. Carbon registers the shortcut so it does not reach the focused application simultaneously; a conflict is indicated in settings. A floating window stays floating when moved or resized: only an explicit action returns it to tiling. Disabling the manager or excluding a desktop restores the saved geometry of its windows.
 
-You can also **drag a window to the card that appears at the top center of the display**: it shows **Make floating** or **Return to tiling** according to its current state. Move the pointer inside; the card highlights and **releasing confirms**. Leaving cancels that action: the ordinary placement/stack/swap behavior remains available elsewhere. It appears only during a real window move, not content selection or resizing. This replaces shaking and can be disabled in **Settings → Mosaic → Top zone: floating / tiling** (Spanish UI: **Zona superior: flotante / mosaico**). It reuses existing animations and adds no idle timer.
+You can also **drag a window to the card that appears at the top center of the display**: it shows **Make floating** or **Return to tiling** according to its current state. Move the pointer inside; the card highlights and **releasing confirms**. Leaving cancels that action: the ordinary placement/stack/swap behavior remains available elsewhere. It appears only during a real window move, not content selection or resizing. This replaces shaking and can be disabled in **Settings → Tiling → Top zone: floating / tiling**. It reuses existing animations and adds no idle timer.
 
 If the template cannot accommodate it, the window stays floating and a notice explains why; its position is preserved instead of forcing an unreadable size.
 

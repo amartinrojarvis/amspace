@@ -185,10 +185,12 @@ pub struct Switch {
 }
 impl Switch {
     pub fn retarget(&mut self, target: u64) -> Result<(), &'static str> {
-        let destination =
-            spaces::destination(target).ok_or("Ese escritorio ya no está disponible.")?;
+        let destination = spaces::destination(target)
+            .ok_or(crate::i18n::tr("Ese escritorio ya no está disponible."))?;
         if destination.display != self.display {
-            return Err("Espera a que termine el cambio de pantalla.");
+            return Err(crate::i18n::tr(
+                "Espera a que termine el cambio de pantalla.",
+            ));
         }
         self.target = target;
         self.started = Instant::now();
@@ -197,10 +199,12 @@ impl Switch {
     }
     pub fn start(target: u64) -> Result<Self, &'static str> {
         if !ax::trusted() {
-            return Err("Concede Accesibilidad para cambiar de escritorio.");
+            return Err(crate::i18n::tr(
+                "Concede Accesibilidad para cambiar de escritorio.",
+            ));
         }
-        let destination =
-            spaces::destination(target).ok_or("Ese escritorio ya no está disponible.")?;
+        let destination = spaces::destination(target)
+            .ok_or(crate::i18n::tr("Ese escritorio ya no está disponible."))?;
         Ok(Self {
             target,
             display: destination.display,
@@ -211,23 +215,30 @@ impl Switch {
         })
     }
     pub fn step(&mut self) -> Result<Progress, &'static str> {
-        let destination = spaces::destination(self.target)
-            .ok_or("El escritorio seleccionado ya no está disponible.")?;
+        let destination = spaces::destination(self.target).ok_or(crate::i18n::tr(
+            "El escritorio seleccionado ya no está disponible.",
+        ))?;
         if destination.display != self.display {
-            return Err("Ha cambiado la pantalla del escritorio.");
+            return Err(crate::i18n::tr("Ha cambiado la pantalla del escritorio."));
         }
         if self.started.elapsed() > Duration::from_secs(8) {
-            return Err("macOS no confirmó el cambio de escritorio.");
+            return Err(crate::i18n::tr(
+                "macOS no confirmó el cambio de escritorio.",
+            ));
         }
         if let Some((source, expected, sent)) = self.flight {
             if destination.current == source {
                 if sent.elapsed() > Duration::from_secs(2) {
-                    return Err("macOS no confirmó el cambio de escritorio.");
+                    return Err(crate::i18n::tr(
+                        "macOS no confirmó el cambio de escritorio.",
+                    ));
                 }
                 return Ok(Progress::Waiting);
             }
             if destination.current != expected {
-                return Err("Cambio cancelado: se ha seleccionado otro escritorio.");
+                return Err(crate::i18n::tr(
+                    "Cambio cancelado: se ha seleccionado otro escritorio.",
+                ));
             }
             self.flight = None;
             self.settled = Some(Instant::now());
@@ -242,15 +253,19 @@ impl Switch {
             trace(&format!("confirmed={}", self.target));
             return Ok(Progress::Done);
         }
-        let current = spaces::destination(destination.current)
-            .ok_or("No se pudo localizar el escritorio actual.")?;
+        let current = spaces::destination(destination.current).ok_or(crate::i18n::tr(
+            "No se pudo localizar el escritorio actual.",
+        ))?;
         let right = current.position < destination.position;
-        let expected = spaces::neighbor(destination.current, right)
-            .ok_or("No se pudo localizar el siguiente escritorio.")?;
+        let expected = spaces::neighbor(destination.current, right).ok_or(crate::i18n::tr(
+            "No se pudo localizar el siguiente escritorio.",
+        ))?;
         if self.hops >= destination.count {
-            return Err("Ha cambiado el orden de los escritorios.");
+            return Err(crate::i18n::tr("Ha cambiado el orden de los escritorios."));
         }
-        swipe(right, self.display).ok_or("Esta versión de macOS no admite el cambio directo.")?;
+        swipe(right, self.display).ok_or(crate::i18n::tr(
+            "Esta versión de macOS no admite el cambio directo.",
+        ))?;
         self.hops += 1;
         self.flight = Some((destination.current, expected, Instant::now()));
         trace(&format!(

@@ -238,46 +238,58 @@ impl Pending {
         destination: Destination,
     ) -> Result<Self, &'static str> {
         if !ax::trusted() {
-            return Err("Concede Accesibilidad para usar los atajos de ventanas.");
+            return Err(crate::i18n::tr(
+                "Concede Accesibilidad para usar los atajos de ventanas.",
+            ));
         }
         if crate::focus::secure_input() || crate::desktop_mode::active() {
-            return Err("El traslado está en pausa en este contexto.");
+            return Err(crate::i18n::tr(
+                "El traslado está en pausa en este contexto.",
+            ));
         }
         let (pid, id, element) = unsafe {
             let buttons: usize = msg_send![class!(NSEvent), pressedMouseButtons];
             if buttons != 0 {
-                return Err("Suelta el ratón antes de trasladar una ventana.");
+                return Err(crate::i18n::tr(
+                    "Suelta el ratón antes de trasladar una ventana.",
+                ));
             }
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
             let pid: i32 = msg_send![app, processIdentifier];
             if pid == std::process::id() as i32 || ax::focus_is_protected(pid) {
-                return Err("Selecciona una ventana normal de otra aplicación.");
+                return Err(crate::i18n::tr(
+                    "Selecciona una ventana normal de otra aplicación.",
+                ));
             }
-            let id = ax::focused_id(pid).ok_or("No hay una ventana activa.")?;
-            let element =
-                ax::window_for_id(pid, id).ok_or("La ventana activa ya no está disponible.")?;
+            let id = ax::focused_id(pid).ok_or(crate::i18n::tr("No hay una ventana activa."))?;
+            let element = ax::window_for_id(pid, id)
+                .ok_or(crate::i18n::tr("La ventana activa ya no está disponible."))?;
             if !ax::tileable(element.0)
                 || ax::flag(element.0, "AXFullScreen")
                 || ax::flag(element.0, "AXMinimized")
             {
-                return Err("Esta ventana no admite traslados.");
+                return Err(crate::i18n::tr("Esta ventana no admite traslados."));
             }
             (pid, id, element)
         };
-        let (position, size) =
-            ax::geometry(element.0).ok_or("No se puede leer la geometría de la ventana activa.")?;
+        let (position, size) = ax::geometry(element.0).ok_or(crate::i18n::tr(
+            "No se puede leer la geometría de la ventana activa.",
+        ))?;
         let ax_frame = NSRect::new(position, size);
-        let original =
-            ws::bounds(id).ok_or("WindowServer no puede confirmar la ventana activa.")?;
+        let original = ws::bounds(id).ok_or(crate::i18n::tr(
+            "WindowServer no puede confirmar la ventana activa.",
+        ))?;
         if (ax_frame.origin.x - original.origin.x).abs() > 4.
             || (ax_frame.origin.y - original.origin.y).abs() > 4.
         {
-            return Err("Espera a que la ventana termine de moverse antes de trasladarla.");
+            return Err(crate::i18n::tr(
+                "Espera a que la ventana termine de moverse antes de trasladarla.",
+            ));
         }
-        let native = spaces::window_space(id).ok_or(
+        let native = spaces::window_space(id).ok_or(crate::i18n::tr(
             "La ventana está fijada a varios escritorios o no tiene un destino inequívoco.",
-        )?;
+        ))?;
         let configuration = screen_configuration();
         let screens: Vec<_> = configuration
             .iter()
@@ -288,34 +300,42 @@ impl Pending {
             .max_by(|(_, a), (_, b)| overlap(original, *a).total_cmp(&overlap(original, *b)))
             .filter(|(_, r)| overlap(original, *r) > 0.)
             .map(|(id, _)| *id)
-            .ok_or("La pantalla de origen no está disponible.")?;
+            .ok_or(crate::i18n::tr("La pantalla de origen no está disponible."))?;
         let source: Workspace = (source_display, native);
         if !spaces::visible_desktops().contains(&source) {
-            return Err("La ubicación de la ventana está cambiando; espera un instante.");
+            return Err(crate::i18n::tr(
+                "La ubicación de la ventana está cambiando; espera un instante.",
+            ));
         }
         let (destination, monitor) = match destination {
             Destination::Space(index) => {
                 let target = *spaces::desktop_ids_for_display(source_display)
                     .get(index)
-                    .ok_or("Ese escritorio no existe en la pantalla de la ventana activa.")?;
+                    .ok_or(crate::i18n::tr(
+                        "Ese escritorio no existe en la pantalla de la ventana activa.",
+                    ))?;
                 ((source_display, target), false)
             }
             Destination::Monitor(right) => {
                 let target = neighbor(source_display, right, &screens)
-                    .ok_or("No hay otra pantalla en esa dirección.")?;
+                    .ok_or(crate::i18n::tr("No hay otra pantalla en esa dirección."))?;
                 let space = spaces::visible_desktops()
                     .into_iter()
                     .find(|(id, _)| *id == target)
-                    .ok_or("La pantalla de destino no muestra un escritorio normal.")?
+                    .ok_or(crate::i18n::tr(
+                        "La pantalla de destino no muestra un escritorio normal.",
+                    ))?
                     .1;
                 ((target, space), true)
             }
         };
         if destination == source {
-            return Err(SAME_DESTINATION);
+            return Err(crate::i18n::tr(SAME_DESTINATION));
         }
         if destination.1 != source.1 && !space_moves_available() {
-            return Err("Esta versión de macOS no ofrece el traslado seguro entre escritorios.");
+            return Err(crate::i18n::tr(
+                "Esta versión de macOS no ofrece el traslado seguro entre escritorios.",
+            ));
         }
         let plan =
             manager.prepare_keyboard_transfer(defaults, pid, id, source, destination, original)?;
@@ -356,17 +376,19 @@ impl Pending {
     }
     pub fn poll(&mut self) -> Progress {
         if !ax::trusted() {
-            return Progress::Failed("Se ha revocado Accesibilidad; el traslado queda cancelado.");
+            return Progress::Failed(crate::i18n::tr(
+                "Se ha revocado Accesibilidad; el traslado queda cancelado.",
+            ));
         }
         if !self.configuration_matches() {
-            return Progress::Failed(
+            return Progress::Failed(crate::i18n::tr(
                 "La configuración de pantallas cambió; se comprobará la ubicación real sin aplicar coordenadas antiguas.",
-            );
+            ));
         }
         if self.started.elapsed() > Duration::from_secs(2) {
-            return Progress::Failed(
+            return Progress::Failed(crate::i18n::tr(
                 "macOS no confirmó el traslado a tiempo; se comprobará la ubicación real.",
-            );
+            ));
         }
         if crate::focus::secure_input() || crate::desktop_mode::active() {
             self.confirmation.observe(false);
@@ -377,31 +399,35 @@ impl Pending {
             return Progress::Waiting;
         };
         if !identities.contains(&(self.pid, self.id)) {
-            return Progress::Failed(
+            return Progress::Failed(crate::i18n::tr(
                 "La ventana se cerró o cambió de identidad durante el traslado.",
-            );
+            ));
         }
         let buttons: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
         if buttons != 0 {
-            return Progress::Failed("Traslado interrumpido por un gesto de ratón.");
+            return Progress::Failed(crate::i18n::tr(
+                "Traslado interrumpido por un gesto de ratón.",
+            ));
         }
         if spaces::destination(self.plan.destination.1).is_none()
             || tile_manager::area(self.plan.destination.0).is_none()
         {
-            return Progress::Failed("El destino ya no está disponible.");
+            return Progress::Failed(crate::i18n::tr("El destino ya no está disponible."));
         }
         if ax::window_id(self.element.0) != Some(self.id)
             || ax::flag(self.element.0, "AXFullScreen")
             || ax::flag(self.element.0, "AXMinimized")
         {
-            return Progress::Failed("La ventana ha cambiado durante el traslado.");
+            return Progress::Failed(crate::i18n::tr(
+                "La ventana ha cambiado durante el traslado.",
+            ));
         }
         if !self.arrived() {
             self.confirmation.observe(false);
             return if self.started.elapsed() > Duration::from_secs(2) {
-                Progress::Failed(
+                Progress::Failed(crate::i18n::tr(
                     "macOS no confirmó el traslado; no se ha aplicado una distribución nueva.",
-                )
+                ))
             } else {
                 Progress::Waiting
             };
@@ -424,12 +450,16 @@ impl Pending {
                 return Progress::Waiting;
             };
             let Some(area) = tile_manager::area(self.plan.destination.0) else {
-                return Progress::Failed("La pantalla de destino se ha desconectado.");
+                return Progress::Failed(crate::i18n::tr(
+                    "La pantalla de destino se ha desconectado.",
+                ));
             };
             if overlap(frame, area) < frame.size.width * frame.size.height * 0.5 {
                 self.confirmation.observe(false);
                 return if self.started.elapsed() > Duration::from_secs(2) {
-                    Progress::Failed("La aplicación no confirmó el cambio de pantalla.")
+                    Progress::Failed(crate::i18n::tr(
+                        "La aplicación no confirmó el cambio de pantalla.",
+                    ))
                 } else {
                     Progress::Waiting
                 };

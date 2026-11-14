@@ -224,7 +224,7 @@ pub fn snapshot() -> Snapshot {
         title: "—".into(),
         desktops: vec![],
         active: None,
-        detail: "Escritorios no disponibles en esta versión de macOS".into(),
+        detail: crate::i18n::tr("Escritorios no disponibles en esta versión de macOS").into(),
     })
 }
 fn read() -> Option<Snapshot> {
@@ -267,14 +267,28 @@ fn read() -> Option<Snapshot> {
             title: indicator(i + 1, count),
             desktops,
             active: Some(i),
-            detail: format!("Escritorio {} de {} · pantalla {}", i + 1, count, index + 1),
+            detail: crate::tr_format!(
+                "Escritorio {} de {} · pantalla {}",
+                "Desktop {} of {} · display {}",
+                i + 1,
+                count,
+                index + 1
+            ),
         });
     }
     Some(Snapshot {
         title: "▣".into(),
         desktops,
         active: None,
-        detail: format!("Pantalla completa · {count} escritorios"),
+        detail: crate::tr_format!(
+            "Pantalla completa · {count} {}",
+            "Full screen · {count} {}",
+            crate::i18n::tr(if count == 1 {
+                "escritorio"
+            } else {
+                "escritorios"
+            })
+        ),
     })
 }
 
@@ -399,9 +413,14 @@ pub fn settings_desktops() -> Vec<(u64, String)> {
                 (
                     id,
                     if multiple {
-                        format!("Escritorio {} · Pantalla {}", i + 1, display + 1)
+                        crate::tr_format!(
+                            "Escritorio {} · Pantalla {}",
+                            "Desktop {} · Display {}",
+                            i + 1,
+                            display + 1
+                        )
                     } else {
-                        format!("Escritorio {}", i + 1)
+                        crate::tr_format!("Escritorio {}", "Desktop {}", i + 1)
                     },
                 )
             })

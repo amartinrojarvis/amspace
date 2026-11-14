@@ -9,6 +9,7 @@ mod desktop_mode;
 mod desktop_preview;
 mod discovery;
 mod focus;
+mod i18n;
 mod instance;
 mod layout_thumbnail;
 mod model;
@@ -30,12 +31,19 @@ mod window_move;
 mod window_server;
 
 fn main() {
+    i18n::init();
     if std::env::args().any(|a| a == "--space-transfer-fixture") {
         objc2::rc::autoreleasepool(|_| window_move::run_transfer_fixture());
     } else if std::env::args().any(|a| a == "--tab-group-fixture") {
         objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::run_fixture());
     } else if std::env::args().any(|a| a == "--check-tab-controls") {
         let result = objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::check_controls());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    } else if std::env::args().any(|a| a == "--check-localizations") {
+        let result = objc2::rc::autoreleasepool(|_| ui::diagnostics::check_localizations());
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);

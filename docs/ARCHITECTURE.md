@@ -29,6 +29,7 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `native.rs` | Puente AppKit pequeño: vistas, texto y colores |
 | `updater.rs` | Puente Rust a Sparkle, ciclo de actualización y búsqueda opcional |
 | `ui.rs` | Ciclo de vida, ajustes, panel de borde, temporizador e ítems de inicio |
+| `i18n.rs`, `i18n/*.rs` | Idioma inmutable del proceso y catálogos estáticos de interfaz; sin sondeo ni traducción de datos del usuario |
 | `tiling.rs`, `tile_manager.rs` | Modelo de ocho plantillas y coordinación por pantalla/Space, gestos, mínimos, animación y restauración |
 | `custom_templates.rs` | Biblioteca de plantillas con nombre, validación y persistencia por UUID |
 | `tile_mouse.rs`, `tile_picker.rs`, `layout_thumbnail.rs`, `tile_rules.rs` | Intención de arrastre, selector, miniaturas y reglas de flotantes |
@@ -37,11 +38,19 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `desktop_preview.rs`, `desktop_mode.rs` | Preview de geometría real y pausas por presentación del escritorio |
 | `border.rs`, `bar_background.rs`, `instance.rs` | Dibujo del panel/fondo y exclusión de instancias |
 
+## Idioma y recursos nativos
+
+`main` inicializa el idioma antes de construir AppKit y Sparkle. `app.language` elige Sistema, Español o English para el próximo arranque. Sistema respeta el primer idioma compatible de macOS y usa inglés si no hay ninguno. El dominio volátil `NSArgumentDomain` recibe `AppleLanguages` solo para este proceso; sus otras claves se conservan y no se modifica la lista global ni persistente.
+
+Los textos propios se traducen explícitamente en su punto de consumo mediante catálogos `match` y formatos literales bilingües. No se traduce la entrada de helpers genéricos: títulos, nombres de aplicaciones y plantillas personales son datos. Idioma e índices de presentación nunca cambian IDs de layout, teclas, modificadores ni valores guardados. No hay red, sondeo, carga de catálogos por cuadro ni asignación adicional para obtener una traducción estática.
+
 ## Seguridad de memoria y ciclo de vida
 
 Todos los objetos de AppKit y las referencias AX se usan en el hilo principal. El tap de atajos utiliza un hilo propio únicamente para eventos y su run loop CF; encola las acciones de ventanas al hilo principal. Los objetos Objective-C propietarios usan `Retained`; AppKit retiene sus subvistas. Los punteros no propietarios a controles solo se usan mientras existe su ventana. Los resultados `Create` y `Copy` de CoreFoundation usan `Owned` y liberan su referencia en `Drop`.
 
 Los callbacks de una sola ejecución que completan asentamiento, traslado, foco, reanudación de presentación o retirada de overlays usan `with_app_deferred`. Si AX reentra mientras `APP` está prestada, se reprograma el mismo selector a 10 ms en `NSRunLoopCommonModes`; se cancela su copia anterior para mantener una única entrega pendiente. No se crea un temporizador recurrente. El diagnóstico de `ui_diagnostics.rs` fuerza esa reentrada con paneles y preferencias propios.
+
+Los límites de ratón se guardan fuera de `APP` en una cola FIFO de ocho entradas, con caducidad de 350 ms y una única entrega diferida reemplazable si AX reentra. Se conserva el punto nativo de cada soltado; no se observan movimientos ni se asigna memoria por entrada. El reloj existente no consume un gesto flotante antes de su mouse-up: espera dentro del mismo plazo y cancela al caducar o cambiar de contexto. Desbordar o reconfigurar descarta las entradas antiguas.
 
 Las notificaciones AX y del compositor comparten la cola de `window_server.rs`: su máscara pendiente vive fuera de `APP`, se combina sin asignaciones y solo existe una entrega encolada. Si la UI está prestada se conservan los indicadores y se reintenta a 10 ms, sin bucle activo. Las notificaciones recibidas durante una entrega tampoco se pierden. Se elimina el selector y el indicador redundante de actualización AX que antes podían quedar pendientes o perder el evento.
 

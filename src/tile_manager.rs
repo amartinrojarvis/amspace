@@ -987,6 +987,8 @@ pub struct Manager {
     pending_drop: Option<PendingDrop>,
     handoffs: HashMap<u32, MonitorHandoff>,
     pressed: bool,
+    /// A timer may observe button-up before AppKit delivers its native event.
+    mouse_release_pending: Option<Instant>,
     preview: Vec<Retained<AnyObject>>,
     float_overlay: Option<float_drop::Overlay>,
     /// One rounded strip per tabbed group, reused across ticks.
@@ -1143,7 +1145,8 @@ impl Manager {
             return false;
         }
         if !ax::request_close(self.windows[&id].element.0) {
-            self.last_error = Some("La aplicación no ha aceptado cerrar esta ventana.".into());
+            self.last_error =
+                Some(crate::i18n::tr("La aplicación no ha aceptado cerrar esta ventana.").into());
             return false;
         }
         self.cancel_window_placement(id);
@@ -1306,7 +1309,7 @@ impl Manager {
                     return Reordered;
                 }
                 if drag.proposed.is_none() {
-                    self.interaction_error = Some(DETACH_CAPACITY.to_string());
+                    self.interaction_error = Some(crate::i18n::tr(DETACH_CAPACITY).to_string());
                     return Rejected;
                 }
                 if !ax::focus(window.element.0, window.pid) {
@@ -1437,53 +1440,64 @@ impl Manager {
     fn validate_tab_context(&mut self, context: &TabContext) -> Result<NSRect, &'static str> {
         self.tab_identity_guards()?;
         let (current, area) = self.current_tab_context(context.id)?;
-        (current == *context)
-            .then_some(area)
-            .ok_or("La pestaña cambió; vuelve a abrir el menú.")
+        (current == *context).then_some(area).ok_or(crate::i18n::tr(
+            "La pestaña cambió; vuelve a abrir el menú.",
+        ))
     }
 
     fn tab_identity_guards(&mut self) -> Result<(), &'static str> {
         if !ax::trusted() {
-            return Err("Concede Accesibilidad a AMSpace para gestionar las pestañas.");
+            return Err(crate::i18n::tr(
+                "Concede Accesibilidad a AMSpace para gestionar las pestañas.",
+            ));
         }
         if crate::focus::secure_input() {
-            return Err("Hay una entrada segura activa; termina ese cuadro de diálogo.");
+            return Err(crate::i18n::tr(
+                "Hay una entrada segura activa; termina ese cuadro de diálogo.",
+            ));
         }
         if self.presentation_blocks_input() {
-            return Err("Mosaico está en pausa o el Escritorio está activo.");
+            return Err(crate::i18n::tr(
+                "Mosaico está en pausa o el Escritorio está activo.",
+            ));
         }
         if self.space_quiet_until.is_some() || self.space_reentry.is_some() {
-            return Err("Espera a que termine el cambio de escritorio.");
+            return Err(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio.",
+            ));
         }
         if self.drag.is_some() || self.tab_drag.is_some() || self.pending_drop.is_some() {
-            return Err("Termina el arrastre en curso antes de usar el menú de pestañas.");
+            return Err(crate::i18n::tr(
+                "Termina el arrastre en curso antes de usar el menú de pestañas.",
+            ));
         }
         Ok(())
     }
 
     /// The live identity plus the area its Space currently publishes.
     fn current_tab_context(&self, id: u32) -> Result<(TabContext, NSRect), &'static str> {
-        let window = self
-            .windows
-            .get(&id)
-            .ok_or("Esta ventana ya no está gestionada por Mosaico.")?;
+        let window = self.windows.get(&id).ok_or(crate::i18n::tr(
+            "Esta ventana ya no está gestionada por Mosaico.",
+        ))?;
         let (pid, space) = (window.pid, window.space);
         let slot = self
             .active_areas
             .iter()
             .find(|(key, _)| *key == space)
             .map(|(_, rect)| *rect)
-            .ok_or("Este escritorio ya no está visible.")?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está visible."))?;
         let desktop = self
             .desktops
             .get(&space)
-            .ok_or("Este escritorio ya no está gestionado.")?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está gestionado."))?;
         if self.floating.contains(&id)
             || !desktop
                 .tab_strip(id)
                 .is_some_and(|(members, _)| members.len() > 1)
         {
-            return Err("Esta ventana ya no pertenece a un grupo de pestañas.");
+            return Err(crate::i18n::tr(
+                "Esta ventana ya no pertenece a un grupo de pestañas.",
+            ));
         }
         // One fresh area read is the authority: a Dock/menu-bar change or a
         // Space slide invalidates every frame the menu cached.
@@ -1491,12 +1505,18 @@ impl Manager {
             || spaces::window_space(id) != Some(space.1)
             || area(space.0) != Some(slot)
         {
-            return Err("La ventana cambió de escritorio o de área; vuelve a abrir el menú.");
+            return Err(crate::i18n::tr(
+                "La ventana cambió de escritorio o de área; vuelve a abrir el menú.",
+            ));
         }
         if ax::window_id(window.element.0) != Some(id) || !ax::tileable(window.element.0) {
-            return Err("La identidad de la ventana cambió; vuelve a abrir el menú.");
+            return Err(crate::i18n::tr(
+                "La identidad de la ventana cambió; vuelve a abrir el menú.",
+            ));
         }
-        let ids = ws::all_window_ids().ok_or("No se pudo comprobar la lista de ventanas.")?;
+        let ids = ws::all_window_ids().ok_or(crate::i18n::tr(
+            "No se pudo comprobar la lista de ventanas.",
+        ))?;
         let members = desktop
             .order
             .iter()
@@ -1514,11 +1534,15 @@ impl Manager {
                     && ids.contains(&(w.pid, member))
                     && spaces::window_space(member) == Some(space.1)
             }) {
-                return Err("Las ventanas del escritorio cambiaron; vuelve a abrir el menú.");
+                return Err(crate::i18n::tr(
+                    "Las ventanas del escritorio cambiaron; vuelve a abrir el menú.",
+                ));
             }
         }
         if ax::focus_is_protected(pid) {
-            return Err("Un cuadro de diálogo de la aplicación tiene el foco.");
+            return Err(crate::i18n::tr(
+                "Un cuadro de diálogo de la aplicación tiene el foco.",
+            ));
         }
         Ok((
             TabContext {
@@ -1547,9 +1571,9 @@ impl Manager {
                     return Ok(());
                 }
                 let reason = if self.last_error.is_some() {
-                    "La aplicación no ha aceptado cerrar esta ventana."
+                    crate::i18n::tr("La aplicación no ha aceptado cerrar esta ventana.")
                 } else {
-                    "La ventana no está lista para cerrarse; inténtalo de nuevo."
+                    crate::i18n::tr("La ventana no está lista para cerrarse; inténtalo de nuevo.")
                 };
                 self.last_error = None;
                 Err(reason)
@@ -1562,9 +1586,9 @@ impl Manager {
         let baseline = self
             .desktops
             .get(&space)
-            .ok_or("Este escritorio ya no está visible.")?;
-        let proposed =
-            tab_detach_proposal(baseline, id, area, &self.minimum_sizes).ok_or(DETACH_CAPACITY)?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está visible."))?;
+        let proposed = tab_detach_proposal(baseline, id, area, &self.minimum_sizes)
+            .ok_or(crate::i18n::tr(DETACH_CAPACITY))?;
         self.focus_member(id)?;
         self.commit_tab_model(space, id, proposed);
         Ok(())
@@ -1573,16 +1597,18 @@ impl Manager {
     fn float_tab(&mut self, id: u32, area: NSRect) -> Result<(), &'static str> {
         let window = &self.windows[&id];
         let space = window.space;
-        let (position, size) =
-            ax::geometry(window.element.0).ok_or("No se pudo leer la geometría de la ventana.")?;
+        let (position, size) = ax::geometry(window.element.0).ok_or(crate::i18n::tr(
+            "No se pudo leer la geometría de la ventana.",
+        ))?;
         let from = NSRect::new(position, size);
-        let target = crate::tiling::floating_frame(from, area)
-            .ok_or("La geometría de la ventana o pantalla no es válida.")?;
+        let target = crate::tiling::floating_frame(from, area).ok_or(crate::i18n::tr(
+            "La geometría de la ventana o pantalla no es válida.",
+        ))?;
         let mut desktop = self
             .desktops
             .get(&space)
             .cloned()
-            .ok_or("Este escritorio ya no está visible.")?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está visible."))?;
         desktop.remove(id);
         self.focus_member(id)?;
         let window = self.windows.get_mut(&id).unwrap();
@@ -1606,7 +1632,7 @@ impl Manager {
         let desktop = self
             .desktops
             .get(&space)
-            .ok_or("Este escritorio ya no está visible.")?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está visible."))?;
         // The menu stores the leaf it saw; follow the strip if its visible tab
         // changed while the menu was tracking.
         let leaf = desktop
@@ -1619,7 +1645,7 @@ impl Manager {
             .tab_strip(leaf)
             .is_some_and(|(members, _)| members.contains(&context.id))
         {
-            return Err("La pestaña ya pertenece a ese grupo.");
+            return Err(crate::i18n::tr("La pestaña ya pertenece a ese grupo."));
         }
         let proposed = tab_group_proposal(desktop, &self.minimum_sizes, context.id, leaf, area)?;
         self.focus_member(context.id)?;
@@ -1669,15 +1695,21 @@ impl Manager {
         let window = self
             .windows
             .get(&id)
-            .ok_or("La ventana ya no está gestionada.")?;
+            .ok_or(crate::i18n::tr("La ventana ya no está gestionada."))?;
         if ax::window_id(window.element.0) != Some(id) || !ax::tileable(window.element.0) {
-            return Err("La identidad de la ventana cambió; vuelve a intentarlo.");
+            return Err(crate::i18n::tr(
+                "La identidad de la ventana cambió; vuelve a intentarlo.",
+            ));
         }
         if ax::focus_is_protected(window.pid) {
-            return Err("Un cuadro de diálogo de la aplicación tiene el foco.");
+            return Err(crate::i18n::tr(
+                "Un cuadro de diálogo de la aplicación tiene el foco.",
+            ));
         }
         if !ax::focus(window.element.0, window.pid) {
-            return Err("La aplicación no ha aceptado activar esta ventana.");
+            return Err(crate::i18n::tr(
+                "La aplicación no ha aceptado activar esta ventana.",
+            ));
         }
         Ok(())
     }
@@ -1691,15 +1723,16 @@ impl Manager {
         let desktop = self
             .desktops
             .get(&space)
-            .ok_or("Este escritorio ya no está visible.")?;
-        let (members, _) = desktop
-            .tab_strip(id)
-            .ok_or("Esta ventana no forma un grupo de pestañas.")?;
+            .ok_or(crate::i18n::tr("Este escritorio ya no está visible."))?;
+        let (members, _) = desktop.tab_strip(id).ok_or(crate::i18n::tr(
+            "Esta ventana no forma un grupo de pestañas.",
+        ))?;
         let active = members
             .iter()
             .position(|member| *member == id)
-            .ok_or("El grupo de pestañas cambió.")?;
-        let next = tab_cycle(members, active, forward).ok_or("El grupo de pestañas cambió.")?;
+            .ok_or(crate::i18n::tr("El grupo de pestañas cambió."))?;
+        let next = tab_cycle(members, active, forward)
+            .ok_or(crate::i18n::tr("El grupo de pestañas cambió."))?;
         self.focus_member(next)?;
         self.select_tab_model(next);
         Ok(())
@@ -1719,21 +1752,27 @@ impl Manager {
         unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             if workspace.is_null() {
-                return Err("Sin sesión de espacio de trabajo.");
+                return Err(crate::i18n::tr("Sin sesión de espacio de trabajo."));
             }
             let app: Obj = msg_send![workspace, frontmostApplication];
             if app.is_null() {
-                return Err("Ninguna aplicación está al frente.");
+                return Err(crate::i18n::tr("Ninguna aplicación está al frente."));
             }
             let pid: i32 = msg_send![app, processIdentifier];
             let id = ws::front_window(pid)
                 .map(|window| window.id)
-                .ok_or("La aplicación del frente no tiene ventana normal.")?;
+                .ok_or(crate::i18n::tr(
+                    "La aplicación del frente no tiene ventana normal.",
+                ))?;
             if !self.windows.contains_key(&id) {
-                return Err("Esa ventana no está gestionada por Mosaico.");
+                return Err(crate::i18n::tr(
+                    "Esa ventana no está gestionada por Mosaico.",
+                ));
             }
             if self.windows[&id].pid != pid {
-                return Err("El identificador de ventana cambió de aplicación.");
+                return Err(crate::i18n::tr(
+                    "El identificador de ventana cambió de aplicación.",
+                ));
             }
             Ok((pid, id))
         }
@@ -2283,6 +2322,7 @@ impl Manager {
         self.cancel_tab_drag();
         self.gesture_candidates.clear();
         self.pending_drop = None;
+        self.mouse_release_pending = None;
         self.pressed = false;
         self.hide_preview();
     }
@@ -2648,102 +2688,109 @@ impl Manager {
         if self.presentation_blocks_input()
             || (tracked && (self.space_reentry.is_some() || self.waiting_for_space(Instant::now())))
         {
-            return Err("Espera a que termine el cambio de escritorio.");
+            return Err(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio.",
+            ));
         }
-        let source_area = area(source.0).ok_or("La pantalla de origen ya no está disponible.")?;
-        let destination_area =
-            area(destination.0).ok_or("La pantalla de destino ya no está disponible.")?;
+        let source_area = area(source.0).ok_or(crate::i18n::tr(
+            "La pantalla de origen ya no está disponible.",
+        ))?;
+        let destination_area = area(destination.0).ok_or(crate::i18n::tr(
+            "La pantalla de destino ya no está disponible.",
+        ))?;
         let floating = self.floating.contains(&id) || crate::tile_rules::floats(defaults, pid);
         let tiled =
             tracked && pref(defaults, &format!("tile.off.{}", destination.1)) == 0 && !floating;
-        let desktop =
-            if tiled {
-                let mut base = self.desktops.get(&destination).cloned().unwrap_or_else(|| {
-                    Desktop::configured(
-                        layout_pref(defaults, destination),
-                        if pref(defaults, "tile.grid.enabled") != 0 {
-                            Some((
-                                grid_count(defaults, "tile.grid.columns", 120, 240),
-                                grid_count(defaults, "tile.grid.rows", 6, 60),
-                            ))
-                        } else {
-                            None
-                        },
-                    )
-                });
-                let snapshot = ws::transition_windows()
-                    .ok_or("No se puede comprobar el escritorio de destino.")?;
-                // Refresh known membership without treating an unavailable AX
-                // listing as destruction of a customized hidden layout.
-                let mut ids: Vec<_> = base
-                    .order
-                    .iter()
-                    .copied()
-                    .filter(|known| {
-                        *known != id
-                            && !self.floating.contains(known)
-                            && spaces::window_space(*known)
-                                .is_none_or(|space| space == destination.1)
-                            && ws::ordered_in(*known) != Some(false)
-                            && snapshot.iter().any(|window| {
-                                window.id == *known
-                                    && !crate::tile_rules::floats(defaults, window.pid)
-                                    && window.frame.is_none_or(|frame| {
-                                        overlap(frame, destination_area)
-                                            > frame.size.width * frame.size.height * 0.5
-                                    })
-                            })
-                    })
-                    .collect();
-                for window in snapshot
-                    .into_iter()
-                    .filter(|w| w.layer == 0 && w.pid != std::process::id() as i32 && w.id != id)
-                {
-                    if window.frame.is_none_or(|frame| {
-                        overlap(frame, destination_area)
-                            <= frame.size.width * frame.size.height * 0.5
-                    }) {
-                        continue;
-                    }
-                    if spaces::window_space(window.id) != Some(destination.1)
-                        || ws::ordered_in(window.id) == Some(false)
-                        || self.floating.contains(&window.id)
-                        || crate::tile_rules::floats(defaults, window.pid)
-                    {
-                        continue;
-                    }
-                    // A native layer-0 entry is not proof of a tileable
-                    // window: auxiliary overlays and hidden AX windows also
-                    // appear here. Never let an unverified entry veto the
-                    // entire transfer, or resize it without AX confirmation.
-                    let element = self
-                        .windows
-                        .get(&window.id)
-                        .filter(|managed| managed.pid == window.pid)
-                        .map(|managed| managed.element.clone())
-                        .or_else(|| ax::window_for_id(window.pid, window.id));
-                    let eligible = match element {
-                        Some(element) => {
-                            ax::window_id(element.0) == Some(window.id)
-                                && ax::tileable(element.0)
-                                && !ax::flag(element.0, "AXMinimized")
-                                && !ax::flag(element.0, "AXFullScreen")
-                        }
-                        // A known tile may temporarily disappear from AX.
-                        // Preserve its slot while native membership holds.
-                        None => base.order.contains(&window.id),
-                    };
-                    if eligible && !ids.contains(&window.id) {
-                        ids.push(window.id);
-                    }
+        let desktop = if tiled {
+            let mut base = self.desktops.get(&destination).cloned().unwrap_or_else(|| {
+                Desktop::configured(
+                    layout_pref(defaults, destination),
+                    if pref(defaults, "tile.grid.enabled") != 0 {
+                        Some((
+                            grid_count(defaults, "tile.grid.columns", 120, 240),
+                            grid_count(defaults, "tile.grid.rows", 6, 60),
+                        ))
+                    } else {
+                        None
+                    },
+                )
+            });
+            let snapshot = ws::transition_windows().ok_or(crate::i18n::tr(
+                "No se puede comprobar el escritorio de destino.",
+            ))?;
+            // Refresh known membership without treating an unavailable AX
+            // listing as destruction of a customized hidden layout.
+            let mut ids: Vec<_> = base
+                .order
+                .iter()
+                .copied()
+                .filter(|known| {
+                    *known != id
+                        && !self.floating.contains(known)
+                        && spaces::window_space(*known).is_none_or(|space| space == destination.1)
+                        && ws::ordered_in(*known) != Some(false)
+                        && snapshot.iter().any(|window| {
+                            window.id == *known
+                                && !crate::tile_rules::floats(defaults, window.pid)
+                                && window.frame.is_none_or(|frame| {
+                                    overlap(frame, destination_area)
+                                        > frame.size.width * frame.size.height * 0.5
+                                })
+                        })
+                })
+                .collect();
+            for window in snapshot
+                .into_iter()
+                .filter(|w| w.layer == 0 && w.pid != std::process::id() as i32 && w.id != id)
+            {
+                if window.frame.is_none_or(|frame| {
+                    overlap(frame, destination_area) <= frame.size.width * frame.size.height * 0.5
+                }) {
+                    continue;
                 }
-                ids.sort_unstable();
-                base.reconcile_at(&ids, destination_area, 10., None);
-                Some(arrival_proposal(&base,id,None,destination_area,Some(&self.minimum_sizes))
-                .ok_or("La ventana no cabe en la distribución de destino; no se ha movido nada.")?)
-            } else {
-                None
-            };
+                if spaces::window_space(window.id) != Some(destination.1)
+                    || ws::ordered_in(window.id) == Some(false)
+                    || self.floating.contains(&window.id)
+                    || crate::tile_rules::floats(defaults, window.pid)
+                {
+                    continue;
+                }
+                // A native layer-0 entry is not proof of a tileable
+                // window: auxiliary overlays and hidden AX windows also
+                // appear here. Never let an unverified entry veto the
+                // entire transfer, or resize it without AX confirmation.
+                let element = self
+                    .windows
+                    .get(&window.id)
+                    .filter(|managed| managed.pid == window.pid)
+                    .map(|managed| managed.element.clone())
+                    .or_else(|| ax::window_for_id(window.pid, window.id));
+                let eligible = match element {
+                    Some(element) => {
+                        ax::window_id(element.0) == Some(window.id)
+                            && ax::tileable(element.0)
+                            && !ax::flag(element.0, "AXMinimized")
+                            && !ax::flag(element.0, "AXFullScreen")
+                    }
+                    // A known tile may temporarily disappear from AX.
+                    // Preserve its slot while native membership holds.
+                    None => base.order.contains(&window.id),
+                };
+                if eligible && !ids.contains(&window.id) {
+                    ids.push(window.id);
+                }
+            }
+            ids.sort_unstable();
+            base.reconcile_at(&ids, destination_area, 10., None);
+            Some(
+                arrival_proposal(&base, id, None, destination_area, Some(&self.minimum_sizes))
+                    .ok_or(crate::i18n::tr(
+                        "La ventana no cabe en la distribución de destino; no se ha movido nada.",
+                    ))?,
+            )
+        } else {
+            None
+        };
         let target = desktop
             .as_ref()
             .and_then(|d| {
@@ -2883,7 +2930,7 @@ impl Manager {
         let destination = self
             .windows
             .get(&id)
-            .ok_or("La ventana ya no está disponible.")?
+            .ok_or(crate::i18n::tr("La ventana ya no está disponible."))?
             .space;
         self.toggle_float_at(id, from, destination, current)
     }
@@ -2898,17 +2945,20 @@ impl Manager {
         let source = self
             .windows
             .get(&id)
-            .ok_or("La ventana ya no está disponible.")?
+            .ok_or(crate::i18n::tr("La ventana ya no está disponible."))?
             .space;
         let floating = self.floating.contains(&id);
         let desktop = self
             .desktops
             .get(&destination)
-            .ok_or("El escritorio ya no está disponible.")?;
+            .ok_or(crate::i18n::tr("El escritorio ya no está disponible."))?;
         let proposed = if floating {
             Some(
-                arrival_proposal(desktop, id, None, current, Some(&self.minimum_sizes))
-                    .ok_or("No queda espacio para esta ventana en la plantilla; sigue flotante.")?,
+                arrival_proposal(desktop, id, None, current, Some(&self.minimum_sizes)).ok_or(
+                    crate::i18n::tr(
+                        "No queda espacio para esta ventana en la plantilla; sigue flotante.",
+                    ),
+                )?,
             )
         } else if source == destination {
             let mut proposed = desktop.clone();
@@ -2921,7 +2971,9 @@ impl Manager {
             Some(
                 self.desktops
                     .get(&source)
-                    .ok_or("El escritorio de origen ya no está disponible.")?
+                    .ok_or(crate::i18n::tr(
+                        "El escritorio de origen ya no está disponible.",
+                    ))?
                     .clone(),
             )
         } else {
@@ -2933,8 +2985,9 @@ impl Manager {
         let target = if floating {
             from
         } else {
-            crate::tiling::floating_frame(from, current)
-                .ok_or("La geometría de la ventana o pantalla no es válida.")?
+            crate::tiling::floating_frame(from, current).ok_or(crate::i18n::tr(
+                "La geometría de la ventana o pantalla no es válida.",
+            ))?
         };
         // Prepare both models before changing ownership or any pending placement.
         self.cancel_window_placement(id);
@@ -2985,7 +3038,7 @@ impl Manager {
     fn commit_float_drop(&mut self, drag: &Drag) -> Result<(), &'static str> {
         let (destination, target_area) = drag
             .float_target
-            .ok_or("La zona de soltado ya no está disponible.")?;
+            .ok_or(crate::i18n::tr("La zona de soltado ya no está disponible."))?;
         if !self.float_drag_matches(drag)
             || self.presentation_blocks_input()
             || !ax::trusted()
@@ -2996,20 +3049,26 @@ impl Manager {
             || !spaces::visible_desktops().contains(&destination)
             || !ws::all_window_ids().is_some_and(|ids| ids.contains(&(drag.pid, drag.id)))
         {
-            return Err("La ventana o su escritorio cambiaron; se ha cancelado la acción.");
+            return Err(crate::i18n::tr(
+                "La ventana o su escritorio cambiaron; se ha cancelado la acción.",
+            ));
         }
         let window = &self.windows[&drag.id];
         if ax::window_id(window.element.0) != Some(drag.id) || !ax::tileable(window.element.0) {
-            return Err("La ventana ya no admite alternar entre flotante y mosaico.");
+            return Err(crate::i18n::tr(
+                "La ventana ya no admite alternar entre flotante y mosaico.",
+            ));
         }
-        let frame =
-            ws::bounds(drag.id).ok_or("No se pudo confirmar la geometría de la ventana.")?;
-        let native = spaces::window_space(drag.id)
-            .ok_or("No se pudo confirmar el escritorio de la ventana.")?;
+        let frame = ws::bounds(drag.id).ok_or(crate::i18n::tr(
+            "No se pudo confirmar la geometría de la ventana.",
+        ))?;
+        let native = spaces::window_space(drag.id).ok_or(crate::i18n::tr(
+            "No se pudo confirmar el escritorio de la ventana.",
+        ))?;
         if workspace_at_frame(native, frame, &self.active_areas) != Some(destination) {
-            return Err(
+            return Err(crate::i18n::tr(
                 "La ventana todavía no pertenece a la pantalla de destino; acción cancelada.",
-            );
+            ));
         }
         self.toggle_float_at(drag.id, frame, destination, target_area)
     }
@@ -3295,7 +3354,7 @@ impl Manager {
                     }
                     self.constrained.insert(id, (verification.target, actual));
                     self.verifications.remove(&id);
-                    self.last_error=Some("Una ventana limita su tamaño o posición; prueba otra plantilla o déjala flotante.".into());
+                    self.last_error=Some(crate::i18n::tr("Una ventana limita su tamaño o posición; prueba otra plantilla o déjala flotante.").into());
                 }
             }
         }
@@ -3443,17 +3502,23 @@ impl Manager {
         display: Option<u32>,
     ) -> Result<PickerContext, &'static str> {
         if !ax::trusted() || pref(defaults, "tile.enabled") == 0 {
-            return Err("Activa Mosaico y Accesibilidad para guardar o aplicar plantillas.");
+            return Err(crate::i18n::tr(
+                "Activa Mosaico y Accesibilidad para guardar o aplicar plantillas.",
+            ));
         }
         if self.presentation_blocks_input()
             || self.waiting_for_space(Instant::now())
             || self.space_reentry.is_some()
         {
-            return Err("Espera a que termine el cambio de escritorio.");
+            return Err(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio.",
+            ));
         }
         self.refresh_for_picker(defaults);
         if self.space_reentry.is_some() || self.waiting_for_space(Instant::now()) {
-            return Err("Espera a que termine el cambio de escritorio.");
+            return Err(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio.",
+            ));
         }
         let workspace = match display {
             Some(display) => spaces::visible_desktops()
@@ -3461,17 +3526,21 @@ impl Manager {
                 .find(|(id, _)| *id == display),
             None => self.current_workspace(),
         }
-        .ok_or("La pantalla no está disponible.")?;
+        .ok_or(crate::i18n::tr("La pantalla no está disponible."))?;
         if pref(defaults, &format!("tile.off.{}", workspace.1)) != 0 {
-            return Err("Activa el mosaico en el escritorio de esta pantalla.");
+            return Err(crate::i18n::tr(
+                "Activa el mosaico en el escritorio de esta pantalla.",
+            ));
         }
-        let area = area(workspace.0).ok_or("La pantalla no está disponible.")?;
+        let area = area(workspace.0).ok_or(crate::i18n::tr("La pantalla no está disponible."))?;
         let desktop = self
             .desktops
             .get(&workspace)
             .filter(|d| !d.order.is_empty())
             .cloned()
-            .ok_or("Abre ventanas en mosaico en esta pantalla primero.")?;
+            .ok_or(crate::i18n::tr(
+                "Abre ventanas en mosaico en esta pantalla primero.",
+            ))?;
         Ok(PickerContext {
             workspace,
             area,
@@ -3675,6 +3744,51 @@ impl Manager {
     fn tick_mode(&mut self, defaults: Obj, place_windows: bool) {
         self.tick_mode_input(defaults, place_windows, None);
     }
+    fn defer_native_release(&mut self, input: Option<bool>, down: bool, now: Instant) -> bool {
+        const DELIVERY_WINDOW: Duration = Duration::from_millis(350);
+        if input == Some(true) {
+            // Polling can win the race to mouse-down, but only the native
+            // boundary carries the actual grab point and opts into floating.
+            self.drag = None;
+            self.gesture_candidates.clear();
+            self.mouse_release_pending = None;
+            self.pressed = false;
+            return false;
+        }
+        let captured = self
+            .drag
+            .as_ref()
+            .is_some_and(|drag| drag.float_drop_enabled)
+            || self
+                .gesture_candidates
+                .iter()
+                .any(|drag| drag.float_drop_enabled);
+        if !captured {
+            self.mouse_release_pending = None;
+            return false;
+        }
+        if input == Some(false) {
+            let expired = self
+                .mouse_release_pending
+                .is_some_and(|since| now.saturating_duration_since(since) >= DELIVERY_WINDOW);
+            self.mouse_release_pending = None;
+            if expired {
+                self.cancel_drag();
+            }
+            return expired;
+        }
+        if down && self.mouse_release_pending.is_none() {
+            return false;
+        }
+        let since = self.mouse_release_pending.get_or_insert(now);
+        if down || now.saturating_duration_since(*since) >= DELIVERY_WINDOW {
+            // Missing native delivery cancels, never confirms a stale hover.
+            self.cancel_drag();
+            self.pressed = down;
+        }
+        true
+    }
+
     pub fn mouse_event(&mut self, defaults: Obj, down: bool, point: NSPoint) {
         if self.presentation_blocks_input() || !ax::trusted() {
             return;
@@ -3798,8 +3912,11 @@ impl Manager {
         }
         let down = place_windows && down & 1 != 0;
         // Preserve the persisted switch, including an explicit user opt-out.
-        let float_enabled =
-            (down || self.drag.is_some()) && pref_or(defaults, "tile.shake", 1) != 0;
+        let float_enabled = (down || self.drag.is_some() || !self.gesture_candidates.is_empty())
+            && pref_or(defaults, "tile.shake", 1) != 0;
+        if self.defer_native_release(input.map(|(down, _)| down), down, Instant::now()) {
+            return;
+        }
         let capture_float = float_enabled && input.is_some_and(|(down, _)| down);
         let Some(p) = input.map(|(_, p)| p).or_else(pointer) else {
             self.cancel_drag();
@@ -4701,7 +4818,7 @@ impl Manager {
             d.fit(r, 10.);
             let frames = d.window_frames(r, 10.);
             if frames.len() != d.order.len() {
-                self.last_error = Some("Esta plantilla no admite los tamaños mínimos de estas ventanas; prueba otra o deja una ventana flotante.".into());
+                self.last_error = Some(crate::i18n::tr("Esta plantilla no admite los tamaños mínimos de estas ventanas; prueba otra o deja una ventana flotante.").into());
                 continue;
             }
             // Do not create unusably small tiles; retain the layout until space is available.
@@ -4709,8 +4826,10 @@ impl Manager {
                 .iter()
                 .any(|(_, r)| r.size.width < 80. || r.size.height < 60.)
             {
-                self.last_error =
-                    Some("Demasiadas ventanas para esta plantilla; usa Cuadrícula.".into());
+                self.last_error = Some(
+                    crate::i18n::tr("Demasiadas ventanas para esta plantilla; usa Cuadrícula.")
+                        .into(),
+                );
                 continue;
             }
             let hidden = hidden_tab_frames(d, &frames);
@@ -4909,20 +5028,20 @@ fn tab_group_proposal(
     area: NSRect,
 ) -> Result<Desktop, &'static str> {
     if leaf == id {
-        return Err(SAME_TAB);
+        return Err(crate::i18n::tr(SAME_TAB));
     }
     if !desktop.order.contains(&leaf) {
-        return Err(GROUP_GONE);
+        return Err(crate::i18n::tr(GROUP_GONE));
     }
     if desktop.max_group_tabs < 2 {
-        return Err(GROUP_LIMIT);
+        return Err(crate::i18n::tr(GROUP_LIMIT));
     }
     let members = desktop
         .tab_strip(leaf)
         .map(|(members, _)| members)
         .unwrap_or(&[]);
     if !members.contains(&id) && members.len().max(1) >= desktop.max_group_tabs {
-        return Err(GROUP_FULL);
+        return Err(crate::i18n::tr(GROUP_FULL));
     }
     arrival_proposal(
         desktop,
@@ -4931,7 +5050,7 @@ fn tab_group_proposal(
         area,
         Some(minimums),
     )
-    .ok_or(MINIMUM_CAPACITY)
+    .ok_or(crate::i18n::tr(MINIMUM_CAPACITY))
 }
 
 /// Why the released gesture did not change the tree. The same solver answered
@@ -4944,11 +5063,10 @@ fn drop_rejection(
     area: NSRect,
 ) -> &'static str {
     match intent {
-        Some(DropIntent::Group(leaf)) => {
-            group_rejection(desktop, minimums, id, leaf, area).unwrap_or(MINIMUM_CAPACITY)
-        }
-        Some(_) => MINIMUM_CAPACITY,
-        None => DETACH_CAPACITY,
+        Some(DropIntent::Group(leaf)) => group_rejection(desktop, minimums, id, leaf, area)
+            .unwrap_or(crate::i18n::tr(MINIMUM_CAPACITY)),
+        Some(_) => crate::i18n::tr(MINIMUM_CAPACITY),
+        None => crate::i18n::tr(DETACH_CAPACITY),
     }
 }
 
@@ -5469,7 +5587,10 @@ unsafe fn strip_content(
             let font: Obj = msg_send![class!(NSFont),systemFontOfSize:14f64];
             let _: () = msg_send![&close,setFont:font];
             let _: () = msg_send![&close, setContentTintColor:color(1., 1., 1., 1.)];
-            let label = NSString::from_str(&format!("Cerrar ventana: {name}"));
+            let label = NSString::from_str(&crate::tr_format!(
+                "Cerrar ventana: {name}",
+                "Close window: {name}"
+            ));
             let _: () = msg_send![&close,setAccessibilityLabel:&*label];
             let _: () = msg_send![&close,setToolTip:&*label];
             // Reserve -1 (NSView's default tag); selection tags are positive.
@@ -5703,20 +5824,20 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 hint.kind == HintKind::Group || (hint.kind == HintKind::Zones && index == 0);
             let title = if group {
                 if width >= 240. {
-                    "Apilar como pestaña"
+                    crate::i18n::tr("Apilar como pestaña")
                 } else {
-                    "Pestañas"
+                    crate::i18n::tr("Pestañas")
                 }
             } else if hint.kind == HintKind::Zones {
                 if width >= 240. {
-                    "Intercambiar posiciones"
+                    crate::i18n::tr("Intercambiar posiciones")
                 } else if width >= 130. {
-                    "Intercambiar"
+                    crate::i18n::tr("Intercambiar")
                 } else {
-                    "Posición"
+                    crate::i18n::tr("Posición")
                 }
             } else {
-                "Colocar aquí"
+                crate::i18n::tr("Colocar aquí")
             };
             let font = if width >= 240. { 18. } else { 12. };
             let title_height = 24f64.min(height);
@@ -5727,9 +5848,9 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
             };
             let title = if !hint.available[index] && status_height == 0. {
                 if width >= 130. {
-                    "No disponible"
+                    crate::i18n::tr("No disponible")
                 } else {
-                    "No cabe"
+                    crate::i18n::tr("No cabe")
                 }
             } else {
                 title
@@ -5765,7 +5886,7 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 let label = crate::native::label(
                     plate,
                     rect(4., bottom, (width - 8.).max(0.), status_height),
-                    "No disponible",
+                    crate::i18n::tr("No disponible"),
                     12.,
                     0.,
                     false,

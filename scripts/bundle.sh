@@ -23,6 +23,9 @@ cp docs/STRAFE-LICENSE.txt "$APP/Contents/Resources/STRAFE-LICENSE.txt"
 cp docs/YABAI-LICENSE.txt "$APP/Contents/Resources/YABAI-LICENSE.txt"
 cp docs/SPARKLE-LICENSE.txt "$APP/Contents/Resources/SPARKLE-LICENSE.txt"
 cp assets/Info.plist "$APP/Contents/Info.plist"
+for language in es en; do
+  ditto "assets/localizations/$language.lproj" "$APP/Contents/Resources/$language.lproj"
+done
 if [[ ! -f assets/AMSpace.icns ]]; then ./scripts/make-icon.sh; fi
 cp assets/AMSpace.icns "$APP/Contents/Resources/AMSpace.icns"
 mkdir -p "$APP/Contents/Frameworks"

@@ -19,6 +19,8 @@ use std::{
 
 #[path = "ui_diagnostics.rs"]
 pub(crate) mod diagnostics;
+#[path = "ui_mouse.rs"]
+mod mouse_delivery;
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
 #[link(name = "QuartzCore", kind = "framework")]
@@ -395,7 +397,7 @@ unsafe fn build_navigation(parent: Obj, frame: NSRect, target: Obj, footer: bool
         let _: () = msg_send![&table, setAllowsEmptySelection:footer];
         let _: () = msg_send![&table, setDataSource:target];
         let _: () = msg_send![&table, setDelegate:target];
-        let _: () = msg_send![&table, setAccessibilityLabel:&*NSString::from_str(if footer {"Aplicación"} else {"Secciones de ajustes"})];
+        let _: () = msg_send![&table, setAccessibilityLabel:&*NSString::from_str(if footer {crate::i18n::tr("Aplicación")} else {crate::i18n::tr("Secciones de ajustes")})];
         let scroll = alloc_view(class!(NSScrollView), frame);
         let _: () = msg_send![&scroll, setDrawsBackground:false];
         let _: () = msg_send![&scroll, setHasVerticalScroller:false];
@@ -419,6 +421,7 @@ extern "C-unwind" fn navigation_view(_: Obj, _: Sel, table: Obj, _: Obj, row: is
     unsafe {
         let footer: isize = msg_send![table, tag];
         let (title, symbol) = SETTINGS_SECTIONS[row as usize + if footer == 1 { 5 } else { 0 }];
+        let title = crate::i18n::tr(title);
         let cell = alloc_view(class!(NSTableCellView), rect(0., 0., 160., 36.));
         let field = label(
             Retained::as_ptr(&cell) as Obj,
@@ -460,7 +463,10 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
                     return;
                 }
                 let _: () = msg_send![a.tabs, selectTabViewItemAtIndex:row];
-                text(a.page_title, SETTINGS_SECTIONS[row as usize].0);
+                text(
+                    a.page_title,
+                    crate::i18n::tr(SETTINGS_SECTIONS[row as usize].0),
+                );
                 if row == 1 {
                     a.rebuild_space_rows();
                 }
@@ -526,8 +532,7 @@ impl App {
             let _: () = msg_send![b, setTarget:&*target];
             let _: () = msg_send![b, setAction:sel!(statusClick:)];
             let _: usize = msg_send![b, sendActionOn:((1usize << 2) | (1usize << 4))];
-            let _: () =
-                msg_send![b, setAccessibilityLabel:&*NSString::from_str("AMSpace · abrir ajustes")];
+            let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("AMSpace · abrir ajustes"))];
             let border = window(rect(0., 0., 100., 100.), 128);
             let clear: Obj = msg_send![class!(NSColor), clearColor];
             let _: () = msg_send![&border, setBackgroundColor:clear];
@@ -749,7 +754,7 @@ impl App {
                     ptr::null_mut()
                 };
                 let _: () = msg_send![b, setToolTip:tip];
-                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("{} · clic derecho para ajustes", s.detail))];
+                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("{} · clic derecho para ajustes", "{} · right-click for settings", s.detail))];
                 self.status_detail = s.detail;
             }
             if !self.preview.is_null() {
@@ -823,20 +828,24 @@ impl App {
                     let _: () = msg_send![button, setAttributedTitle:&*title];
                 }
                 let label = if compact {
-                    "Elegir escritorio".into()
+                    crate::i18n::tr("Elegir escritorio").into()
                 } else {
-                    format!(
+                    crate::tr_format!(
                         "Ir al escritorio {}{}",
+                        "Go to desktop {}{}",
                         index + 1,
                         if snapshot.active == Some(index) {
-                            ", activo"
+                            crate::i18n::tr(", activo")
                         } else {
                             ""
                         }
                     )
                 };
                 let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(&label)];
-                let tip = NSString::from_str(&format!("{label} · clic derecho para ajustes"));
+                let tip = NSString::from_str(&crate::tr_format!(
+                    "{label} · clic derecho para ajustes",
+                    "{label} · right-click for settings"
+                ));
                 let tip: Obj = if value(
                     Retained::as_ptr(&self.defaults) as Obj,
                     "desktopPreview.disabled",
@@ -855,14 +864,14 @@ impl App {
             let snapshot = spaces::snapshot();
             for (index, id) in snapshot.desktops.iter().enumerate() {
                 let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
-                let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&format!("Escritorio {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
+                let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&crate::tr_format!("Escritorio {}", "Desktop {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
                 let _: () = msg_send![&item, setTarget:&*self.target];
                 let _: () = msg_send![&item, setTag:*id as isize];
                 let _: () = msg_send![&item, setState:if snapshot.active == Some(index) {1isize} else {0isize}];
                 let _: () = msg_send![&menu, addItem:&*item];
             }
             let settings: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
-            let settings: Retained<AnyObject> = msg_send![settings, initWithTitle:&*NSString::from_str("Ajustes…"), action:sel!(settings:), keyEquivalent:&*NSString::from_str("")];
+            let settings: Retained<AnyObject> = msg_send![settings, initWithTitle:&*NSString::from_str(crate::i18n::tr("Ajustes…")), action:sel!(settings:), keyEquivalent:&*NSString::from_str("")];
             let _: () = msg_send![&settings, setTarget:&*self.target];
             let _: () = msg_send![&menu, addItem:&*settings];
             menu
@@ -1516,7 +1525,8 @@ impl App {
                 .min(visible.size.height - 52.);
             let tab_height = height - 156.;
             let w = window(rect(0., 0., width, height), 1 | 2 | 4 | 32768);
-            let _: () = msg_send![&w, setTitle:&*NSString::from_str("Ajustes de AMSpace")];
+            let _: () =
+                msg_send![&w, setTitle:&*NSString::from_str(crate::i18n::tr("Ajustes de AMSpace"))];
             let _: () = msg_send![&w, setTitleVisibility:1isize];
             let _: () = msg_send![&w, setTitlebarAppearsTransparent:true];
             let _: () = msg_send![&w, setHidesOnDeactivate:false];
@@ -1548,7 +1558,7 @@ impl App {
             self.pause_button = button(
                 side,
                 rect(12., 109., 160., 28.),
-                "Pausar Mosaico",
+                crate::i18n::tr("Pausar Mosaico"),
                 target,
                 110,
             );
@@ -1556,7 +1566,7 @@ impl App {
             self.page_title = label(
                 root,
                 rect(220., height - 82., 432., 32.),
-                "Ventanas",
+                crate::i18n::tr("Ventanas"),
                 24.,
                 0.4,
                 false,
@@ -1629,7 +1639,7 @@ impl App {
             button(
                 root,
                 rect(width - 180., 38., 134., 30.),
-                "Accesibilidad…",
+                crate::i18n::tr("Accesibilidad…"),
                 target,
                 6,
             );
@@ -1653,7 +1663,7 @@ impl App {
             label(
                 root,
                 rect(18., 319., 310., 24.),
-                "Borde de la ventana activa",
+                crate::i18n::tr("Borde de la ventana activa"),
                 14.,
                 0.3,
                 false,
@@ -1662,26 +1672,32 @@ impl App {
                 root,
                 374.,
                 319.,
-                "Borde de la ventana activa",
+                crate::i18n::tr("Borde de la ventana activa"),
                 target,
                 1,
                 self.border_enabled,
             );
-            label(root, rect(18., 265., 90., 22.), "Color", 13., 0., false);
+            label(
+                root,
+                rect(18., 265., 90., 22.),
+                crate::i18n::tr("Color"),
+                13.,
+                0.,
+                false,
+            );
             let well = alloc_view(class!(NSColorWell), rect(365., 260., 48., 30.));
             let _: () = msg_send![&well, setColor:color(self.rgb[0],self.rgb[1],self.rgb[2],1.)];
             let _: () = msg_send![&well, setTarget:target];
             let _: () = msg_send![&well, setAction:sel!(change:)];
             let _: () = msg_send![&well, setTag:3isize];
-            let _: () =
-                msg_send![&well, setAccessibilityLabel:&*NSString::from_str("Color del borde")];
+            let _: () = msg_send![&well, setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Color del borde"))];
             let _: () = msg_send![root, addSubview:&*well];
             self.color_well = Retained::as_ptr(&well) as Obj;
             for (i, (name, rgb)) in [
-                ("Índigo", [0.42, 0.48, 0.95]),
-                ("Menta", [0.25, 0.72, 0.62]),
-                ("Ámbar", [0.94, 0.65, 0.27]),
-                ("Rosa", [0.88, 0.42, 0.60]),
+                (crate::i18n::tr("Índigo"), [0.42, 0.48, 0.95]),
+                (crate::i18n::tr("Menta"), [0.25, 0.72, 0.62]),
+                (crate::i18n::tr("Ámbar"), [0.94, 0.65, 0.27]),
+                (crate::i18n::tr("Rosa"), [0.88, 0.42, 0.60]),
             ]
             .iter()
             .enumerate()
@@ -1695,7 +1711,14 @@ impl App {
                 );
                 paint_swatch(b, name, *rgb);
             }
-            label(root, rect(18., 212., 90., 22.), "Grosor", 13., 0., false);
+            label(
+                root,
+                rect(18., 212., 90., 22.),
+                crate::i18n::tr("Grosor"),
+                13.,
+                0.,
+                false,
+            );
             self.width_label = label(
                 root,
                 rect(360., 212., 58., 22.),
@@ -1712,14 +1735,14 @@ impl App {
             let _: () = msg_send![&slider, setTarget:target];
             let _: () = msg_send![&slider, setAction:sel!(change:)];
             let _: () = msg_send![&slider, setTag:4isize];
-            let _: () = msg_send![&slider, setAccessibilityLabel:&*NSString::from_str("Grosor del borde en puntos")];
+            let _: () = msg_send![&slider, setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Grosor del borde en puntos"))];
             let _: () = msg_send![root, addSubview:&*slider];
             self.slider = Retained::as_ptr(&slider) as Obj;
             card(root, rect(0., 20., 432., 144.));
             label(
                 root,
                 rect(18., 122., 310., 24.),
-                "Enfocar al pasar el cursor",
+                crate::i18n::tr("Enfocar al pasar el cursor"),
                 14.,
                 0.3,
                 false,
@@ -1728,7 +1751,7 @@ impl App {
                 root,
                 374.,
                 122.,
-                "Enfocar al pasar el cursor",
+                crate::i18n::tr("Enfocar al pasar el cursor"),
                 target,
                 2,
                 self.hover_enabled,
@@ -1736,7 +1759,7 @@ impl App {
             label(
                 root,
                 rect(18., 77., 310., 22.),
-                "Traer al primer plano",
+                crate::i18n::tr("Traer al primer plano"),
                 13.,
                 0.,
                 false,
@@ -1745,7 +1768,7 @@ impl App {
                 root,
                 374.,
                 77.,
-                "Traer al primer plano",
+                crate::i18n::tr("Traer al primer plano"),
                 target,
                 11,
                 self.raise_enabled,
@@ -1754,7 +1777,7 @@ impl App {
             label(
                 root,
                 rect(18., 36., 385., 18.),
-                "Mantén ⌥ para pausar el foco automático.",
+                crate::i18n::tr("Mantén ⌥ para pausar el foco automático."),
                 11.,
                 0.,
                 true,
@@ -1784,7 +1807,9 @@ impl App {
                 if let Some(id) = spaces::shortcut_desktop(index as usize) {
                     self.select_desktop(id);
                 } else {
-                    self.feedback("Ese escritorio no existe en la pantalla principal.");
+                    self.feedback(crate::i18n::tr(
+                        "Ese escritorio no existe en la pantalla principal.",
+                    ));
                 }
             }
             Action::Float => {
@@ -1827,17 +1852,21 @@ impl App {
     }
     fn start_transfer(&mut self, destination: crate::window_move::Destination) {
         if self.tiling_paused {
-            self.show_notice("Reanuda Mosaico antes de trasladar una ventana.");
+            self.show_notice(crate::i18n::tr(
+                "Reanuda Mosaico antes de trasladar una ventana.",
+            ));
             return;
         }
         if self.switching.is_some() || self.layout_picker.is_some() || self.transfer.is_some() {
             self.record_transfer(
-                "Espera a que termine el cambio de escritorio o el traslado anterior.",
+                crate::i18n::tr(
+                    "Espera a que termine el cambio de escritorio o el traslado anterior.",
+                ),
                 true,
             );
             return;
         }
-        self.record_transfer("Preparando traslado de ventana…", true);
+        self.record_transfer(crate::i18n::tr("Preparando traslado de ventana…"), true);
         match crate::window_move::Pending::start(
             &mut self.tile_manager,
             Retained::as_ptr(&self.defaults) as Obj,
@@ -1905,10 +1934,12 @@ impl App {
                 if let crate::window_move::Progress::Failed(message) = result {
                     self.record_transfer(message, true);
                 } else if arrived {
-                    self.record_transfer("Ventana enviada al destino.", true);
+                    self.record_transfer(crate::i18n::tr("Ventana enviada al destino."), true);
                 } else {
                     self.record_transfer(
-                        "La ventana cambió de ubicación antes de confirmar el traslado.",
+                        crate::i18n::tr(
+                            "La ventana cambió de ubicación antes de confirmar el traslado.",
+                        ),
                         true,
                     );
                 }
@@ -1922,7 +1953,7 @@ impl App {
         if crate::shortcuts::edit(Retained::as_ptr(&self.defaults) as Obj, edits) {
             self.configure_shortcuts();
         } else {
-            self.feedback("Esa combinación coincide con otro atajo de AMSpace. Se conservan los ajustes anteriores.");
+            self.feedback(crate::i18n::tr("Esa combinación coincide con otro atajo de AMSpace. Se conservan los ajustes anteriores."));
         }
         self.refresh_shortcut_fields();
     }
@@ -1988,25 +2019,29 @@ impl App {
         let enabled = crate::tile_manager::pref(defaults, "shortcuts.enabled") != 0;
         let priority = crate::tile_manager::pref(defaults, "shortcuts.priority") != 0;
         let mut status = if priority && self.shortcuts.priority_active() {
-            "Prioridad activa".to_string()
+            crate::i18n::tr("Prioridad activa").to_string()
         } else if priority && self.shortcuts.priority {
-            "Prioridad suspendida; vuelve a activar el check para reintentar".to_string()
+            crate::i18n::tr("Prioridad suspendida; vuelve a activar el check para reintentar")
+                .to_string()
         } else if priority {
-            "Prioridad no disponible; se usan reservas normales".to_string()
+            crate::i18n::tr("Prioridad no disponible; se usan reservas normales").to_string()
         } else {
-            "Prioridad desactivada".to_string()
+            crate::i18n::tr("Prioridad desactivada").to_string()
         };
         if !enabled {
-            status.push_str(" · navegación desactivada");
+            status.push_str(crate::i18n::tr(" · navegación desactivada"));
         }
         if !self.shortcuts.unavailable.is_empty() {
-            status.push_str(&format!(
+            status.push_str(&crate::tr_format!(
                 " · {} combinaciones no disponibles",
+                " · {} shortcuts unavailable",
                 self.shortcuts.unavailable.len()
             ));
         }
         if !crate::window_move::space_moves_available() {
-            status.push_str("\nEl envío entre escritorios no está disponible en este macOS.");
+            status.push_str(crate::i18n::tr(
+                "\nEl envío entre escritorios no está disponible en este macOS.",
+            ));
         }
         unsafe {
             text(self.shortcut_status, &status);
@@ -2028,7 +2063,7 @@ impl App {
             label(
                 root,
                 rect(18., 700., width - 90., 24.),
-                "Navegación y traslado de ventanas",
+                crate::i18n::tr("Navegación y traslado de ventanas"),
                 14.,
                 0.3,
                 false,
@@ -2037,7 +2072,7 @@ impl App {
                 root,
                 width - 58.,
                 700.,
-                "Activar atajos de navegación y traslado",
+                crate::i18n::tr("Activar atajos de navegación y traslado"),
                 target,
                 90,
                 crate::tile_manager::pref(defaults, "shortcuts.enabled") != 0,
@@ -2045,7 +2080,7 @@ impl App {
             label(
                 root,
                 rect(18., 662., width - 36., 28.),
-                "Los atajos cambian los escritorios de la pantalla principal.",
+                crate::i18n::tr("Los atajos cambian los escritorios de la pantalla principal."),
                 11.,
                 0.,
                 true,
@@ -2053,7 +2088,7 @@ impl App {
             let priority = button(
                 root,
                 rect(18., 614., width - 36., 26.),
-                "Dar prioridad a los atajos de AMSpace",
+                crate::i18n::tr("Dar prioridad a los atajos de AMSpace"),
                 target,
                 91,
             );
@@ -2062,7 +2097,9 @@ impl App {
             label(
                 root,
                 rect(18., 586., width - 36., 22.),
-                "macOS, otras herramientas de teclado y la entrada segura pueden limitarla.",
+                crate::i18n::tr(
+                    "macOS, otras herramientas de teclado y la entrada segura pueden limitarla.",
+                ),
                 11.,
                 0.,
                 true,
@@ -2073,28 +2110,73 @@ impl App {
             button(
                 root,
                 rect(width - 130., 550., 112., 26.),
-                "Sugerencias…",
+                crate::i18n::tr("Sugerencias…"),
                 target,
                 54,
             );
             let modifiers: Vec<_> = crate::tile_hotkey::MODIFIERS
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, _)| crate::i18n::tr(name))
                 .collect();
             let keys: Vec<_> = crate::tile_hotkey::KEYS
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, _)| crate::i18n::tr(name))
                 .collect();
             for (row, (title, prefix, mods_fallback, key_fallback)) in [
-                ("Cambiar a escritorio", "shortcuts.desktop", 11, None),
-                ("Enviar ventana a escritorio", "shortcuts.send", 4, None),
-                ("Enviar a pantalla izquierda", "shortcuts.left", 9, Some(50)),
-                ("Enviar a pantalla derecha", "shortcuts.right", 9, Some(51)),
-                ("Ventana flotante / mosaico", "tile", 0, Some(0)),
-                ("Selector de plantillas", "tile.picker", 0, Some(2)),
-                ("Pestaña anterior", "tile.tab.previous", 0, Some(50)),
-                ("Pestaña siguiente", "tile.tab.next", 0, Some(51)),
-                ("Separar pestaña activa", "tile.tab.detach", 0, Some(7)),
+                (
+                    crate::i18n::tr("Cambiar a escritorio"),
+                    "shortcuts.desktop",
+                    11,
+                    None,
+                ),
+                (
+                    crate::i18n::tr("Enviar ventana a escritorio"),
+                    "shortcuts.send",
+                    4,
+                    None,
+                ),
+                (
+                    crate::i18n::tr("Enviar a pantalla izquierda"),
+                    "shortcuts.left",
+                    9,
+                    Some(50),
+                ),
+                (
+                    crate::i18n::tr("Enviar a pantalla derecha"),
+                    "shortcuts.right",
+                    9,
+                    Some(51),
+                ),
+                (
+                    crate::i18n::tr("Ventana flotante / mosaico"),
+                    "tile",
+                    0,
+                    Some(0),
+                ),
+                (
+                    crate::i18n::tr("Selector de plantillas"),
+                    "tile.picker",
+                    0,
+                    Some(2),
+                ),
+                (
+                    crate::i18n::tr("Pestaña anterior"),
+                    "tile.tab.previous",
+                    0,
+                    Some(50),
+                ),
+                (
+                    crate::i18n::tr("Pestaña siguiente"),
+                    "tile.tab.next",
+                    0,
+                    Some(51),
+                ),
+                (
+                    crate::i18n::tr("Separar pestaña activa"),
+                    "tile.tab.detach",
+                    0,
+                    Some(7),
+                ),
             ]
             .into_iter()
             .enumerate()
@@ -2141,7 +2223,7 @@ impl App {
             self.tab_shortcuts_switch = button(
                 root,
                 rect(18., 104., width - 36., 26.),
-                "Activar atajos de pestañas (requiere Mosaico)",
+                crate::i18n::tr("Activar atajos de pestañas (requiere Mosaico)"),
                 target,
                 94,
             );
@@ -2149,7 +2231,7 @@ impl App {
             let stay = button(
                 root,
                 rect(18., 59., width - 36., 26.),
-                "Al enviar a otro escritorio, permanecer en el origen",
+                crate::i18n::tr("Al enviar a otro escritorio, permanecer en el origen"),
                 target,
                 93,
             );
@@ -2158,7 +2240,9 @@ impl App {
             label(
                 root,
                 rect(18., 15., width - 36., 32.),
-                "Los escritorios se numeran por pantalla. Flotante y selector requieren Mosaico activo.",
+                crate::i18n::tr(
+                    "Los escritorios se numeran por pantalla. Flotante y selector requieren Mosaico activo.",
+                ),
                 11.,
                 0.,
                 true,
@@ -2171,6 +2255,7 @@ impl App {
         }
     }
     fn configure_tiling(&mut self) {
+        mouse_delivery::clear(Retained::as_ptr(&self.target) as Obj);
         self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.tile_timer.take() {
@@ -2189,29 +2274,9 @@ impl App {
                 self.tile_manager.cancel_drag();
                 return;
             }
-            self.tile_mouse = crate::tile_mouse::Monitor::new(|down, point| {
-                autoreleasepool(|_| {
-                    with_app(|a| {
-                        if a.layout_picker.is_some()
-                            || a.tiling_paused
-                            || a.tab_menu.is_some()
-                            || a.transfer.is_some()
-                            || a.switching.is_some()
-                            || a.sleeping
-                        {
-                            return;
-                        }
-                        a.tile_manager.mouse_event(
-                            Retained::as_ptr(&a.defaults) as Obj,
-                            down,
-                            point,
-                        );
-                        if let Some(error) = a.tile_manager.interaction_error.take() {
-                            a.show_notice(&error);
-                        }
-                        a.update_tile_timer();
-                    })
-                });
+            let target = Retained::as_ptr(&self.target) as Obj;
+            self.tile_mouse = crate::tile_mouse::Monitor::new(move |down, point| {
+                mouse_delivery::enqueue(target, down, point);
             });
             self.refresh_picker_hint();
             self.tile_manager.invalidate();
@@ -2265,12 +2330,13 @@ impl App {
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
             let title = if let Some(id) = self.tile_space {
                 let snapshot = spaces::snapshot();
-                format!(
+                crate::tr_format!(
                     "Escritorio {}",
+                    "Desktop {}",
                     snapshot.desktops.iter().position(|s| *s == id).unwrap_or(0) + 1
                 )
             } else {
-                "Selecciona un escritorio".into()
+                crate::i18n::tr("Selecciona un escritorio").into()
             };
             text(self.tile_controls[0], &title);
             let enabled = self.tile_space.is_some() && !self.tiling_paused;
@@ -2319,7 +2385,7 @@ impl App {
             }
             text(
                 self.tile_controls[2],
-                "Configura los atajos en la sección Atajos.",
+                crate::i18n::tr("Configura los atajos en la sección Atajos."),
             );
         }
     }
@@ -2333,7 +2399,7 @@ impl App {
             label(
                 root,
                 rect(18., height - 43., width - 90., 24.),
-                "Activar mosaico",
+                crate::i18n::tr("Activar mosaico"),
                 14.,
                 0.3,
                 false,
@@ -2342,7 +2408,7 @@ impl App {
                 root,
                 width - 58.,
                 height - 43.,
-                "Activar mosaico",
+                crate::i18n::tr("Activar mosaico"),
                 target,
                 40,
                 crate::tile_manager::pref(defaults, "tile.enabled") != 0,
@@ -2359,7 +2425,7 @@ impl App {
                 root,
                 width - 58.,
                 height - 104.,
-                "Mosaico en este escritorio",
+                crate::i18n::tr("Mosaico en este escritorio"),
                 target,
                 41,
                 true,
@@ -2376,7 +2442,7 @@ impl App {
                 let _: () = msg_send![b, setImagePosition:5usize];
                 let font: Obj = msg_send![class!(NSFont), systemFontOfSize:11f64,weight:0.2f64];
                 let _: () = msg_send![b, setFont:font];
-                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&format!("Plantilla: {}",layout.name()))];
+                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("Plantilla: {}", "Layout: {}", layout.name()))];
                 self.tile_choices.push(b);
             }
             // The lower rows start under the last template row, whatever its
@@ -2393,7 +2459,7 @@ impl App {
             label(
                 root,
                 rect(18., animation_row, width - 90., 22.),
-                "Animar colocaciones",
+                crate::i18n::tr("Animar colocaciones"),
                 13.,
                 0.,
                 false,
@@ -2402,7 +2468,7 @@ impl App {
                 root,
                 width - 58.,
                 animation_row,
-                "Animar colocaciones",
+                crate::i18n::tr("Animar colocaciones"),
                 target,
                 63,
                 crate::tile_manager::pref_or(defaults, "tile.animate", 1) != 0,
@@ -2410,7 +2476,7 @@ impl App {
             let float_drop_label = label(
                 root,
                 rect(18., float_drop_row, width - 90., 22.),
-                "Zona superior: flotante / mosaico",
+                crate::i18n::tr("Zona superior: flotante / mosaico"),
                 13.,
                 0.,
                 false,
@@ -2419,18 +2485,27 @@ impl App {
                 root,
                 width - 58.,
                 float_drop_row,
-                "Zona superior: flotante / mosaico",
+                crate::i18n::tr("Zona superior: flotante / mosaico"),
                 target,
                 68,
                 crate::tile_manager::pref_or(defaults, "tile.shake", 1) != 0,
             );
+            let float_drop_tip = if crate::i18n::is_english() {
+                ns_string!(
+                    "Moving a window shows a box at the top center of the display. Drop inside to make it floating or return it to tiling; leaving cancels."
+                )
+            } else {
+                ns_string!(
+                    "Al mover una ventana aparece un recuadro arriba, en el centro de la pantalla. Suelta dentro para hacerla flotante o devolverla al mosaico; salir cancela."
+                )
+            };
             for control in [float_drop_label, float_drop_switch] {
-                let _: () = msg_send![control, setToolTip:ns_string!("Al mover una ventana aparece un recuadro arriba, en el centro de la pantalla. Suelta dentro para hacerla flotante o devolverla al mosaico; salir cancela.")];
+                let _: () = msg_send![control, setToolTip:float_drop_tip];
             }
             label(
                 root,
                 rect(18., simple_row, width - 90., 22.),
-                "Colocación inteligente",
+                crate::i18n::tr("Colocación inteligente"),
                 13.,
                 0.,
                 false,
@@ -2439,7 +2514,7 @@ impl App {
                 root,
                 width - 58.,
                 simple_row,
-                "Colocación inteligente",
+                crate::i18n::tr("Colocación inteligente"),
                 target,
                 43,
                 crate::tile_manager::pref(defaults, "tile.simple") == 0,
@@ -2447,7 +2522,7 @@ impl App {
             label(
                 root,
                 rect(18., preview_row, width - 90., 22.),
-                "Previsualizar al redimensionar",
+                crate::i18n::tr("Previsualizar al redimensionar"),
                 13.,
                 0.,
                 false,
@@ -2456,7 +2531,7 @@ impl App {
                 root,
                 width - 58.,
                 preview_row,
-                "Previsualizar al redimensionar",
+                crate::i18n::tr("Previsualizar al redimensionar"),
                 target,
                 61,
                 crate::tile_manager::pref(defaults, "tile.resize.preview") != 0,
@@ -2464,7 +2539,7 @@ impl App {
             label(
                 root,
                 rect(18., groups_row, width - 90., 22.),
-                "Agrupar como pestañas",
+                crate::i18n::tr("Agrupar como pestañas"),
                 13.,
                 0.,
                 false,
@@ -2473,7 +2548,7 @@ impl App {
                 root,
                 width - 58.,
                 groups_row,
-                "Agrupar como pestañas",
+                crate::i18n::tr("Agrupar como pestañas"),
                 target,
                 65,
                 crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0,
@@ -2481,7 +2556,7 @@ impl App {
             label(
                 root,
                 rect(18., max_row, width - 300., 22.),
-                "Máximo de pestañas (2–20)",
+                crate::i18n::tr("Máximo de pestañas (2–20)"),
                 13.,
                 0.,
                 false,
@@ -2491,7 +2566,7 @@ impl App {
                 rect(width - 118., max_row - 2., 60., 26.),
             );
             let _: () = msg_send![&max_field,setStringValue:&*NSString::from_str(&crate::tile_manager::max_group_tabs(defaults).to_string())];
-            let _: () = msg_send![&max_field,setAccessibilityLabel:&*NSString::from_str("Máximo de pestañas")];
+            let _: () = msg_send![&max_field,setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Máximo de pestañas"))];
             let _: () = msg_send![&max_field,setTarget:target];
             let _: () = msg_send![&max_field,setAction:sel!(change:)];
             let _: () = msg_send![&max_field,setTag:66isize];
@@ -2499,7 +2574,7 @@ impl App {
             label(
                 root,
                 rect(18., alignment_row, width - 210., 22.),
-                "Alineación de pestañas",
+                crate::i18n::tr("Alineación de pestañas"),
                 13.,
                 0.,
                 false,
@@ -2507,25 +2582,25 @@ impl App {
             let alignment = popup(
                 root,
                 rect(width - 178., alignment_row - 2., 160., 26.),
-                &["Izquierda", "Centro"],
+                &[crate::i18n::tr("Izquierda"), crate::i18n::tr("Centro")],
                 target,
                 67,
             );
             let selected =
                 isize::from(crate::tile_manager::pref(defaults, "tile.groups.centered") == 1);
             let _: () = msg_send![alignment,selectItemAtIndex:selected];
-            let _: () = msg_send![alignment,setAccessibilityLabel:&*NSString::from_str("Alineación de pestañas")];
+            let _: () = msg_send![alignment,setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Alineación de pestañas"))];
             button(
                 root,
                 rect(15., actions_row, (width - 36.) / 2., 28.),
-                "Rejilla y plantillas…",
+                crate::i18n::tr("Rejilla y plantillas…"),
                 target,
                 49,
             );
             button(
                 root,
                 rect(width / 2. + 3., actions_row, (width - 36.) / 2., 28.),
-                "Selector de plantillas",
+                crate::i18n::tr("Selector de plantillas"),
                 target,
                 57,
             );
@@ -2533,7 +2608,7 @@ impl App {
             button(
                 root,
                 rect(width - 181., 12., 165., 30.),
-                "Apps flotantes…",
+                crate::i18n::tr("Apps flotantes…"),
                 target,
                 46,
             );
@@ -2552,9 +2627,11 @@ impl App {
                     .shortcuts
                     .available(crate::tile_hotkey::Action::Layouts)
                 {
-                    "Atajo listo · abre el selector en la pantalla del cursor."
+                    crate::i18n::tr("Atajo listo · abre el selector en la pantalla del cursor.")
                 } else {
-                    "Atajo no disponible: revisa tiling, Accesibilidad o la combinación."
+                    crate::i18n::tr(
+                        "Atajo no disponible: revisa tiling, Accesibilidad o la combinación.",
+                    )
                 },
             );
         }
@@ -2563,8 +2640,7 @@ impl App {
         unsafe {
             if self.picker_settings.is_none() {
                 let panel = window(rect(0., 0., 480., 340.), 1 | 2 | 4);
-                let _: () =
-                    msg_send![&panel,setTitle:&*NSString::from_str("Selector de distribuciones")];
+                let _: () = msg_send![&panel,setTitle:&*NSString::from_str(crate::i18n::tr("Selector de distribuciones"))];
                 let _: () = msg_send![&panel, center];
                 let root: Obj = msg_send![&panel, contentView];
                 let target = Retained::as_ptr(&self.target) as Obj;
@@ -2572,7 +2648,7 @@ impl App {
                 label(
                     root,
                     rect(20., 298., 440., 24.),
-                    "Plantillas en la pantalla del cursor",
+                    crate::i18n::tr("Plantillas en la pantalla del cursor"),
                     16.,
                     0.3,
                     false,
@@ -2580,7 +2656,9 @@ impl App {
                 label(
                     root,
                     rect(20., 271., 440., 22.),
-                    "Previsualiza con el ratón o las flechas. Intro aplica; Esc cancela.",
+                    crate::i18n::tr(
+                        "Previsualiza con el ratón o las flechas. Intro aplica; Esc cancela.",
+                    ),
                     11.,
                     0.,
                     true,
@@ -2588,7 +2666,7 @@ impl App {
                 label(
                     root,
                     rect(20., 227., 160., 24.),
-                    "Abrir selector",
+                    crate::i18n::tr("Abrir selector"),
                     13.,
                     0.,
                     false,
@@ -2620,14 +2698,14 @@ impl App {
                 button(
                     root,
                     rect(18., 142., 230., 30.),
-                    "Buscar atajos libres",
+                    crate::i18n::tr("Buscar atajos libres"),
                     target,
                     58,
                 );
                 self.picker_suggestions = popup(
                     root,
                     rect(20., 100., 290., 30.),
-                    &["Busca sugerencias en este Mac"],
+                    &[crate::i18n::tr("Busca sugerencias en este Mac")],
                     target,
                     59,
                 );
@@ -2635,7 +2713,7 @@ impl App {
                 self.picker_apply = button(
                     root,
                     rect(320., 100., 140., 30.),
-                    "Usar sugerido",
+                    crate::i18n::tr("Usar sugerido"),
                     target,
                     60,
                 );
@@ -2643,8 +2721,9 @@ impl App {
                 label(
                     root,
                     rect(20., 56., 440., 36.),
-                    "Se comprueban reservas globales y atajos del sistema.
-Otras apps pueden tener atajos propios no detectables.",
+                    crate::i18n::tr(
+                        "Se comprueban reservas globales y atajos del sistema.\nOtras apps pueden tener atajos propios no detectables.",
+                    ),
                     11.,
                     0.,
                     true,
@@ -2653,7 +2732,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 button(
                     root,
                     rect(270., 20., 190., 32.),
-                    "Mostrar plantillas",
+                    crate::i18n::tr("Mostrar plantillas"),
                     target,
                     57,
                 );
@@ -2683,18 +2762,22 @@ Otras apps pueden tener atajos propios no detectables.",
             text(
                 self.picker_hint,
                 if suggestions.is_none() {
-                    "No se pudieron consultar los atajos del sistema."
+                    crate::i18n::tr("No se pudieron consultar los atajos del sistema.")
                 } else if self.suggested_shortcuts.is_empty() {
-                    "No se encontraron combinaciones libres. Prueba otra tecla."
+                    crate::i18n::tr("No se encontraron combinaciones libres. Prueba otra tecla.")
                 } else {
-                    "Sugerencias comprobadas en este Mac. Elige una y pulsa Usar sugerido."
+                    crate::i18n::tr(
+                        "Sugerencias comprobadas en este Mac. Elige una y pulsa Usar sugerido.",
+                    )
                 },
             );
         }
     }
     fn toggle_picker(&mut self) {
         if self.tiling_paused {
-            self.show_notice("Reanuda Mosaico antes de cambiar la plantilla.");
+            self.show_notice(crate::i18n::tr(
+                "Reanuda Mosaico antes de cambiar la plantilla.",
+            ));
             return;
         }
         if self.layout_picker.take().is_some() {
@@ -2707,14 +2790,18 @@ Otras apps pueden tener atajos propios no detectables.",
             || !ax::trusted()
             || crate::tile_manager::pref(defaults, "tile.enabled") == 0
         {
-            self.feedback("Activa tiling y Accesibilidad para usar las plantillas.");
+            self.feedback(crate::i18n::tr(
+                "Activa tiling y Accesibilidad para usar las plantillas.",
+            ));
             self.refresh_picker_hint();
             return;
         }
         self.pending_focus = None;
         self.tile_manager.refresh_for_picker(defaults);
         let Some(context) = self.tile_manager.picker_context() else {
-            self.feedback("Activa el mosaico en el escritorio de esta pantalla.");
+            self.feedback(crate::i18n::tr(
+                "Activa el mosaico en el escritorio de esta pantalla.",
+            ));
             return;
         };
         self.layout_picker = crate::tile_picker::Picker::new(
@@ -2751,7 +2838,9 @@ Otras apps pueden tener atajos propios no detectables.",
         if applied {
             self.tile_manager.tick(defaults);
         } else {
-            self.feedback("La pantalla o sus ventanas han cambiado. Abre de nuevo el selector.");
+            self.feedback(crate::i18n::tr(
+                "La pantalla o sus ventanas han cambiado. Abre de nuevo el selector.",
+            ));
         }
         self.hover_resume = Instant::now() + Duration::from_millis(300);
         self.update_tile_timer();
@@ -2767,14 +2856,14 @@ Otras apps pueden tener atajos propios no detectables.",
         unsafe {
             if self.tile_grid_window.is_none() {
                 let w = window(rect(0., 0., 520., 620.), 1 | 2 | 4);
-                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Rejilla y plantillas")];
+                let _: () = msg_send![&w,setTitle:&*NSString::from_str(crate::i18n::tr("Rejilla y plantillas"))];
                 let _: () = msg_send![&w, center];
                 let root: Obj = msg_send![&w, contentView];
                 let target = Retained::as_ptr(&self.target) as Obj;
                 label(
                     root,
                     rect(22., 574., 476., 26.),
-                    "Rejilla y plantillas",
+                    crate::i18n::tr("Rejilla y plantillas"),
                     18.,
                     0.3,
                     false,
@@ -2782,7 +2871,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(22., 533., 400., 22.),
-                    "Ajustar tamaños a una rejilla virtual",
+                    crate::i18n::tr("Ajustar tamaños a una rejilla virtual"),
                     14.,
                     0.,
                     false,
@@ -2791,7 +2880,7 @@ Otras apps pueden tener atajos propios no detectables.",
                     root,
                     455.,
                     533.,
-                    "Activar rejilla virtual",
+                    crate::i18n::tr("Activar rejilla virtual"),
                     target,
                     50,
                     crate::tile_manager::pref(defaults, "tile.grid.enabled") != 0,
@@ -2799,14 +2888,19 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(22., 504., 476., 20.),
-                    "Las divisiones se alinean sin dejar huecos entre ventanas.",
+                    crate::i18n::tr("Las divisiones se alinean sin dejar huecos entre ventanas."),
                     12.,
                     0.,
                     true,
                 );
                 for (i, (name, key, fallback, max)) in [
-                    ("Columnas (2–240)", "tile.grid.columns", 120, 240),
-                    ("Filas (2–60)", "tile.grid.rows", 6, 60),
+                    (
+                        crate::i18n::tr("Columnas (2–240)"),
+                        "tile.grid.columns",
+                        120,
+                        240,
+                    ),
+                    (crate::i18n::tr("Filas (2–60)"), "tile.grid.rows", 6, 60),
                 ]
                 .iter()
                 .enumerate()
@@ -2822,7 +2916,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 button(
                     root,
                     rect(350., 400., 148., 30.),
-                    "Aplicar rejilla",
+                    crate::i18n::tr("Aplicar rejilla"),
                     target,
                     51,
                 );
@@ -2830,27 +2924,32 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(28., 346., 460., 24.),
-                    "Plantillas personalizadas",
+                    crate::i18n::tr("Plantillas personalizadas"),
                     15.,
                     0.3,
                     false,
                 );
                 let name = alloc_view(class!(NSTextField), rect(28., 303., 320., 27.));
-                let _: () = msg_send![&name,setPlaceholderString:&*NSString::from_str("Nombre de la plantilla")];
-                let _: () = msg_send![&name,setAccessibilityLabel:&*NSString::from_str("Nombre de la plantilla")];
+                let _: () = msg_send![&name,setPlaceholderString:&*NSString::from_str(crate::i18n::tr("Nombre de la plantilla"))];
+                let _: () = msg_send![&name,setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Nombre de la plantilla"))];
                 let _: () = msg_send![root,addSubview:&*name];
                 self.custom_name = Retained::as_ptr(&name) as Obj;
                 button(
                     root,
                     rect(360., 301., 132., 30.),
-                    "Guardar actual",
+                    crate::i18n::tr("Guardar actual"),
                     target,
                     95,
                 );
                 self.custom_menu = popup(root, rect(26., 254., 324., 30.), &[], target, 96);
-                let _: () = msg_send![self.custom_menu,setAccessibilityLabel:&*NSString::from_str("Plantillas guardadas")];
-                self.custom_delete =
-                    button(root, rect(360., 254., 132., 30.), "Eliminar", target, 98);
+                let _: () = msg_send![self.custom_menu,setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Plantillas guardadas"))];
+                self.custom_delete = button(
+                    root,
+                    rect(360., 254., 132., 30.),
+                    crate::i18n::tr("Eliminar"),
+                    target,
+                    98,
+                );
                 let preview = alloc_view(class!(NSImageView), rect(26., 124., 220., 116.));
                 let _: () = msg_send![root,addSubview:&*preview];
                 self.custom_preview = Retained::as_ptr(&preview) as Obj;
@@ -2858,14 +2957,14 @@ Otras apps pueden tener atajos propios no detectables.",
                 self.custom_apply = button(
                     root,
                     rect(360., 128., 132., 30.),
-                    "Aplicar plantilla",
+                    crate::i18n::tr("Aplicar plantilla"),
                     target,
                     97,
                 );
                 label(
                     root,
                     rect(22., 82., 476., 18.),
-                    "Copia rápida del escritorio actual",
+                    crate::i18n::tr("Copia rápida del escritorio actual"),
                     11.,
                     0.,
                     true,
@@ -2873,21 +2972,23 @@ Otras apps pueden tener atajos propios no detectables.",
                 button(
                     root,
                     rect(18., 48., 230., 30.),
-                    "Guardar copia rápida",
+                    crate::i18n::tr("Guardar copia rápida"),
                     target,
                     52,
                 );
                 button(
                     root,
                     rect(272., 48., 230., 30.),
-                    "Restaurar copia rápida",
+                    crate::i18n::tr("Restaurar copia rápida"),
                     target,
                     53,
                 );
                 self.tile_grid_status = wrapping_label(
                     root,
                     rect(22., 3., 476., 42.),
-                    "Se guardan divisiones y proporciones; no se abren aplicaciones.",
+                    crate::i18n::tr(
+                        "Se guardan divisiones y proporciones; no se abren aplicaciones.",
+                    ),
                     11.,
                 );
                 self.tile_grid_window = Some(w);
@@ -2914,7 +3015,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 let _: () = msg_send![self.custom_menu,addItemWithTitle:&*NSString::from_str(&template.name)];
             }
             if self.custom_templates.is_empty() {
-                let _: () = msg_send![self.custom_menu,addItemWithTitle:&*NSString::from_str("Ninguna plantilla guardada")];
+                let _: () = msg_send![self.custom_menu,addItemWithTitle:&*NSString::from_str(crate::i18n::tr("Ninguna plantilla guardada"))];
             } else if let Some(index) =
                 selected.and_then(|id| self.custom_templates.iter().position(|t| t.id == id))
             {
@@ -2945,13 +3046,14 @@ Otras apps pueden tener atajos propios no detectables.",
                 }
                 text(
                     self.custom_info,
-                    &format!(
+                    &crate::tr_format!(
                         "{} {}\nDivisiones y proporciones guardadas.\nSe conserva la rejilla actual.",
+                        "{} {}\nSaved divisions and proportions.\nThe current grid is kept.",
                         template.count,
                         if template.count == 1 {
-                            "ventana"
+                            crate::i18n::tr("ventana")
                         } else {
-                            "ventanas"
+                            crate::i18n::tr("ventanas")
                         }
                     ),
                 );
@@ -2959,7 +3061,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 let _: () = msg_send![self.custom_preview,setImage:ptr::null::<AnyObject>()];
                 text(
                     self.custom_info,
-                    "Guarda el mosaico actual.\nReutilízalo con otras ventanas.",
+                    crate::i18n::tr("Guarda el mosaico actual.\nReutilízalo con otras ventanas."),
                 );
             }
         }
@@ -2978,7 +3080,9 @@ Otras apps pueden tener atajos propios no detectables.",
             unsafe {
                 text(
                     self.tile_grid_status,
-                    "Espera a que termine la operación actual antes de cambiar una plantilla.",
+                    crate::i18n::tr(
+                        "Espera a que termine la operación actual antes de cambiar una plantilla.",
+                    ),
                 );
             }
             return;
@@ -2995,7 +3099,7 @@ Otras apps pueden tener atajos propios no detectables.",
                     self.refresh_custom_templates(None);
                     text(
                         self.tile_grid_status,
-                        "Plantilla eliminada. El mosaico actual se conserva.",
+                        crate::i18n::tr("Plantilla eliminada. El mosaico actual se conserva."),
                     );
                 }
                 return;
@@ -3017,14 +3121,16 @@ Otras apps pueden tener atajos propios no detectables.",
                 let result = context
                     .desktop
                     .save_distribution(context.area)
-                    .ok_or("Esta distribución no se puede guardar.")
+                    .ok_or(crate::i18n::tr("Esta distribución no se puede guardar."))
                     .and_then(|data| crate::custom_templates::save(defaults, &name, data));
                 match result {
                     Ok(id) => {
                         self.refresh_custom_templates(Some(&id));
                         text(
                             self.tile_grid_status,
-                            "Plantilla guardada. Puedes aplicarla en otros escritorios con el mismo número de ventanas.",
+                            crate::i18n::tr(
+                                "Plantilla guardada. Puedes aplicarla en otros escritorios con el mismo número de ventanas.",
+                            ),
                         );
                     }
                     Err(message) => text(self.tile_grid_status, message),
@@ -3033,8 +3139,9 @@ Otras apps pueden tener atajos propios no detectables.",
                 if template.count != context.desktop.order.len() {
                     text(
                         self.tile_grid_status,
-                        &format!(
+                        &crate::tr_format!(
                             "Esta plantilla tiene {} huecos. Necesitas {} ventanas en mosaico en esta pantalla; ahora hay {}.",
+                            "This layout has {} slots. You need {} tiled windows on this display; there are {} now.",
                             template.count,
                             template.count,
                             context.desktop.order.len()
@@ -3047,14 +3154,18 @@ Otras apps pueden tener atajos propios no detectables.",
                 ) {
                     text(
                         self.tile_grid_status,
-                        "Plantilla aplicada conservando sus divisiones y proporciones.",
+                        crate::i18n::tr(
+                            "Plantilla aplicada conservando sus divisiones y proporciones.",
+                        ),
                     );
                     self.refresh_tile_controls();
                     self.update_tile_timer();
                 } else {
                     text(
                         self.tile_grid_status,
-                        "Las ventanas o la pantalla han cambiado, o sus tamaños mínimos no caben en esta distribución.",
+                        crate::i18n::tr(
+                            "Las ventanas o la pantalla han cambiado, o sus tamaños mínimos no caben en esta distribución.",
+                        ),
                     );
                 }
             }
@@ -3064,14 +3175,14 @@ Otras apps pueden tener atajos propios no detectables.",
         unsafe {
             if self.tile_rules_window.is_none() {
                 let w = window(rect(0., 0., 480., 430.), 1 | 2 | 4);
-                let _: () = msg_send![&w,setTitle:&*NSString::from_str("Aplicaciones flotantes")];
+                let _: () = msg_send![&w,setTitle:&*NSString::from_str(crate::i18n::tr("Aplicaciones flotantes"))];
                 let _: () = msg_send![&w, center];
                 let root: Obj = msg_send![&w, contentView];
                 let target = Retained::as_ptr(&self.target) as Obj;
                 label(
                     root,
                     rect(22., 385., 435., 24.),
-                    "Abrir como flotantes",
+                    crate::i18n::tr("Abrir como flotantes"),
                     18.,
                     0.3,
                     false,
@@ -3079,7 +3190,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(22., 356., 435., 20.),
-                    "Se aplica a las nuevas ventanas de estas aplicaciones.",
+                    crate::i18n::tr("Se aplica a las nuevas ventanas de estas aplicaciones."),
                     12.,
                     0.,
                     true,
@@ -3087,7 +3198,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(22., 332., 435., 20.),
-                    "Puedes devolver cada ventana al tile con tu atajo.",
+                    crate::i18n::tr("Puedes devolver cada ventana al tile con tu atajo."),
                     12.,
                     0.,
                     true,
@@ -3101,11 +3212,17 @@ Otras apps pueden tener atajos propios no detectables.",
                 button(
                     root,
                     rect(18., 18., 190., 30.),
-                    "Añadir aplicación…",
+                    crate::i18n::tr("Añadir aplicación…"),
                     target,
                     47,
                 );
-                button(root, rect(343., 18., 119., 30.), "Cerrar", target, 48);
+                button(
+                    root,
+                    rect(343., 18., 119., 30.),
+                    crate::i18n::tr("Cerrar"),
+                    target,
+                    48,
+                );
                 self.tile_rules_window = Some(w);
             }
             self.rebuild_tile_rules();
@@ -3128,7 +3245,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(12., height - 45., 400., 24.),
-                    "Ninguna aplicación: las ventanas usarán mosaico.",
+                    crate::i18n::tr("Ninguna aplicación: las ventanas usarán mosaico."),
                     12.,
                     0.,
                     true,
@@ -3141,11 +3258,11 @@ Otras apps pueden tener atajos propios no detectables.",
                 let remove = button(
                     root,
                     rect(326., y + 15., 88., 28.),
-                    "Quitar",
+                    crate::i18n::tr("Quitar"),
                     Retained::as_ptr(&self.target) as Obj,
                     2000 + i as isize,
                 );
-                let _: () = msg_send![remove,setAccessibilityLabel:&*NSString::from_str(&format!("Quitar {name}"))];
+                let _: () = msg_send![remove,setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("Quitar {name}", "Remove {name}"))];
             }
             let _: () = msg_send![self.tile_rules_scroll,setDocumentView:&*document];
         }
@@ -3153,7 +3270,7 @@ Otras apps pueden tener atajos propios no detectables.",
     fn add_tile_rule(&mut self) {
         unsafe {
             let panel: Obj = msg_send![class!(NSOpenPanel), openPanel];
-            let _: () = msg_send![panel,setTitle:&*NSString::from_str("Selecciona una aplicación")];
+            let _: () = msg_send![panel,setTitle:&*NSString::from_str(crate::i18n::tr("Selecciona una aplicación"))];
             let _: () = msg_send![panel,setCanChooseFiles:true];
             let _: () = msg_send![panel,setCanChooseDirectories:false];
             let _: () = msg_send![panel,setAllowsMultipleSelection:false];
@@ -3174,56 +3291,98 @@ Otras apps pueden tener atajos propios no detectables.",
                     );
                     self.rebuild_tile_rules();
                 } else {
-                    self.feedback("La aplicación seleccionada no tiene identificador de bundle.");
+                    self.feedback(crate::i18n::tr(
+                        "La aplicación seleccionada no tiene identificador de bundle.",
+                    ));
                 }
             }
         }
     }
     unsafe fn build_application_page(&mut self, root: Obj, target: Obj) {
         unsafe {
-            card(root, rect(0., 284., 432., 76.));
+            let bounds: NSRect = msg_send![root, bounds];
+            let scroll = alloc_view(class!(NSScrollView), bounds);
+            let _: () = msg_send![&scroll, setHasVerticalScroller:true];
+            let _: () = msg_send![&scroll, setAutohidesScrollers:true];
+            let _: () = msg_send![&scroll, setDrawsBackground:false];
+            let _: () = msg_send![root, addSubview:&*scroll];
+            let width = bounds.size.width - 16.;
+            let document = alloc_view(class!(NSView), rect(0., 0., width, 488.));
+            let root = Retained::as_ptr(&document) as Obj;
+            card(root, rect(0., 376., width, 112.));
             label(
                 root,
-                rect(18., 311., 310., 24.),
-                "Abrir al iniciar sesión",
+                rect(18., 448., 150., 24.),
+                crate::i18n::tr("Idioma"),
+                14.,
+                0.3,
+                false,
+            );
+            let language = popup(
+                root,
+                rect(width - 186., 442., 168., 30.),
+                &[crate::i18n::tr("Sistema"), "Español", "English"],
+                target,
+                120,
+            );
+            let _: () = msg_send![language, selectItemAtIndex:crate::i18n::preference(Retained::as_ptr(&self.defaults) as Obj) as isize];
+            wrapping_label(
+                root,
+                rect(18., 392., width - 36., 40.),
+                crate::i18n::tr(
+                    "El idioma del sistema elige español o inglés. El cambio se aplica al volver a abrir AMSpace.",
+                ),
+                11.,
+            );
+            card(root, rect(0., 284., width, 76.));
+            label(
+                root,
+                rect(18., 311., width - 122., 24.),
+                crate::i18n::tr("Abrir al iniciar sesión"),
                 14.,
                 0.3,
                 false,
             );
             self.login = toggle(
                 root,
-                374.,
+                width - 58.,
                 311.,
-                "Abrir al iniciar sesión",
+                crate::i18n::tr("Abrir al iniciar sesión"),
                 target,
                 5,
                 false,
             );
-            card(root, rect(0., 132., 432., 136.));
+            card(root, rect(0., 132., width, 136.));
             label(
                 root,
                 rect(18., 227., 240., 24.),
-                "Actualizaciones",
+                crate::i18n::tr("Actualizaciones"),
                 14.,
                 0.3,
                 false,
             );
-            let check = button(root, rect(299., 222., 115., 30.), "Buscar ahora", target, 8);
+            let check = button(
+                root,
+                rect(width - 133., 222., 115., 30.),
+                crate::i18n::tr("Buscar ahora"),
+                target,
+                8,
+            );
             let available = self.updater.is_some();
             let _: () = msg_send![check, setEnabled:available];
             label(
                 root,
-                rect(18., 176., 340., 22.),
-                "Buscar automáticamente",
+                rect(18., 176., width - 92., 22.),
+                crate::i18n::tr("Buscar automáticamente"),
                 13.,
                 0.,
                 false,
             );
             self.updates_switch = toggle(
                 root,
-                374.,
+                width - 58.,
                 176.,
-                "Buscar actualizaciones automáticamente",
+                crate::i18n::tr("Buscar actualizaciones automáticamente"),
                 target,
                 9,
                 self.updater.as_ref().is_some_and(Updater::automatic_checks),
@@ -3239,8 +3398,8 @@ Otras apps pueden tener atajos propios no detectables.",
             );
             button(
                 root,
-                rect(240., 72., 176., 30.),
-                "Historial de versiones",
+                rect(width - 192., 72., 176., 30.),
+                crate::i18n::tr("Historial de versiones"),
                 target,
                 32,
             );
@@ -3254,25 +3413,28 @@ Otras apps pueden tener atajos propios no detectables.",
             );
             button(
                 root,
-                rect(240., 28., 176., 30.),
-                "Copiar diagnóstico",
+                rect(width - 192., 28., 176., 30.),
+                crate::i18n::tr("Copiar diagnóstico"),
                 target,
                 99,
             );
             button(
                 root,
-                rect(14., 0., 222., 30.),
-                "Instalación y ayuda…",
+                rect(14., 0., width - 210., 30.),
+                crate::i18n::tr("Instalación y ayuda…"),
                 target,
                 113,
             );
             button(
                 root,
-                rect(240., 0., 176., 30.),
-                "Enviar feedback…",
+                rect(width - 192., 0., 176., 30.),
+                crate::i18n::tr("Enviar feedback…"),
                 target,
                 116,
             );
+            let _: () = msg_send![&scroll, setDocumentView:&*document];
+            let _: () =
+                msg_send![root, scrollPoint:NSPoint::new(0., (488. - bounds.size.height).max(0.))];
         }
     }
     fn apply_bar_background(&self) {
@@ -3301,7 +3463,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 let stroke: *const crate::native::CgColor = msg_send![border, CGColor];
                 let _: () = msg_send![layer, setBackgroundColor:bg];
                 let _: () = msg_send![layer, setBorderColor:stroke];
-                let _: () = msg_send![*button, setAccessibilityValue:&*NSString::from_str(if i == index {"Seleccionado"} else {""})];
+                let _: () = msg_send![*button, setAccessibilityValue:&*NSString::from_str(if i == index {crate::i18n::tr("Seleccionado")} else {""})];
             }
         }
     }
@@ -3312,7 +3474,7 @@ Otras apps pueden tener atajos propios no detectables.",
             label(
                 root,
                 rect(18., 322., 300., 22.),
-                "Fondo del widget",
+                crate::i18n::tr("Fondo del widget"),
                 14.,
                 0.3,
                 false,
@@ -3332,7 +3494,9 @@ Otras apps pueden tener atajos propios no detectables.",
                 let layer: Obj = msg_send![b, layer];
                 let _: () = msg_send![layer, setCornerRadius:10f64];
                 let _: () = msg_send![layer, setBorderWidth:1f64];
-                let accessibility = format!("Fondo del widget: {name}");
+                let name = crate::i18n::tr(name);
+                let accessibility =
+                    crate::tr_format!("Fondo del widget: {name}", "Widget background: {name}");
                 if let Some(rgb) = rgb {
                     paint_swatch(b, &accessibility, rgb.map(|n| n as f64 / 255.));
                 } else {
@@ -3351,7 +3515,7 @@ Otras apps pueden tener atajos propios no detectables.",
             label(
                 root,
                 rect(18., 171., 210., 22.),
-                "Escritorios",
+                crate::i18n::tr("Escritorios"),
                 14.,
                 0.3,
                 false,
@@ -3359,7 +3523,11 @@ Otras apps pueden tener atajos propios no detectables.",
             let menu = popup(
                 root,
                 rect(248., 165., 168., 30.),
-                &["Puntos", "Números", "Iconos"],
+                &[
+                    crate::i18n::tr("Puntos"),
+                    crate::i18n::tr("Números"),
+                    crate::i18n::tr("Iconos"),
+                ],
                 target,
                 12,
             );
@@ -3381,7 +3549,7 @@ Otras apps pueden tener atajos propios no detectables.",
             label(
                 root,
                 rect(18., 40., 330., 22.),
-                "Preview al pasar por un escritorio",
+                crate::i18n::tr("Preview al pasar por un escritorio"),
                 12.,
                 0.,
                 false,
@@ -3394,7 +3562,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 root,
                 374.,
                 40.,
-                "Preview al pasar por un escritorio",
+                crate::i18n::tr("Preview al pasar por un escritorio"),
                 target,
                 62,
                 !disabled,
@@ -3402,7 +3570,7 @@ Otras apps pueden tener atajos propios no detectables.",
             label(
                 root,
                 rect(18., 12., 330., 22.),
-                "Borde al reelegir el escritorio",
+                crate::i18n::tr("Borde al reelegir el escritorio"),
                 12.,
                 0.,
                 false,
@@ -3411,7 +3579,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 root,
                 374.,
                 12.,
-                "Borde al reelegir el escritorio",
+                crate::i18n::tr("Borde al reelegir el escritorio"),
                 target,
                 64,
                 self.flash_enabled,
@@ -3433,7 +3601,10 @@ Otras apps pueden tener atajos propios no detectables.",
             let root = Retained::as_ptr(&document) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
-            let names: Vec<_> = space_style::ICONS.iter().map(|(name, _)| *name).collect();
+            let names: Vec<_> = space_style::ICONS
+                .iter()
+                .map(|(name, _)| crate::i18n::tr(name))
+                .collect();
             for (index, (id, title)) in desktops.iter().enumerate() {
                 let y = height - (index + 1) as f64 * 52.;
                 label(root, rect(18., y + 18., 180., 22.), title, 13., 0., false);
@@ -3447,7 +3618,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 let _: () = msg_send![menu, selectItemAtIndex:space_style::icon(defaults, *id, index) as isize];
                 for (i, (name, symbol)) in space_style::ICONS.iter().enumerate().skip(1) {
                     let item: Obj = msg_send![menu, itemAtIndex:i as isize];
-                    let image: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(symbol), accessibilityDescription:&*NSString::from_str(name)];
+                    let image: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(symbol), accessibilityDescription:&*NSString::from_str(crate::i18n::tr(name))];
                     if !image.is_null() {
                         let _: () = msg_send![item, setImage:image];
                     }
@@ -3459,7 +3630,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 label(
                     root,
                     rect(18., height - 48., 390., 24.),
-                    "No hay escritorios disponibles en esta pantalla.",
+                    crate::i18n::tr("No hay escritorios disponibles en esta pantalla."),
                     12.,
                     0.,
                     true,
@@ -3473,14 +3644,16 @@ Otras apps pueden tener atajos propios no detectables.",
         if let Some(updater) = &self.updater {
             updater.check();
         } else {
-            self.feedback("Actualizaciones disponibles en el paquete instalado.");
+            self.feedback(crate::i18n::tr(
+                "Actualizaciones disponibles en el paquete instalado.",
+            ));
         }
     }
     fn show_about(&mut self) {
         unsafe {
             if self.about.is_none() {
                 let w = window(rect(0., 0., 400., 380.), 1 | 2 | 32768);
-                let _: () = msg_send![&w, setTitle:&*NSString::from_str("Acerca de AMSpace")];
+                let _: () = msg_send![&w, setTitle:&*NSString::from_str(crate::i18n::tr("Acerca de AMSpace"))];
                 let _: () = msg_send![&w, setTitlebarAppearsTransparent:true];
                 let _: () = msg_send![&w, setHidesOnDeactivate:false];
                 let _: () = msg_send![&w, center];
@@ -3495,14 +3668,30 @@ Otras apps pueden tener atajos propios no detectables.",
                     (213., "amspace", 27., 0.5, false),
                     (
                         183.,
-                        concat!("Versión ", env!("CARGO_PKG_VERSION")),
+                        if crate::i18n::is_english() {
+                            concat!("Version ", env!("CARGO_PKG_VERSION"))
+                        } else {
+                            concat!("Versión ", env!("CARGO_PKG_VERSION"))
+                        },
                         12.,
                         0.,
                         true,
                     ),
-                    (145., "Creado por Alberto Martín", 15., 0.3, false),
-                    (118., "Tu espacio. Tu foco.", 12., 0., true),
-                    (5., "© 2026 Alberto Martín · Licencia MIT", 10., 0., true),
+                    (
+                        145.,
+                        crate::i18n::tr("Creado por Alberto Martín"),
+                        15.,
+                        0.3,
+                        false,
+                    ),
+                    (118., crate::i18n::tr("Tu espacio. Tu foco."), 12., 0., true),
+                    (
+                        5.,
+                        crate::i18n::tr("© 2026 Alberto Martín · Licencia MIT"),
+                        10.,
+                        0.,
+                        true,
+                    ),
                 ] {
                     let label = label(
                         root,
@@ -3531,7 +3720,7 @@ Otras apps pueden tener atajos propios no detectables.",
                 button(
                     root,
                     rect(113., 48., 174., 28.),
-                    "Historial de versiones",
+                    crate::i18n::tr("Historial de versiones"),
                     target,
                     32,
                 );
@@ -3555,9 +3744,9 @@ Otras apps pueden tener atajos propios no detectables.",
                 text(
                     self.permission,
                     if trusted {
-                        "● Accesibilidad concedida"
+                        crate::i18n::tr("● Accesibilidad concedida")
                     } else {
-                        "○ Borde, foco y tiling requieren Accesibilidad"
+                        crate::i18n::tr("○ Borde, foco y tiling requieren Accesibilidad")
                     },
                 );
             }
@@ -3606,20 +3795,28 @@ Otras apps pueden tener atajos propios no detectables.",
     }
     fn tab_block_reason(&self) -> Option<&'static str> {
         if self.tiling_paused {
-            Some("Mosaico está en pausa. Reanúdalo en Ajustes.")
+            Some(crate::i18n::tr(
+                "Mosaico está en pausa. Reanúdalo en Ajustes.",
+            ))
         } else if !ax::trusted() {
-            Some("Concede Accesibilidad a AMSpace para gestionar las ventanas.")
+            Some(crate::i18n::tr(
+                "Concede Accesibilidad a AMSpace para gestionar las ventanas.",
+            ))
         } else if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled")
             == 0
         {
-            Some("Activa Mosaico en Ajustes para gestionar las pestañas.")
+            Some(crate::i18n::tr(
+                "Activa Mosaico en Ajustes para gestionar las pestañas.",
+            ))
         } else if self.sleeping
             || crate::desktop_mode::active()
             || self.switching.is_some()
             || self.transfer.is_some()
             || self.layout_picker.is_some()
         {
-            Some("Espera a que termine la transición o cierra el selector de plantillas.")
+            Some(crate::i18n::tr(
+                "Espera a que termine la transición o cierra el selector de plantillas.",
+            ))
         } else {
             None
         }
@@ -3629,19 +3826,21 @@ Otras apps pueden tener atajos propios no detectables.",
             return;
         }
         unsafe {
-            let _: () = msg_send![self.pause_button, setTitle:&*NSString::from_str(if self.tiling_paused { "Reanudar Mosaico" } else { "Pausar Mosaico" })];
+            let _: () = msg_send![self.pause_button, setTitle:&*NSString::from_str(if self.tiling_paused { crate::i18n::tr("Reanudar Mosaico") } else { crate::i18n::tr("Pausar Mosaico") })];
             let _: () = msg_send![self.pause_button, setEnabled:crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") != 0];
         }
     }
     fn toggle_mosaic_pause(&mut self) {
         if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") == 0 {
-            self.show_notice("Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.");
+            self.show_notice(crate::i18n::tr(
+                "Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.",
+            ));
             return;
         }
         if self.transfer.is_some() || self.switching.is_some() {
-            self.show_notice(
+            self.show_notice(crate::i18n::tr(
                 "Espera a que termine el traslado o cambio de escritorio antes de pausar.",
-            );
+            ));
             return;
         }
         self.tiling_paused = !self.tiling_paused;
@@ -3653,8 +3852,8 @@ Otras apps pueden tener atajos propios no detectables.",
         self.refresh_pause_button();
         self.refresh_tile_controls();
         self.show_notice(if self.tiling_paused {
-            "Mosaico en pausa. Conserva la distribución y deja de colocar ventanas. Reanúdalo en la barra lateral de Ajustes."
-        } else { "Mosaico reanudado." });
+            crate::i18n::tr("Mosaico en pausa. Conserva la distribución y deja de colocar ventanas. Reanúdalo en la barra lateral de Ajustes.")
+        } else { crate::i18n::tr("Mosaico reanudado.") });
     }
     fn record_transfer(&mut self, message: &str, feedback: bool) {
         if self.transfer_history.len() == 16 {
@@ -3722,7 +3921,7 @@ Otras apps pueden tener atajos propios no detectables.",
             let pasteboard: Obj = msg_send![class!(NSPasteboard), generalPasteboard];
             let _: isize = msg_send![pasteboard, clearContents];
             let ok: bool = msg_send![pasteboard,setString:&*NSString::from_str(&report),forType:&*NSString::from_str("public.utf8-plain-text")];
-            self.feedback(if ok {"Diagnóstico copiado. Incluye estado y geometría, sin títulos ni contenido de ventanas."} else {"No se pudo copiar el diagnóstico."});
+            self.feedback(if ok {crate::i18n::tr("Diagnóstico copiado. Incluye estado y geometría, sin títulos ni contenido de ventanas.")} else {crate::i18n::tr("No se pudo copiar el diagnóstico.")});
         }
     }
     fn refresh_login(&self) {
@@ -3735,22 +3934,40 @@ Otras apps pueden tener atajos propios no detectables.",
             let _: () =
                 msg_send![self.login,setState:if status==1 || status==2 {1isize} else {0isize}];
             if status == 2 {
-                self.feedback("Autoriza AMSpace en Ajustes del Sistema → Ítems de inicio.");
+                self.feedback(crate::i18n::tr(
+                    "Autoriza AMSpace en Ajustes del Sistema → Ítems de inicio.",
+                ));
             }
         }
     }
     fn change(&mut self, sender: Obj) {
         unsafe {
             let tag: isize = msg_send![sender, tag];
+            if tag == 120 {
+                let selected: isize = msg_send![sender, indexOfSelectedItem];
+                if selected >= 0
+                    && crate::i18n::set_preference(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        selected as usize,
+                    )
+                {
+                    self.feedback(crate::i18n::tr(
+                        "Vuelve a abrir AMSpace para aplicar el idioma.",
+                    ));
+                }
+                return;
+            }
             if self.transfer.is_some()
                 && ((40..=87).contains(&tag) || (95..=98).contains(&tag) || tag >= 2000)
             {
-                self.feedback("Espera a que termine el traslado antes de cambiar Mosaico.");
+                self.feedback(crate::i18n::tr(
+                    "Espera a que termine el traslado antes de cambiar Mosaico.",
+                ));
                 return;
             }
             self.feedback("");
             if self.tiling_paused && matches!(tag, 41 | 80..=87 | 95 | 97) {
-                self.show_notice("Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución.");
+                self.show_notice(crate::i18n::tr("Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución."));
                 self.refresh_tile_controls();
                 return;
             }
@@ -3792,7 +4009,9 @@ Otras apps pueden tener atajos propios no detectables.",
                         msg_send![service,unregisterAndReturnError:&mut error]
                     };
                     if !ok {
-                        self.feedback("No se pudo cambiar. Instala AMSpace.app en Aplicaciones.");
+                        self.feedback(crate::i18n::tr(
+                            "No se pudo cambiar. Instala AMSpace.app en Aplicaciones.",
+                        ));
                     }
                     self.refresh_login();
                 }
@@ -3831,9 +4050,9 @@ Otras apps pueden tener atajos propios no detectables.",
                     let layout = crate::tiling::Layout::from_selection(tag - 80);
                     if !self.tile_manager.reset_template(defaults, layout) {
                         self.feedback(if crate::desktop_mode::active() {
-                            "Mostrar escritorio: el mosaico está en pausa."
+                            crate::i18n::tr("Mostrar escritorio: el mosaico está en pausa.")
                         } else {
-                            "La plantilla no admite estas ventanas o el escritorio ha cambiado."
+                            crate::i18n::tr("La plantilla no admite estas ventanas o el escritorio ha cambiado.")
                         });
                     }
                     self.refresh_tile_controls();
@@ -3855,7 +4074,7 @@ Otras apps pueden tener atajos propios no detectables.",
                             self.configure_tiling();
                             self.refresh_pause_button();
                             if selected != 0 {
-                                self.show_tip(2, "Agrupa soltando una ventana en la parte superior de otra. Arrastra una pestaña para separarla; clic derecho para ver sus acciones.");
+                                self.show_tip(2, crate::i18n::tr("Agrupa soltando una ventana en la parte superior de otra. Arrastra una pestaña para separarla; clic derecho para ver sus acciones."));
                             }
                         }
                         41 => {
@@ -3922,7 +4141,9 @@ Otras apps pueden tener atajos propios no detectables.",
                         self.tile_manager.set_max_group_tabs(value as usize);
                         self.tile_manager.invalidate();
                     } else {
-                        self.feedback("El máximo de pestañas admite valores enteros entre 2 y 20.");
+                        self.feedback(crate::i18n::tr(
+                            "El máximo de pestañas admite valores enteros entre 2 y 20.",
+                        ));
                     }
                 }
                 67 => {
@@ -4079,7 +4300,9 @@ Otras apps pueden tener atajos propios no detectables.",
                     if !(2..=240).contains(&columns) || !(2..=60).contains(&rows) {
                         text(
                             self.tile_grid_status,
-                            "Introduce columnas entre 2 y 240 y filas entre 2 y 60.",
+                            crate::i18n::tr(
+                                "Introduce columnas entre 2 y 240 y filas entre 2 y 60.",
+                            ),
                         );
                     } else {
                         for (key, value) in
@@ -4094,7 +4317,9 @@ Otras apps pueden tener atajos propios no detectables.",
                         self.tile_manager.invalidate();
                         text(
                             self.tile_grid_status,
-                            "Rejilla actualizada. Activa la casilla para aplicarla.",
+                            crate::i18n::tr(
+                                "Rejilla actualizada. Activa la casilla para aplicarla.",
+                            ),
                         );
                     }
                 }
@@ -4105,9 +4330,11 @@ Otras apps pueden tener atajos propios no detectables.",
                     text(
                         self.tile_grid_status,
                         if ok {
-                            "Distribución guardada para este escritorio."
+                            crate::i18n::tr("Distribución guardada para este escritorio.")
                         } else {
-                            "Activa tiling y abre ventanas en este escritorio primero."
+                            crate::i18n::tr(
+                                "Activa tiling y abre ventanas en este escritorio primero.",
+                            )
                         },
                     );
                 }
@@ -4131,9 +4358,11 @@ Otras apps pueden tener atajos propios no detectables.",
                     text(
                         self.tile_grid_status,
                         if ok {
-                            "Distribución restaurada."
+                            crate::i18n::tr("Distribución restaurada.")
                         } else {
-                            "No hay una distribución compatible con estas ventanas y pantalla."
+                            crate::i18n::tr(
+                                "No hay una distribución compatible con estas ventanas y pantalla.",
+                            )
                         },
                     );
                 }
@@ -4188,7 +4417,9 @@ Otras apps pueden tener atajos propios no detectables.",
             self.update_window();
             self.refresh_permission();
             if (tag == 1 || tag == 2) && !ax::trusted() {
-                self.feedback("Concede el permiso y vuelve a esta ventana para activarlo.");
+                self.feedback(crate::i18n::tr(
+                    "Concede el permiso y vuelve a esta ventana para activarlo.",
+                ));
             }
         }
     }
@@ -4558,7 +4789,7 @@ extern "C-unwind" fn desktop_menu_update(target: Obj, _: Sel, menu: Obj) {
         let snapshot = spaces::snapshot();
         for (index, id) in snapshot.desktops.iter().enumerate() {
             let item: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
-            let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&format!("Escritorio {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
+            let item: Retained<AnyObject> = msg_send![item, initWithTitle:&*NSString::from_str(&crate::tr_format!("Escritorio {}", "Desktop {}", index + 1)), action:sel!(selectDesktop:), keyEquivalent:&*NSString::from_str("")];
             let _: () = msg_send![&item, setTarget:target];
             let _: () = msg_send![&item, setTag:*id as isize];
             let _: () =
@@ -4750,15 +4981,33 @@ unsafe fn tab_menu(
             let _: () = msg_send![menu, addItem:&*item];
             item
         };
-        add(&menu, "Separar del grupo", sel!(tabMenuAction:), 0, true);
-        add(&menu, "Hacer flotante", sel!(tabMenuAction:), 1, true);
-        let move_item = add(&menu, "Mover a otro grupo", sel!(tabMenuAction:), -1, true);
+        add(
+            &menu,
+            crate::i18n::tr("Separar del grupo"),
+            sel!(tabMenuAction:),
+            0,
+            true,
+        );
+        add(
+            &menu,
+            crate::i18n::tr("Hacer flotante"),
+            sel!(tabMenuAction:),
+            1,
+            true,
+        );
+        let move_item = add(
+            &menu,
+            crate::i18n::tr("Mover a otro grupo"),
+            sel!(tabMenuAction:),
+            -1,
+            true,
+        );
         let destinations: Retained<AnyObject> = msg_send![class!(NSMenu), new];
         let _: () = msg_send![&destinations, setAutoenablesItems:false];
         if targets.is_empty() {
             add(
                 &destinations,
-                "No hay otros grupos en este escritorio y pantalla",
+                crate::i18n::tr("No hay otros grupos en este escritorio y pantalla"),
                 sel!(tabMenuAction:),
                 -1,
                 false,
@@ -4780,11 +5029,29 @@ unsafe fn tab_menu(
             actions.push(TabAction::MoveToGroup(target.id));
         }
         let _: () = msg_send![&move_item, setSubmenu:&*destinations];
-        add(&menu, "Cerrar ventana", sel!(tabMenuAction:), 2, true);
+        add(
+            &menu,
+            crate::i18n::tr("Cerrar ventana"),
+            sel!(tabMenuAction:),
+            2,
+            true,
+        );
         let separator: Obj = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![&menu, addItem:separator];
-        add(&menu, "Pausar Mosaico", sel!(toggleMosaicPause:), -1, true);
-        add(&menu, "Ayuda de pestañas…", sel!(showTabGuide:), -1, true);
+        add(
+            &menu,
+            crate::i18n::tr("Pausar Mosaico"),
+            sel!(toggleMosaicPause:),
+            -1,
+            true,
+        );
+        add(
+            &menu,
+            crate::i18n::tr("Ayuda de pestañas…"),
+            sel!(showTabGuide:),
+            -1,
+            true,
+        );
         (menu, actions)
     }
 }
@@ -4868,7 +5135,7 @@ extern "C-unwind" fn select_tile_tab(_: Obj, _: Sel, sender: Obj) {
             a.hover_resume = Instant::now() + Duration::from_millis(600);
             a.update_tile_timer();
             a.settle_focus();
-            a.show_tip(4, "Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana.");
+            a.show_tip(4, crate::i18n::tr("Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana."));
         }
     });
 }
@@ -5086,15 +5353,27 @@ unsafe fn make_menu(app: Obj, target: Obj) {
         let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
         let submenu: Retained<AnyObject> = msg_send![class!(NSMenu), new];
         for (title, action, key) in [
-            ("Ir al escritorio…", sel!(desktopMenu:), ""),
-            ("Acerca de AMSpace", sel!(about:), ""),
-            ("Buscar actualizaciones…", sel!(checkUpdates:), ""),
-            ("Ajustes…", sel!(settings:), ","),
-            ("Instalación y ayuda…", sel!(showGuide:), ""),
-            ("Enviar feedback…", sel!(showFeedback:), ""),
-            ("Pausar / reanudar Mosaico", sel!(toggleMosaicPause:), ""),
-            ("Cerrar ventana", sel!(performClose:), "w"),
-            ("Salir de AMSpace", sel!(quit:), "q"),
+            (crate::i18n::tr("Ir al escritorio…"), sel!(desktopMenu:), ""),
+            (crate::i18n::tr("Acerca de AMSpace"), sel!(about:), ""),
+            (
+                crate::i18n::tr("Buscar actualizaciones…"),
+                sel!(checkUpdates:),
+                "",
+            ),
+            (crate::i18n::tr("Ajustes…"), sel!(settings:), ","),
+            (
+                crate::i18n::tr("Instalación y ayuda…"),
+                sel!(showGuide:),
+                "",
+            ),
+            (crate::i18n::tr("Enviar feedback…"), sel!(showFeedback:), ""),
+            (
+                crate::i18n::tr("Pausar / reanudar Mosaico"),
+                sel!(toggleMosaicPause:),
+                "",
+            ),
+            (crate::i18n::tr("Cerrar ventana"), sel!(performClose:), "w"),
+            (crate::i18n::tr("Salir de AMSpace"), sel!(quit:), "q"),
         ] {
             let command: Allocated<AnyObject> = msg_send![class!(NSMenuItem), alloc];
             let command: Retained<AnyObject> = msg_send![command, initWithTitle:&*NSString::from_str(title), action:action, keyEquivalent:&*NSString::from_str(key)];
@@ -5138,6 +5417,7 @@ unsafe fn controller() -> Retained<AnyObject> {
             (sel!(change:), change),
             (sel!(hover:), hover),
             (sel!(tileTick:), tile_tick),
+            (sel!(tileMouseEvent:), mouse_delivery::drain),
             (sel!(selectTileTab:), select_tile_tab),
             (sel!(closeTileTab:), close_tile_tab),
             (sel!(dragTileTab:), drag_tile_tab),
@@ -5284,7 +5564,7 @@ pub fn run() {
 /// Only the no-op outcome gets the soft frame: the other failures already
 /// report their own text and left the layout untouched.
 fn transfer_flashes(message: &str) -> bool {
-    message == crate::window_move::SAME_DESTINATION
+    message == crate::i18n::tr(crate::window_move::SAME_DESTINATION)
 }
 #[cfg(test)]
 mod delivery_tests {
@@ -5292,9 +5572,15 @@ mod delivery_tests {
     use crate::tile_hotkey::Action;
     #[test]
     fn only_the_no_op_transfer_outcome_confirms_with_the_soft_frame() {
-        assert!(transfer_flashes(crate::window_move::SAME_DESTINATION));
-        assert!(!transfer_flashes("No hay una ventana activa."));
-        assert!(!transfer_flashes("Esta ventana no admite traslados."));
+        assert!(transfer_flashes(crate::i18n::tr(
+            crate::window_move::SAME_DESTINATION
+        )));
+        assert!(!transfer_flashes(crate::i18n::tr(
+            "No hay una ventana activa."
+        )));
+        assert!(!transfer_flashes(crate::i18n::tr(
+            "Esta ventana no admite traslados."
+        )));
     }
     #[test]
     fn nested_ax_borrow_defers_the_command_and_releases_it_once_available() {

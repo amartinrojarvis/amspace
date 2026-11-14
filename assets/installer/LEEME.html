@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>AMSpace · Instalación, permisos y privacidad</title>
+<title>AMSpace · Instalación / Installation · Permisos / Permissions</title>
 <style>
 body { font: 13px -apple-system, Helvetica, sans-serif; line-height: 1.5; color: #252525; max-width: 760px; margin: 32px; }
 h1 { font-size: 26px; } h2 { font-size: 17px; margin-top: 24px; }
@@ -12,6 +12,7 @@ a { color: #3a53a4; }
 <body>
 <h1>Instalar AMSpace</h1>
 <p>Gestor nativo de Spaces y ventanas para macOS 13 o posterior. Código abierto con licencia MIT. El paquete universal contiene Apple Silicon e Intel; la ejecución física se comprueba en Apple Silicon.</p>
+<p><strong>Español / English.</strong> English instructions follow below. La app funciona en ambos idiomas: Ajustes → General → Idioma; el cambio se aplica al volver a abrirla.</p>
 <h2>1. Copiar, expulsar y abrir</h2>
 <ol>
 <li>Arrastra <strong>AMSpace.app</strong> sobre <strong>Aplicaciones</strong> en la ventana del instalador. Si ya tienes AMSpace abierto, sal de la app antes de sustituirla.</li>
@@ -46,5 +47,42 @@ a { color: #3a53a4; }
 <p>Descargas y código oficial: <a href="https://github.com/amartinrojarvis/amspace">github.com/amartinrojarvis/amspace</a><br>
 Publicaciones: <a href="https://github.com/amartinrojarvis/amspace/releases">GitHub Releases</a><br>
 Las licencias de AMSpace y sus componentes se incluyen dentro del paquete de la aplicación.</p>
+<section lang="en">
+<h1>Install AMSpace</h1>
+<p>Native Spaces and window manager for macOS 13 or later. Open source under the MIT license. The universal package contains Apple Silicon and Intel; physical execution has been checked on Apple Silicon.</p>
+<h2>1. Copy, eject and open</h2>
+<ol>
+<li>Drag <strong>AMSpace.app</strong> onto <strong>Applications</strong> in the installer window. Quit an existing AMSpace instance before replacing it.</li>
+<li>Wait for copying to finish and eject the AMSpace disk.</li>
+<li>Open <strong>Applications/AMSpace.app</strong>, not the copy on the disk or in Downloads. AMSpace lives in the menu bar, without a permanent Dock icon. Right-click its indicator to open Settings.</li>
+</ol>
+<p>The interface supports English and Spanish and follows your preferred macOS languages. Choose <strong>Settings → General → Language</strong> to override it; reopen AMSpace to apply a change. Your system language and saved layouts are not changed.</p>
+<h2>2. If macOS blocks the first launch</h2>
+<p><strong>The current distribution is ad hoc signed: it has no Developer ID or Apple notarization.</strong> A checksum verifies matching bytes, not Apple's approval.</p>
+<p>Only if you obtained the app from the official release and trust it: try opening the installed copy, then open <strong>System Settings → Privacy &amp; Security</strong> and use <strong>Open Anyway</strong> for AMSpace. Confirm when macOS asks. Names and locations may vary by system version.</p>
+<p><strong>Never ignore a warning about malware or the app damaging your computer.</strong> Stop and report the warning to the project. Do not disable Gatekeeper or SIP, remove quarantine, or run commands to bypass system checks.</p>
+<h2>3. Grant Accessibility to the installed copy</h2>
+<ol>
+<li>In AMSpace, open <strong>Installation and help</strong> and click <strong>Open Accessibility…</strong>.</li>
+<li>In <strong>System Settings → Privacy &amp; Security → Accessibility</strong>, enable AMSpace.</li>
+<li>If it is missing, click <strong>+</strong> and select <strong>Applications/AMSpace.app</strong>. Authorize with your password or Touch ID if macOS asks.</li>
+<li>Return to AMSpace and click <strong>Check permission</strong>. If macOS requests a restart, quit and reopen the installed copy.</li>
+<li>Enable Border, Focus or Tiling only when you want them; they are initially off. New tab shortcuts are also enabled explicitly in Settings → Shortcuts.</li>
+</ol>
+<p>The desktop indicator works without Accessibility; managing windows and switching desktops by clicking require it. AMSpace does not request Screen Recording or Input Monitoring and cannot grant itself Accessibility.</p>
+<p>After an ad hoc update, macOS may retain authorization for the previous signature. If permission remains pending, quit AMSpace, remove only its old Accessibility entry and add the installed copy again. Do not reset other apps' permissions.</p>
+<h2>Privacy and security</h2>
+<ul>
+<li><strong>Sensitive permission:</strong> Accessibility allows querying and manipulating windows, including titles, position and size. Grant it only to trusted software; revoke it in System Settings at any time.</li>
+<li><strong>No account or telemetry:</strong> preferences stay local. Previews use geometry and icons, not screenshots of window content.</li>
+<li><strong>Network:</strong> Sparkle update checks fetch the feed and download packages from GitHub. Automatic checks are initially off; control them in Settings → General. Downloads connect to those servers like any web download.</li>
+<li><strong>Updates:</strong> Ed25519 verification does not replace Developer ID or notarization. Installation requires your intervention.</li>
+<li><strong>Diagnostics:</strong> Copy diagnostic places technical information on the clipboard. Review it before sharing: it may include window, process and display identifiers and preferences. Nothing is published automatically.</li>
+</ul>
+<h2>Help and uninstalling</h2>
+<p>Reopen the guide from Settings → General. Turn off “Show help on first uses” to disable tips, not operational errors. Right-click or Control-click a tab for its actions. Pause Tiling preserves the layout and stops placements; Resume remains in the Settings sidebar.</p>
+<p>To uninstall, disable Open at login, quit AMSpace, delete it from Applications and remove its Accessibility permission. Other apps' preferences and permissions do not need to be changed.</p>
+<p>Official downloads and source: <a href="https://github.com/amartinrojarvis/amspace">github.com/amartinrojarvis/amspace</a><br>Releases: <a href="https://github.com/amartinrojarvis/amspace/releases">GitHub Releases</a><br>AMSpace and third-party licenses are included inside the application bundle.</p>
+</section>
 </body>
 </html>

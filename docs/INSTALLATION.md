@@ -4,6 +4,12 @@
 
 Requisitos: macOS 13 o posterior. El bundle universal contiene Apple Silicon e Intel; compilar Intel no acredita una prueba física en ese hardware. AMSpace es código abierto con [licencia MIT](../LICENSE).
 
+## Idioma
+
+AMSpace funciona en español e inglés. Sigue el primer idioma compatible de macOS y usa inglés si no hay ninguno. En **Ajustes → General → Idioma** puedes escoger Sistema, Español o English; vuelve a abrir la app para aplicarlo. No cambia el idioma del sistema ni tus distribuciones.
+
+El instalador en desarrollo muestra las instrucciones en ambos idiomas y el alias estándar **Applications**. **Léeme primero.rtf** conserva su nombre y contiene también una sección completa en inglés con instalación, permisos y privacidad.
+
 ## Copiar a Aplicaciones
 
 1. Descarga el archivo desde la publicación oficial. No necesitas cuenta ni token de GitHub.

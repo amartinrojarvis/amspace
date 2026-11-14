@@ -31,22 +31,22 @@ impl Layout {
     ];
     pub fn name(self) -> &'static str {
         match self {
-            Self::Spiral => "Espiral",
-            Self::Grid => "Cuadrícula",
-            Self::Master => "Principal",
-            Self::ThreeBands => "División en 3",
-            Self::FourBands => "División en 4",
-            Self::Centered => "Principal centrada",
-            Self::CenteredWide => "Centrada XL · 3 por lado",
-            Self::VerticalMaster => "Principal vertical",
+            Self::Spiral => crate::i18n::tr("Espiral"),
+            Self::Grid => crate::i18n::tr("Cuadrícula"),
+            Self::Master => crate::i18n::tr("Principal"),
+            Self::ThreeBands => crate::i18n::tr("División en 3"),
+            Self::FourBands => crate::i18n::tr("División en 4"),
+            Self::Centered => crate::i18n::tr("Principal centrada"),
+            Self::CenteredWide => crate::i18n::tr("Centrada XL · 3 por lado"),
+            Self::VerticalMaster => crate::i18n::tr("Principal vertical"),
         }
     }
     pub fn screen_name(self, area: NSRect) -> &'static str {
         match (self, area.size.width >= area.size.height) {
-            (Self::ThreeBands, true) => "3 columnas",
-            (Self::ThreeBands, false) => "3 filas",
-            (Self::FourBands, true) => "4 columnas",
-            (Self::FourBands, false) => "4 filas",
+            (Self::ThreeBands, true) => crate::i18n::tr("3 columnas"),
+            (Self::ThreeBands, false) => crate::i18n::tr("3 filas"),
+            (Self::FourBands, true) => crate::i18n::tr("4 columnas"),
+            (Self::FourBands, false) => crate::i18n::tr("4 filas"),
             _ => self.name(),
         }
     }
@@ -73,8 +73,8 @@ impl Layout {
     }
     pub fn short_name(self, area: NSRect) -> &'static str {
         match self {
-            Self::Centered => "Centrada",
-            Self::CenteredWide => "Centrada XL",
+            Self::Centered => crate::i18n::tr("Centrada"),
+            Self::CenteredWide => crate::i18n::tr("Centrada XL"),
             _ => self.screen_name(area),
         }
     }
@@ -2769,10 +2769,10 @@ mod tests {
                     assert_eq!(
                         layout.screen_name(area),
                         match (count, area.size.width >= area.size.height) {
-                            (3, true) => "3 columnas",
-                            (3, false) => "3 filas",
-                            (_, true) => "4 columnas",
-                            (_, false) => "4 filas",
+                            (3, true) => crate::i18n::tr("3 columnas"),
+                            (3, false) => crate::i18n::tr("3 filas"),
+                            (_, true) => crate::i18n::tr("4 columnas"),
+                            (_, false) => crate::i18n::tr("4 filas"),
                         }
                     );
                     let saved = d.save_distribution(area).unwrap();

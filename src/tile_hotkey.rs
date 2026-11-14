@@ -121,7 +121,7 @@ pub fn modifier_index(value: isize) -> usize {
     value.clamp(0, MODIFIERS.len() as isize - 1) as usize
 }
 pub fn title(key: usize, mods: usize) -> String {
-    format!("{}{}", MODIFIERS[mods].0, KEYS[key].0)
+    format!("{}{}", MODIFIERS[mods].0, crate::i18n::tr(KEYS[key].0))
 }
 fn system_shortcuts() -> Option<std::collections::HashSet<(u32, u32)>> {
     use crate::accessibility::{Owned, array, get, number};

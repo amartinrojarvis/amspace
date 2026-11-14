@@ -35,7 +35,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p "$WORK/content/.background" "$MOUNT"
 ditto "$APP" "$WORK/content/AMSpace.app"
-ln -s /Applications "$WORK/content/Aplicaciones"
+ln -s /Applications "$WORK/content/Applications"
 xcrun swift scripts/dmg-background.swift "$WORK/content/.background/background.png"
 textutil -convert rtf -format html -output "$WORK/content/Léeme primero.rtf" assets/installer/LEEME.html
 hdiutil create -quiet -volname "AMSpace $VERSION" -srcfolder "$WORK/content" -format UDRW -fs HFS+ "$WORK/writable.dmg"
@@ -61,7 +61,7 @@ on run argv
         set text size of options to 13
         set background picture of options to backgroundAlias
         set position of item "AMSpace.app" of installerFolder to {205, 210}
-        set position of item "Aplicaciones" of installerFolder to {595, 210}
+        set position of item "Applications" of installerFolder to {595, 210}
         set position of item "Léeme primero.rtf" of installerFolder to {683, 505}
         update installerFolder without registering applications
         delay 2

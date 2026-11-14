@@ -9,6 +9,199 @@ fn pump(seconds: f64) {
     }
 }
 
+/// Explicit localization smoke proof; never registers hotkeys or controls foreign windows.
+pub(crate) fn check_localizations() -> Result<(), String> {
+    if APP.with(|cell| cell.borrow().is_some()) {
+        return Err("Localization diagnostics require an isolated process.".into());
+    }
+    unsafe {
+        let application: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![application, setActivationPolicy:1isize];
+        let _: () = msg_send![application, finishLaunching];
+        let suite = NSString::from_str(&format!("amspace.ui.languages.{}", std::process::id()));
+        let allocated: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![allocated, initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        let target = controller();
+        let mut app = App::build(target.clone(), defaults.clone());
+        app.border_enabled = false;
+        app.sleeping = true;
+        app.build_settings();
+        // A non-normal layer keeps the installed tiler from treating this
+        // diagnostic window as a user's resizable document.
+        let panel = app.settings.as_ref().unwrap().clone();
+        let _: () = msg_send![&panel, setLevel:3isize];
+        app.guide = Some(crate::discovery::Guide::new(
+            Retained::as_ptr(&target) as Obj,
+            false,
+        ));
+        app.feedback_panel = Some(crate::discovery::Feedback::new(
+            Retained::as_ptr(&target) as Obj
+        ));
+        let _: () = msg_send![app.guide.as_ref().unwrap().window(), setLevel:3isize];
+        let _: () = msg_send![app.feedback_panel.as_ref().unwrap().window(), setLevel:3isize];
+        APP.with(|cell| *cell.borrow_mut() = Some(app));
+        let language = crate::i18n::language();
+        let code = language.code();
+        let result = (|| -> Result<(), String> {
+            let bundle: Obj = msg_send![class!(NSBundle), mainBundle];
+            let localizations: Obj = msg_send![bundle, preferredLocalizations];
+            let count: usize = msg_send![localizations, count];
+            let first: *mut NSString = if count == 0 {
+                ptr::null_mut()
+            } else {
+                msg_send![localizations, objectAtIndex:0usize]
+            };
+            let localized = first
+                .as_ref()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            if localized != code {
+                return Err(format!(
+                    "Native bundle selected {localized:?}, expected {code:?}."
+                ));
+            }
+            let base: *mut NSString = msg_send![bundle, privateFrameworksPath];
+            if let Some(base) = base.as_ref() {
+                let path = NSString::from_str(&format!("{}/Sparkle.framework", base));
+                let framework: Obj = msg_send![class!(NSBundle), bundleWithPath:&*path];
+                if !framework.is_null() {
+                    let preferred: Obj = msg_send![framework, preferredLocalizations];
+                    let first: *mut NSString = msg_send![preferred, firstObject];
+                    let native = first
+                        .as_ref()
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    if native != code {
+                        return Err(format!("Sparkle selected {native:?}, expected {code:?}."));
+                    }
+                }
+            }
+            let _: () = msg_send![&panel, orderFrontRegardless];
+            for page in 0..5isize {
+                with_app(|app| {
+                    let _: () = msg_send![app.tabs, selectTabViewItemAtIndex:page];
+                    text(
+                        app.page_title,
+                        crate::i18n::tr(SETTINGS_SECTIONS[page as usize].0),
+                    );
+                });
+                pump(0.08);
+                capture_window(&panel, &format!(".cache/locale-{code}-settings-{page}.png"))?;
+            }
+            let content: Obj = msg_send![&panel, contentView];
+            let selector: Obj = msg_send![content, viewWithTag:120isize];
+            if selector.is_null() {
+                return Err("The language selector is missing from General.".into());
+            }
+            let initial: isize = msg_send![selector, indexOfSelectedItem];
+            if initial != crate::i18n::preference(Retained::as_ptr(&defaults) as Obj) as isize {
+                return Err("The language selector does not reflect the saved preference.".into());
+            }
+            let next = if language == crate::i18n::Language::Spanish {
+                2isize
+            } else {
+                1
+            };
+            let _: () = msg_send![selector, selectItemAtIndex:next];
+            let delivered: bool = msg_send![selector, sendAction:sel!(change:), to:&*target];
+            let saved: Obj = msg_send![&defaults, persistentDomainForName:&*suite];
+            let stored: *mut NSString = msg_send![saved, objectForKey:ns_string!("app.language")];
+            let expected = if next == 1 { "es" } else { "en" };
+            if !delivered
+                || stored
+                    .as_ref()
+                    .is_none_or(|value| value.to_string() != expected)
+                || crate::i18n::language() != language
+                || APP.with(|cell| cell.borrow().as_ref().unwrap().tile_timer.is_some())
+            {
+                return Err("Language selection failed to persist, changed the running language or started tiling.".into());
+            }
+            let document: Obj = msg_send![selector, superview];
+            let _: () = msg_send![document, scrollPoint:NSPoint::new(0., 0.)];
+            pump(0.08);
+            capture_window(
+                &panel,
+                &format!(".cache/locale-{code}-settings-general-bottom.png"),
+            )?;
+            for page in 0..3usize {
+                with_app(|app| app.show_guide_page(page));
+                pump(0.08);
+                let window = APP.with(|cell| {
+                    cell.borrow()
+                        .as_ref()
+                        .unwrap()
+                        .guide
+                        .as_ref()
+                        .unwrap()
+                        .window()
+                        .clone()
+                });
+                let visible: bool = msg_send![&window, isVisible];
+                if !visible {
+                    return Err("The owned help window is not visible.".into());
+                }
+                capture_window(&window, &format!(".cache/locale-{code}-help-{page}.png"))?;
+            }
+            with_app(App::show_feedback);
+            pump(0.08);
+            let window = APP.with(|cell| {
+                cell.borrow()
+                    .as_ref()
+                    .unwrap()
+                    .feedback_panel
+                    .as_ref()
+                    .unwrap()
+                    .window()
+                    .clone()
+            });
+            let visible: bool = msg_send![&window, isVisible];
+            if !visible {
+                return Err("The owned feedback window is not visible.".into());
+            }
+            capture_window(&window, &format!(".cache/locale-{code}-feedback.png"))?;
+            with_app(App::show_about);
+            pump(0.08);
+            let window = APP.with(|cell| {
+                cell.borrow()
+                    .as_ref()
+                    .unwrap()
+                    .about
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+            });
+            let _: () = msg_send![&window, setLevel:3isize];
+            let visible: bool = msg_send![&window, isVisible];
+            if !visible {
+                return Err("The owned about window is not visible.".into());
+            }
+            capture_window(&window, &format!(".cache/locale-{code}-about.png"))?;
+            println!(
+                "Localization {code}: five settings pages, three help pages, feedback and about captured; native bundle/Sparkle locale and deferred language preference verified."
+            );
+            Ok(())
+        })();
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
+            app.hide_flash();
+            if let Some(guide) = app.guide.as_ref() {
+                guide.hide();
+            }
+            let windows: Obj = msg_send![application, windows];
+            let count: usize = msg_send![windows, count];
+            for index in 0..count {
+                let window: Obj = msg_send![windows, objectAtIndex:index];
+                let _: () = msg_send![window, orderOut:ptr::null::<AnyObject>()];
+            }
+            let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+            let _: () = msg_send![bar, removeStatusItem:&*app.status];
+        }
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        result
+    }
+}
+
 pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
     if APP.with(|cell| cell.borrow().is_some()) {
         return Err("El diagnóstico de entregas requiere una instancia de prueba aislada.".into());
@@ -26,6 +219,23 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
         app.sleeping = true;
         APP.with(|cell| *cell.borrow_mut() = Some(app));
         let result = (|| -> Result<(), String> {
+            APP.with(|cell| {
+                let _borrowed = cell.borrow_mut();
+                mouse_delivery::enqueue(target_ptr, true, NSPoint::new(100., 42.));
+                mouse_delivery::enqueue(target_ptr, false, NSPoint::new(800., 42.));
+                pump(0.025);
+                if mouse_delivery::pending_count() != 2 {
+                    return Err("Native mouse boundaries were lost during AX reentry.".to_owned());
+                }
+                Ok(())
+            })?;
+            pump(0.035);
+            if mouse_delivery::pending_count() != 0 {
+                return Err("Deferred mouse boundaries did not drain after AX reentry.".into());
+            }
+            println!(
+                "Mouse delivery: native press/release retained through nested AppKit delivery and drained in order."
+            );
             let started = Instant::now();
             for _ in 0..16 {
                 APP.with(|cell| {
@@ -111,6 +321,7 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             Ok(())
         })();
         let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        mouse_delivery::clear(target_ptr);
         if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
             app.hide_flash();
             let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];

@@ -34,7 +34,8 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | Archivos | Trabajo que corresponde aquí |
 |---|---|
 | `src/main.rs`, `src/instance.rs` | Entradas de ejecución/diagnóstico y exclusión de instancias |
-| `src/ui.rs`, `src/ui_diagnostics.rs`, `src/native.rs` | AppKit, ajustes, callbacks, diagnóstico aislado de entregas diferidas y coordinación de acciones |
+| `src/ui.rs`, `src/ui_mouse.rs`, `src/ui_diagnostics.rs`, `src/native.rs` | AppKit, ajustes, cola acotada de límites de ratón, callbacks, diagnóstico aislado y coordinación de acciones |
+| `src/i18n.rs`, `src/i18n/*.rs` | Selección de idioma por proceso, catálogos estáticos y formatos español/inglés |
 | `src/spaces.rs`, `src/space_switch.rs`, `src/space_style.rs` | IDs y orden nativo de Spaces, navegación por gestos y presentación del indicador |
 | `src/accessibility.rs`, `src/window_server.rs`, `src/focus.rs` | Propiedad CF/AX, identidad y geometría, observadores y foco de teclado |
 | `src/border.rs`, `src/bar_background.rs`, `src/model.rs` | Dibujo/oclusión del borde, fondo del widget y presentación normalizada |
@@ -57,6 +58,7 @@ Accesibilidad es necesaria para controlar ventanas. Una recompilación con firma
 | Dato o clave | Contrato |
 |---|---|
 | `Workspace = (DisplayID, SpaceID)` | Un mismo Space puede abarcar varias pantallas; no lo uses como única clave del mosaico |
+| `app.language` | `system` (o ausente), `es`, `en`; selección para el siguiente arranque, sin renumerar otros valores |
 | PID + ID de ventana | Identidad de proceso/ventana; no es portable entre sesiones |
 | Número de escritorio mostrado | Posición de los escritorios normales en Mission Control; puede cambiar |
 | `tile.layout.<SpaceID>.<DisplayID>` | Plantilla por contexto; tiene prioridad sobre la clave histórica `tile.layout.<SpaceID>` |
@@ -85,6 +87,21 @@ La pausa manual de Mosaico es estado de sesión, no una preferencia: conserva mo
 
 Los IDs de pantalla actuales no son perfiles portables por UUID. Los valores persistidos de `Layout` están en `tiling.rs`: Espiral=1, Cuadrícula=2, Principal=3, División en 3=4, División en 4=5, Principal centrada=6, Centrada XL=7, Principal vertical=8. El antiguo valor 0 se interpreta como Espiral. `selection_index` es otra representación: usa las conversiones existentes.
 
+## Localización
+
+El idioma se resuelve antes de AppKit/Sparkle: elección explícita o primer idioma compatible de `NSLocale.preferredLanguages`, con inglés como respaldo. General guarda `app.language`; se aplica al volver a abrir. `AppleLanguages` se ajusta únicamente en el dominio volátil de argumentos del proceso, conservando sus otras claves; no se persiste ni se cambia el idioma del sistema.
+
+Usa `i18n::tr` solo en textos estáticos propios y `tr_format!` con ambos formatos literales cuando hay valores. Los catálogos son `match` compilados y devuelven referencias estáticas: sin lectura de archivos, mapas dinámicos ni asignaciones por traducción. No traduzcas entradas arbitrarias de helpers nativos, nombres de apps, títulos de ventana ni nombres de plantillas personales. Conserva símbolos, selectores, claves, índices y serialización.
+
+Para verificar sin modificar la app instalada ni sus preferencias:
+
+```sh
+dist/AMSpace.app/Contents/MacOS/amspace -app.language es --check-localizations
+dist/AMSpace.app/Contents/MacOS/amspace -app.language en --check-localizations
+```
+
+El override de argumentos dura solo ese proceso. El bundle debe contener `es.lproj` y `en.lproj` para comprobar la elección nativa y la de Sparkle. Los avisos técnicos de consola y el contenido externo —por ejemplo, títulos o notas de una versión ya publicada— no son traducciones automáticas.
+
 ## Diagnósticos versionados y efectos
 
 Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia normal; que exista una app abierta no los impide ejecutar. Cierra la app normal durante fixtures de traslado para que no intente gestionar sus ventanas temporales.
@@ -97,6 +114,7 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | `target/debug/amspace --check-space-transfer` | Crea otro proceso con ventana temporal, la envía a los demás escritorios y de vuelta, y verifica geometría oculta. Necesita AX y al menos dos escritorios. Modifica la ventana fixture, no documentos del usuario |
 | `dist/AMSpace.app/Contents/MacOS/amspace --check-tab-groups` | Con la app normal cerrada y AX autorizado: crea tres ventanas desechables en otro proceso, agrupa mediante la propuesta de producción, comprueba geometría y ejecuta 40 selecciones AppKit. Arrastra una pestaña con CGEvents, comprueba su separación y geometría AX, vuelve a agrupar y pulsa la × de la activa para verificar cierre nativo, promoción, recuperación del alto y retirada del overlay. Solo mueve/activa/cierra fixtures, restaura el cursor y no toca preferencias. No sustituye una prueba de documentos sin guardar, arrastre físico ni varios monitores |
 | `target/debug/amspace --check-tab-controls` | Abre tiras propias y envía eventos locales a AppKit: clic, temblor de 1 pt, arrastre/cancelación, selección posterior y las tres × sin acciones cruzadas. Comprueba hover, reutilización de controles/badges, plantilla personal con grupo/rejilla y una biblioteca de 64 guardadas más ocho integradas. Fuerza 12.000 solicitudes en 16 reentradas para comprobar entregas pendientes. Renderiza Mosaico y desactiva/reactiva la zona superior en preferencias aisladas, sin arrancar un reloj de mosaico deshabilitado. Elimina las suites al terminar. No necesita AX, no inyecta entrada global ni mueve ventanas ajenas. Capturas `.cache/tab-controls.png`, `.cache/tab-presentation.png`, `.cache/picker-grouped-preview.png`, `.cache/picker-full-library.png` y `.cache/float-drop-settings.png`. `AMSPACE_TAB_IDLE_SECONDS=30` mantiene la tira visible 30 s (máximo 60) para muestrear CPU/RSS con `benchmark.py`; la espera nativa bloqueante solo pertenece al diagnóstico |
+| `dist/AMSpace.app/Contents/MacOS/amspace -app.language en --check-localizations` | Renderiza las cinco páginas de Ajustes, tres de ayuda, feedback y Acerca de; captura solo ventanas propias en `.cache/locale-en-*.png`. Comprueba idioma nativo/Sparkle y selección diferida en suite aislada. Con `es` recorre español. No registra atajos ni mueve ventanas ajenas; puede llevar sus paneles al frente |
 | `target/debug/amspace --render-desktop-previews` | Lee geometría/iconos y escribe `.cache/desktop-preview-<SpaceID>.png`. Crea `.cache/` antes; no captura contenido de las ventanas |
 | `python3 scripts/benchmark.py <PID> --seconds 20` | Mide CPU y RSS del proceso; ajustes cerrados y ratón en reposo para una muestra comparable |
 

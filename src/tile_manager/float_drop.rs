@@ -66,9 +66,9 @@ pub(super) struct Overlay {
 
 fn title_for(floating: bool) -> &'static str {
     if floating {
-        "Volver al mosaico"
+        crate::i18n::tr("Volver al mosaico")
     } else {
-        "Hacer flotante"
+        crate::i18n::tr("Hacer flotante")
     }
 }
 
@@ -114,7 +114,7 @@ impl Overlay {
             let subtitle = crate::native::label(
                 plate,
                 card.subtitle,
-                "Suelta aquí para confirmar",
+                crate::i18n::tr("Suelta aquí para confirmar"),
                 12.,
                 0.,
                 true,
@@ -182,7 +182,7 @@ impl Overlay {
             if self.floating != floating {
                 let title = title_for(floating);
                 crate::native::text(self.title, title);
-                crate::native::text(self.subtitle, "Suelta aquí para confirmar");
+                crate::native::text(self.subtitle, crate::i18n::tr("Suelta aquí para confirmar"));
                 let image: Obj = msg_send![
                     class!(NSImage),
                     imageWithSystemSymbolName:&*NSString::from_str(symbol_for(floating)),

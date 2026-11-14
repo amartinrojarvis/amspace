@@ -24,8 +24,10 @@ func text(_ value: String, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFlo
                          .foregroundColor: color, .paragraphStyle: paragraph])
 }
 text("AMSpace", x: 36, y: 28, width: 728, height: 46, size: 32, weight: .semibold)
-text("Arrastra la app a Aplicaciones. Después, abre la copia instalada.",
-     x: 38, y: 83, width: 724, height: 30, size: 15, color: secondary)
+text("Arrastra a Aplicaciones. Abre la copia instalada.",
+     x: 38, y: 79, width: 724, height: 24, size: 14, color: secondary)
+text("Drag to Applications. Then open the installed copy.",
+     x: 38, y: 104, width: 724, height: 24, size: 14, color: secondary)
 let arrow = NSBezierPath()
 arrow.lineWidth = 4
 arrow.lineCapStyle = .round
@@ -36,17 +38,24 @@ arrow.line(to: NSPoint(x: 462, y: height - 210))
 arrow.line(to: NSPoint(x: 445, y: height - 227))
 accent.setStroke()
 arrow.stroke()
-text("1. Abre la copia instalada", x: 38, y: 326, width: 344, height: 25, size: 16, weight: .semibold)
-text("Expulsa este disco y abre Aplicaciones/AMSpace.app. Vive en la barra de menús: clic derecho en el indicador → Ajustes.",
-     x: 38, y: 360, width: 344, height: 76, size: 12.5, color: secondary)
-text("2. Concede Accesibilidad", x: 420, y: 326, width: 342, height: 25, size: 16, weight: .semibold)
-text("Ajustes del Sistema → Privacidad y seguridad → Accesibilidad. Activa AMSpace; si falta, usa + y elige la copia de Aplicaciones.",
-     x: 420, y: 360, width: 342, height: 76, size: 12.5, color: secondary)
+text("1. Abre la copia / Open installed app", x: 38, y: 316, width: 344, height: 28, size: 15, weight: .semibold)
+text("Expulsa el disco. Abre Aplicaciones/AMSpace.app. Clic derecho en el indicador de la barra → Ajustes.",
+     x: 38, y: 352, width: 344, height: 47, size: 12, color: secondary)
+text("Eject this disk. Open Applications/AMSpace.app. Right-click the menu bar indicator → Settings.",
+     x: 38, y: 404, width: 344, height: 47, size: 12, color: secondary)
+text("2. Accesibilidad / Accessibility", x: 420, y: 316, width: 342, height: 28, size: 15, weight: .semibold)
+text("Ajustes del Sistema → Privacidad y seguridad → Accesibilidad. Activa AMSpace; usa + si no aparece.",
+     x: 420, y: 352, width: 342, height: 47, size: 12, color: secondary)
+text("System Settings → Privacy & Security → Accessibility. Enable AMSpace; use + if it is missing.",
+     x: 420, y: 404, width: 342, height: 47, size: 12, color: secondary)
 NSColor(calibratedRed: 0.91, green: 0.93, blue: 0.98, alpha: 1).setFill()
-NSBezierPath(roundedRect: NSRect(x: 24, y: 26, width: 550, height: 124), xRadius: 12, yRadius: 12).fill()
-text("Seguridad: firma ad hoc, sin notarización", x: 40, y: 466, width: 518, height: 25, size: 13, weight: .semibold)
-text("Si macOS bloquea la apertura, consulta «Léeme primero». Autoriza solo una descarga oficial en la que confíes. No ignores avisos de malware ni desactives Gatekeeper o SIP.",
-     x: 40, y: 498, width: 518, height: 66, size: 11.5, color: secondary)
+NSBezierPath(roundedRect: NSRect(x: 24, y: 20, width: 550, height: 118), xRadius: 12, yRadius: 12).fill()
+text("Firma ad hoc, sin notarización / Ad hoc signed, not notarized",
+     x: 40, y: 470, width: 518, height: 24, size: 12, weight: .semibold)
+text("Consulta «Léeme primero». Solo descarga oficial de confianza. No ignores malware ni desactives Gatekeeper o SIP.",
+     x: 40, y: 502, width: 518, height: 32, size: 10.5, color: secondary)
+text("Read «Léeme primero». Trust official downloads only. Never ignore malware warnings or disable Gatekeeper or SIP.",
+     x: 40, y: 542, width: 518, height: 32, size: 10.5, color: secondary)
 image.unlockFocus()
 guard let tiff = image.tiffRepresentation,
       let bitmap = NSBitmapImageRep(data: tiff),

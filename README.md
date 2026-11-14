@@ -5,9 +5,15 @@
 
 AMSpace muestra dónde estás con un vistazo: números, puntos o iconos por escritorio. El activo destaca y los demás aparecen atenuados. Haz clic izquierdo en un número, punto o icono para cambiar a ese escritorio. El clic derecho abre unos ajustes nativos, compactos y adaptados al aspecto claro u oscuro del sistema.
 
+## Idioma
+
+La interfaz funciona en **español e inglés**. Sigue el orden de idiomas preferidos de macOS; si ninguno es compatible, usa inglés. Puedes elegir **Ajustes → General → Idioma → Sistema / Español / English**. **Vuelve a abrir AMSpace** para aplicar el cambio, incluidos los diálogos nativos de actualización.
+
+Solo cambia el idioma de AMSpace: no modifica macOS, los atajos ni las distribuciones guardadas. Los títulos de ventanas, nombres de aplicaciones y plantillas personales conservan su texto original.
+
 ## Contexto
 
-Proyecto personal desarrollado por **Alberto Martín** para su propio uso, utilizando **Astra** y **Qwen 3.8 Flash Next**. La aplicación sigue en español. La optimización y el mínimo consumo de recursos son una prioridad máxima: está pensada para mi portátil y mi estación de escritorio con dos monitores, uno apaisado y otro vertical. Esa configuración guía el diseño, pero no implica compatibilidad o rendimiento máximos universales. [VALIDATION.md](docs/VALIDATION.md) recoge las mediciones, los escenarios realmente comprobados y sus límites.
+Proyecto personal desarrollado por **Alberto Martín** para su propio uso, utilizando **Astra** y **Qwen 3.8 Flash Next**. La aplicación dispone de interfaz en español e inglés. La optimización y el mínimo consumo de recursos son una prioridad máxima: está pensada para mi portátil y mi estación de escritorio con dos monitores, uno apaisado y otro vertical. Esa configuración guía el diseño, pero no implica compatibilidad o rendimiento máximos universales. [VALIDATION.md](docs/VALIDATION.md) recoge las mediciones, los escenarios realmente comprobados y sus límites.
 
 - Instagram: [@amartinro](https://www.instagram.com/amartinro/)
 - X: [@amartinro](https://x.com/amartinro)

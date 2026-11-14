@@ -42,6 +42,12 @@ La colocación oculta tiene dos intentos separados al menos 120 ms y un límite 
 
 Otro fallo real bloqueaba el envío al escritorio 1 con «Una ventana del destino no responde; no se ha movido nada». La causa era tratar una entrada nativa sin AX verificable como un veto de toda la preparación. Se omiten entradas no verificables nuevas, se conservan las ranuras conocidas cuando corresponde y no se escriben geometrías de ventanas no comprobadas. No lo arregles reasignando el número 1 a otro Space ni eliminando todas las validaciones.
 
+## Idioma y datos persistidos
+
+- Resolver español/inglés una sola vez antes de AppKit/Sparkle. Un cambio desde General se aplica al volver a abrir, no reconstruye overlays durante un arrastre ni reinicia operaciones nativas.
+- Traducir solo texto propio en puntos explícitos; nunca pasar nombres de apps, títulos de ventanas o nombres de plantillas personales por traducción automática.
+- Conservar IDs de plantillas, índices de atajos/modificadores y claves guardadas. `app.language` es independiente. El idioma nativo usa un dominio de argumentos volátil, sin escribir `AppleLanguages` persistente ni cambiar macOS.
+
 ## Atajos: prioridad acotada y compatibilidad
 
 `shortcuts.rs` centraliza configuración y conflictos. Carbon usa reservas exclusivas; la prioridad opcional usa un event tap de sesión con hilo/run loop dedicado. El callback no hace consultas AX ni coloca ventanas: encola trabajo en el hilo principal. La entrada segura y las decisiones del sistema pueden limitarlo; no existe una promesa de prioridad absoluta.
@@ -59,6 +65,8 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 - Mantener proporciones personalizadas y serialización por escritorio/pantalla. Cambiar una plantilla o cerrar una ventana debe invalidar solo el trabajo que corresponda, sin contaminar otros contextos.
 - Separar arrastre real, redimensionado iniciado por un borde y cambio de tamaño automático al cruzar de monitor. Una animación propia o un clic inmóvil no son una nueva intención de arrastre.
 - La zona superior solo aparece durante movimiento real de ventana, no por seleccionar contenido ni redimensionar. Hover no muta el modelo: alternar flotante/mosaico exige soltar dentro y revalidar identidad, modelo, área y pertenencia nativa. Salir, cancelar o desactivar invalida la intención; un mouse-up perdido no la confirma.
+- El reloj puede ver el botón suelto antes del mouse-up global. Conserva la intención flotante hasta la entrega nativa, como máximo 350 ms; sin ella cancela, no confirma por hover. Evalúa el punto del evento de soltado, no el último punto sondeado.
+- Los límites de ratón sobreviven a la reentrada AX en una cola FIFO fija y acotada, sin eventos de movimiento ni asignación por entrada. Reconfigurar, desbordar o caducar cancela las intenciones antiguas; una nueva pulsación no confirma la anterior.
 - La zona sigue la pantalla del cursor y tiene prioridad sobre apilar/intercambiar únicamente dentro de su recuadro visible. Fuera se conservan los destinos ordinarios; nunca hay dos commits de un solo arrastre. Conserva la desactivación persistida del antiguo gesto, sin mantener su detector.
 - Las flotantes pueden participar en esta acción explícita, pero un arrastre ordinario no las reinserta ni intercambia su hueco. Reutilizar paneles, vistas, transiciones y reloj existentes. El overlay ignora ratón y no activa ventanas.
 - Los callbacks diferidos de una sola ejecución no se pierden si una llamada AX reentra mientras `APP` está prestada: reprogramar un único selector en modos comunes y entregar cuando se libere. No convertirlos en sondeo periódico ni acumular copias del mismo trabajo.

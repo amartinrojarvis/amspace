@@ -320,15 +320,14 @@ impl Picker {
             let _: () = msg_send![&panel,setLevel:3isize];
             let _: () = msg_send![&panel,setHidesOnDeactivate:false];
             let _: () = msg_send![&panel,setCollectionBehavior:((1usize<<3)|(1<<6))];
-            let _: () =
-                msg_send![&panel,setTitle:&*NSString::from_str("Distribuciones de esta pantalla")];
+            let _: () = msg_send![&panel,setTitle:&*NSString::from_str(crate::i18n::tr("Distribuciones de esta pantalla"))];
             let root: Obj = msg_send![&panel, contentView];
             choice(
                 root,
                 rect(0., 0., area.size.width, area.size.height),
                 target,
                 -1,
-                "Cancelar selección",
+                crate::i18n::tr("Cancelar selección"),
                 true,
             );
             let ghost = alloc_view(
@@ -347,9 +346,9 @@ impl Picker {
             } = gallery_geometry(area, total);
             plate(root, gallery, 0.92, false, 22.);
             let orientation = if columns == 2 {
-                "vertical"
+                crate::i18n::tr("vertical")
             } else {
-                "horizontal"
+                crate::i18n::tr("horizontal")
             };
             light_label(
                 root,
@@ -359,7 +358,10 @@ impl Picker {
                     gallery.size.width - 48.,
                     26.,
                 ),
-                &format!("Distribuciones · pantalla {orientation}"),
+                &crate::tr_format!(
+                    "Distribuciones · pantalla {orientation}",
+                    "Layouts · {orientation} display"
+                ),
                 18.,
                 true,
             );
@@ -371,13 +373,14 @@ impl Picker {
                     gallery.size.width - 48.,
                     20.,
                 ),
-                &format!(
+                &crate::tr_format!(
                     "{} {} · miniaturas de ejemplo · solo esta pantalla",
+                    "{} {} · sample previews · this display only",
                     context.desktop.order.len(),
                     if context.desktop.order.len() == 1 {
-                        "hueco"
+                        crate::i18n::tr("hueco")
                     } else {
-                        "huecos"
+                        crate::i18n::tr("huecos")
                     }
                 ),
                 12.,
@@ -636,9 +639,9 @@ impl Picker {
             crate::native::text(
                 self.status,
                 if self.valid[self.selected] {
-                    "Ratón o teclas · Flechas · Intro: aplicar · Esc: cancelar"
+                    crate::i18n::tr("Ratón o teclas · Flechas · Intro: aplicar · Esc: cancelar")
                 } else {
-                    "Esta distribución no cabe. Elige otra plantilla."
+                    crate::i18n::tr("Esta distribución no cabe. Elige otra plantilla.")
                 },
             );
         }

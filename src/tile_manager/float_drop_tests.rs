@@ -304,3 +304,128 @@ fn floating_a_group_member_promotes_its_sibling_without_losing_other_windows() {
         "The survivor must reclaim the tab header and have no hidden sibling"
     );
 }
+
+#[test]
+fn polling_release_keeps_the_float_proposal_until_the_native_release_arrives() {
+    let now = Instant::now();
+    let mut drag = gesture(now);
+    enter_zone(&mut drag);
+    let mut manager = manager_for(&drag);
+    let key = drag.space;
+    let area = drag.area;
+    manager.drag = Some(drag);
+    manager.pressed = true;
+    for delay in [0, 16, 80, 200] {
+        assert!(manager.defer_native_release(None, false, now + Duration::from_millis(delay)));
+        assert!(manager.drag.as_ref().unwrap().float_released(true));
+        assert!(!manager.floating.contains(&1));
+    }
+    assert!(!manager.defer_native_release(Some(false), false, now + Duration::from_millis(250)));
+    let drag = manager.drag.take().unwrap();
+    assert!(drag.float_released(true));
+    manager
+        .toggle_float_at(drag.id, drag.start, key, area)
+        .unwrap();
+    assert!(manager.floating.contains(&1));
+    assert!(!manager.desktops[&key].order.contains(&1));
+    assert!(manager.desktops[&key].order.contains(&2));
+}
+
+#[test]
+fn the_native_release_position_wins_over_the_last_hover() {
+    let now = Instant::now();
+    let mut drag = gesture(now);
+    enter_zone(&mut drag);
+    let mut manager = manager_for(&drag);
+    manager.drag = Some(drag);
+    manager.pressed = true;
+    assert!(manager.defer_native_release(None, false, now));
+    assert!(!manager.defer_native_release(Some(false), false, now + Duration::from_millis(30)));
+    let drag = manager.drag.as_mut().unwrap();
+    let outside = NSPoint::new(50., 300.);
+    drag.update_float_zone(
+        outside,
+        Some(drag.space),
+        Some((drag.space, drag.area)),
+        true,
+    );
+    assert!(!drag.float_released(true));
+    assert!(!manager.floating.contains(&1));
+}
+
+#[test]
+fn a_missing_or_expired_release_cancels_without_toggling_or_rearming() {
+    for explicit in [None, Some(false)] {
+        let now = Instant::now();
+        let mut drag = gesture(now);
+        enter_zone(&mut drag);
+        let baseline = drag.baseline.clone();
+        let key = drag.space;
+        let mut manager = manager_for(&drag);
+        manager.drag = Some(drag);
+        manager.pressed = true;
+        assert!(manager.defer_native_release(None, false, now));
+        assert!(manager.defer_native_release(explicit, false, now + Duration::from_millis(350)));
+        assert!(manager.drag.is_none());
+        assert!(!manager.pressed);
+        assert!(manager.mouse_release_pending.is_none());
+        assert!(manager.desktops[&key] == baseline);
+        assert!(!manager.floating.contains(&1));
+        assert!(!manager.defer_native_release(
+            Some(false),
+            false,
+            now + Duration::from_millis(351)
+        ));
+        assert!(manager.drag.is_none());
+    }
+}
+
+#[test]
+fn a_new_press_cannot_complete_the_previous_hover_or_inherit_a_polled_capture() {
+    for opted_in in [false, true] {
+        let now = Instant::now();
+        let mut drag = gesture(now);
+        enter_zone(&mut drag);
+        drag.float_drop_enabled = opted_in;
+        let mut manager = manager_for(&drag);
+        manager.drag = Some(drag);
+        manager.pressed = true;
+        if opted_in {
+            assert!(manager.defer_native_release(None, false, now));
+        }
+        assert!(!manager.defer_native_release(Some(true), true, now + Duration::from_millis(20)));
+        assert!(manager.drag.is_none());
+        assert!(manager.gesture_candidates.is_empty());
+        assert!(
+            !manager.pressed,
+            "The native press must be allowed to capture its own grab point"
+        );
+        assert!(manager.mouse_release_pending.is_none());
+        assert!(!manager.floating.contains(&1));
+    }
+}
+
+#[test]
+fn a_candidate_only_gesture_waits_for_native_release_before_resolving() {
+    let now = Instant::now();
+    let drag = gesture(now);
+    let area = drag.area;
+    let key = drag.space;
+    let mut manager = manager_for(&drag);
+    manager.gesture_candidates.push(drag);
+    manager.pressed = true;
+    assert!(manager.defer_native_release(None, false, now));
+    assert!(!manager.defer_native_release(Some(false), false, now + Duration::from_millis(20)));
+    let card = float_drop::frame(area).unwrap();
+    let point = NSPoint::new(card.origin.x + 30., card.origin.y + 30.);
+    resolve_gesture(
+        &mut manager.drag,
+        &mut manager.gesture_candidates,
+        point,
+        Some(key),
+        |_| Some(rect(60., 45., 1500., 800.)),
+    );
+    let drag = manager.drag.as_mut().unwrap();
+    drag.update_float_zone(point, Some(key), Some((key, area)), true);
+    assert!(drag.float_released(true));
+}
