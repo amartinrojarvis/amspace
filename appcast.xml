@@ -1,17 +1,23 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.19</title><pubDate>Sat, 14 Nov 2026 09:57:57 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.19 — zona superior para alternar flotante y mosaico.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.20</title><pubDate>Sat, 14 Nov 2026 11:46:47 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.20 — español/inglés y suelta fiable en la zona flotante.
 
-- Arrastra una ventana al recuadro del centro superior de la pantalla: muestra «Hacer flotante» o «Volver al mosaico», se resalta al entrar y confirma únicamente al soltar dentro. Salir cancela esa acción.
-- Sustituye la agitación por un destino explícito, con el mismo fondo oscuro translúcido, bordes redondeados y resaltado de las zonas de apilar/intercambiar.
-- Conserva los tamaños flotantes cómodos y las animaciones existentes. Si la ventana no cabe de vuelta en el mosaico, permanece flotante y muestra un aviso.
-- Desactivable en Ajustes → Mosaico → Zona superior: flotante / mosaico. Respeta la desactivación guardada del gesto anterior.
-- Reutiliza panel y controles, sin nuevos temporizadores en reposo. Fuera del recuadro se conservan los destinos ordinarios de arrastre.
+- Interfaz completa en español e inglés, incluidas ayuda, feedback e instrucciones del instalador. Sigue el primer idioma compatible de macOS; usa inglés si no hay ninguno.
+- Selector en Ajustes → General → Idioma. Guarda la elección para la próxima apertura, sin cambiar el idioma del sistema ni los nombres, plantillas o preferencias personales.
+- Corrige dos carreras que podían perder la suelta en «Hacer flotante» o «Volver al mosaico»: el temporizador ya no consume el gesto antes del evento y las reentradas de AppKit conservan los eventos pendientes.
+- La confirmación usa la posición real al soltar. Los eventos caducados o desbordados cancelan sin ejecutar una acción antigua. Sin nuevos temporizadores permanentes ni dependencias.
 
-Verificación y límites: pruebas del modelo, compilación universal y controles AppKit propios. Pendiente validar el arrastre físico completo con ventanas de otras aplicaciones, varias pantallas reales y ejecución en hardware Intel.
+English
 
-Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.19/AMSpace-universal.zip" length="2876336" type="application/octet-stream" sparkle:version="74" sparkle:shortVersionString="0.9.19" sparkle:edSignature="B75JClNSpswmiBWiL490hO3WqSi9/PNHcpRdmhJ20ozb158LYWUpRNazufaqBuGv3PcmCUER95zEYC5lxevHAA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: EV9w4FO/zL1Fzi4WnryJiab3cWDSyviRIIqLxkgb+dqlrRnxBBqRETE2PtVoQe4gvIdi/+IeawU3s/Tgzv5tAw==
-length: 2353
+- Full Spanish/English interface, including help, feedback and installer instructions. Follows the first supported macOS language, with English as the fallback.
+- Choose the language in Settings → General → Language; reopen the app to apply it. System language, personal names, templates and existing preferences remain unchanged.
+- Fixes two races that could lose releases over “Make floating” or “Return to tiling”. Confirmation uses the actual release position; stale or overflowing events cancel safely, without a new idle timer.
+
+Verificación / Verification: 273 pruebas correctas / tests passed, ocho ignoradas / eight ignored; controles AppKit en ambos idiomas / AppKit controls in both languages; compilación universal / universal build. No se ha comprobado el arrastre físico completo con ventanas ajenas ni la ejecución en hardware Intel / Full physical dragging of other apps’ windows and execution on Intel hardware have not been verified.
+
+Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
+https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.20/AMSpace-universal.zip" length="2941697" type="application/octet-stream" sparkle:version="75" sparkle:shortVersionString="0.9.20" sparkle:edSignature="ypGMOy6wqCAJi7oPCpFs05lGpLlC8vQUxiukYKjg8LxNGT5E8lQvSw7u47nZ+f76YwKfPe2Lrj6GWMVShRqnCA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: HFsGGHtySppEINqAdcwKOsXKt1AbMiaAJpbiItg7Nz/e3+qr98Ie/upcMJKVT/eoLNyeou9O+BEWRpMWMHvHCA==
+length: 3082
 -->
