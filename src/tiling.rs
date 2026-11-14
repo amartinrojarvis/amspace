@@ -244,6 +244,34 @@ pub fn ax_screen_rect(screen: NSRect, primary_height: f64) -> NSRect {
         screen.size.height,
     )
 }
+/// A user-requested float gets a readable size and a clear margin around it.
+/// Automatic desktop floats never use this: their geometry belongs to the user.
+pub fn floating_frame(frame: NSRect, area: NSRect) -> Option<NSRect> {
+    if [frame, area].iter().any(|r| {
+        !r.origin.x.is_finite()
+            || !r.origin.y.is_finite()
+            || !r.size.width.is_finite()
+            || !r.size.height.is_finite()
+            || r.size.width <= 0.
+            || r.size.height <= 0.
+    }) {
+        return None;
+    }
+    let width = frame
+        .size
+        .width
+        .clamp((area.size.width * 0.75).min(900.), area.size.width * 0.85);
+    let height = frame
+        .size
+        .height
+        .clamp((area.size.height * 0.7).min(700.), area.size.height * 0.85);
+    Some(rect(
+        area.origin.x + (area.size.width - width) / 2.,
+        area.origin.y + (area.size.height - height) / 2.,
+        width,
+        height,
+    ))
+}
 pub fn zone(r: NSRect, p: NSPoint) -> Zone {
     let x = (p.x - r.origin.x) / r.size.width;
     let y = (p.y - r.origin.y) / r.size.height;
@@ -1842,6 +1870,60 @@ pub fn interpolate(from: NSRect, to: NSRect, progress: f64) -> NSRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn floating_geometry_is_readable_centered_and_inside_its_own_display() {
+        assert_eq!(
+            floating_frame(rect(0., 0., 160., 100.), rect(0., 0., 1600., 1000.)),
+            Some(rect(350., 150., 900., 700.))
+        );
+        for area in [
+            rect(10., 41., 1660., 947.),
+            rect(-900., -400., 880., 1580.),
+            rect(1700., -1080., 1280., 1020.),
+            rect(0., 20., 320., 220.),
+        ] {
+            for frame in [
+                rect(area.origin.x, area.origin.y, 120., 90.),
+                area,
+                rect(9000., -8000., 900., 700.),
+            ] {
+                let floated = floating_frame(frame, area).unwrap();
+                assert!(floated.size.width >= (area.size.width * 0.75).min(900.));
+                assert!(floated.size.height >= (area.size.height * 0.7).min(700.));
+                assert!(floated.size.width <= area.size.width * 0.85);
+                assert!(floated.size.height <= area.size.height * 0.85);
+                assert!(
+                    (floated.origin.x + floated.size.width / 2.
+                        - (area.origin.x + area.size.width / 2.))
+                        .abs()
+                        < 0.001
+                );
+                assert!(
+                    (floated.origin.y + floated.size.height / 2.
+                        - (area.origin.y + area.size.height / 2.))
+                        .abs()
+                        < 0.001
+                );
+                assert_eq!(floating_frame(floated, area), Some(floated));
+            }
+        }
+    }
+
+    #[test]
+    fn floating_geometry_rejects_invalid_native_frames_without_partial_placement() {
+        let area = rect(-900., -400., 880., 1580.);
+        for invalid in [
+            NSRect::ZERO,
+            rect(f64::NAN, 0., 800., 600.),
+            rect(0., f64::INFINITY, 800., 600.),
+            rect(0., 0., -1., 600.),
+            rect(0., 0., 800., f64::INFINITY),
+        ] {
+            assert!(floating_frame(invalid, area).is_none());
+            assert!(floating_frame(area, invalid).is_none());
+        }
+    }
+
     #[test]
     fn snapping_a_parent_refits_children_when_no_inner_grid_line_is_available() {
         let area = rect(0., 0., 1000., 1000.);

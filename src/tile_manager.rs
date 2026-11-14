@@ -930,6 +930,7 @@ pub struct Manager {
     membership_grace: MembershipGrace,
     presentation: crate::desktop_mode::Mode,
     desktop_baseline: Option<HashSet<(i32, u32)>>,
+    desktop_resume_until: Option<Instant>,
     desktop_floating: HashSet<(i32, u32)>,
     last_visible_windows: Option<HashSet<(i32, u32)>>,
     restore_after_presentation: bool,
@@ -1527,6 +1528,9 @@ impl Manager {
         let space = window.space;
         let (position, size) =
             ax::geometry(window.element.0).ok_or("No se pudo leer la geometría de la ventana.")?;
+        let from = NSRect::new(position, size);
+        let target = crate::tiling::floating_frame(from, area)
+            .ok_or("La geometría de la ventana o pantalla no es válida.")?;
         let mut desktop = self
             .desktops
             .get(&space)
@@ -1535,12 +1539,13 @@ impl Manager {
         desktop.remove(id);
         self.focus_member(id)?;
         let window = self.windows.get_mut(&id).unwrap();
-        window.original = NSRect::new(position, size);
+        window.original = target;
         window.original_area = area;
         self.floating.insert(id);
         self.inactive_tabs.remove(&id);
         self.minimum_sizes.remove(&id);
         self.commit_tab_model(space, id, desktop);
+        self.transition_from(id, from, target);
         Ok(())
     }
 
@@ -1817,7 +1822,7 @@ impl Manager {
             let Some(after) = snapshot.as_ref() else {
                 return;
             };
-            let before = self.desktop_baseline.take().unwrap_or_else(|| {
+            let before = self.desktop_baseline.get_or_insert_with(|| {
                 self.windows
                     .iter()
                     .map(|(id, w)| (w.pid, *id))
@@ -1829,22 +1834,62 @@ impl Manager {
                     .collect()
             });
             self.desktop_floating
-                .extend(after.difference(&before).copied());
+                .extend(after.difference(before).copied());
         }
         if mode == Mode::Desktop {
+            self.desktop_resume_until = None;
             if let Some(snapshot) = &snapshot {
                 self.desktop_floating.retain(|key| snapshot.contains(key));
             }
-            self.desktop_baseline = snapshot;
+            if self.desktop_baseline.is_none() {
+                self.desktop_baseline = snapshot;
+            }
         }
         let was_paused = self.presentation != Mode::Normal;
         self.presentation = mode;
         if !was_paused {
             self.cancel_drag(); // Cancels writes/previews, preserving trees and originals.
         } else if mode == Mode::Normal {
+            if self.desktop_baseline.is_some() {
+                self.desktop_resume_until = Some(now + Duration::from_secs(2));
+            }
             // Let macOS put the parked windows back before consulting geometry.
             self.space_changed_with_visible_at(now, &[]);
         }
+    }
+    fn finish_desktop_reentry(&mut self, candidates: &[(i32, u32, NSRect)], now: Instant) {
+        // Opening an app can dismiss Show Desktop before its window is published.
+        // Capture the first settled scan, but never extend this to a later manual
+        // resume after sleep, disabled tiling or loss of accessibility permission.
+        let within_resume = self
+            .desktop_resume_until
+            .take()
+            .is_some_and(|until| now <= until);
+        if let Some(before) = self.desktop_baseline.take()
+            && within_resume
+        {
+            self.desktop_floating.extend(
+                candidates
+                    .iter()
+                    .map(|(pid, id, _)| (*pid, *id))
+                    .filter(|key| !before.contains(key)),
+            );
+        }
+    }
+    fn apply_desktop_float(&mut self, pid: i32, id: u32) {
+        if !self.desktop_floating.remove(&(pid, id)) {
+            return;
+        }
+        // Also applies to a window already tracked before the deferred notification.
+        self.floating.insert(id);
+        self.inactive_tabs.remove(&id);
+        self.cancel_window_placement(id);
+        if let Some(window) = self.windows.get(&id)
+            && let Some(desktop) = self.desktops.get_mut(&window.space)
+        {
+            desktop.remove(id);
+        }
+        self.dirty = true;
     }
     pub fn invalidate(&mut self) {
         self.dirty = true;
@@ -2765,17 +2810,27 @@ impl Manager {
                 self.invalidate();
                 return;
             }
-            self.floating.insert(id);
-            self.applied.remove(&id);
-            if let Some(d) = self.desktops.get_mut(&w.space) {
-                d.remove(id);
-            }
             let Some(current) = area(w.space.0) else {
                 return;
             };
-            let original = restoration_frame(w.original, w.original_area, current);
+            let Some((position, size)) = ax::geometry(w.element.0) else {
+                return;
+            };
+            let from = NSRect::new(position, size);
+            let Some(target) = crate::tiling::floating_frame(from, current) else {
+                return;
+            };
             ax::raise(w.element.0);
-            self.transition(id, original);
+            if let Some(d) = self.desktops.get_mut(&w.space) {
+                d.remove(id);
+            }
+            let w = self.windows.get_mut(&id).unwrap();
+            w.original = target;
+            w.original_area = current;
+            self.floating.insert(id);
+            self.applied.remove(&id);
+            self.minimum_sizes.remove(&id);
+            self.transition_from(id, from, target);
             self.invalidate();
         }
     }
@@ -2792,7 +2847,11 @@ impl Manager {
         };
         let (space, original, original_area) =
             (source.space, source.original, source.original_area);
-        let floating = self.floating.contains(&old);
+        // An incoming independent floating window must not inherit a tiled slot.
+        // Inactive tabs instead follow the currently selected tab, including an
+        // explicit float-to-tile shortcut since they were last selected.
+        let incoming_float = self.floating.contains(&new) && !self.inactive_tabs.contains(&new);
+        let floating = self.floating.contains(&old) || incoming_float;
         if !floating
             && !self
                 .desktops
@@ -2805,21 +2864,29 @@ impl Manager {
         self.verifications.remove(&old);
         self.transitions.remove(&new);
         self.verifications.remove(&new);
-        if let Some(target) = self.applied.remove(&old) {
-            self.applied.insert(new, target);
-        }
-        if let Some(limit) = self.constrained.remove(&old) {
-            self.constrained.insert(new, limit);
-        }
-        if let Some(minimum) = self.minimum_sizes.remove(&old) {
-            self.minimum_sizes.insert(new, minimum);
-        }
         if floating {
+            if let Some(desktop) = self.desktops.get_mut(&space) {
+                desktop.remove(old);
+            }
+            self.floating.insert(old);
             self.floating.insert(new);
+            for id in [old, new] {
+                self.cancel_window_placement(id);
+                self.minimum_sizes.remove(&id);
+            }
         } else {
+            if let Some(target) = self.applied.remove(&old) {
+                self.applied.insert(new, target);
+            }
+            if let Some(limit) = self.constrained.remove(&old) {
+                self.constrained.insert(new, limit);
+            }
+            if let Some(minimum) = self.minimum_sizes.remove(&old) {
+                self.minimum_sizes.insert(new, minimum);
+            }
             self.floating.remove(&new);
         }
-        if let Some(destination) = self.windows.get_mut(&new) {
+        if !incoming_float && let Some(destination) = self.windows.get_mut(&new) {
             destination.original = original;
             destination.original_area = original_area;
         }
@@ -2881,10 +2948,6 @@ impl Manager {
                 desktop.place(id, target, zone);
             }
         }
-    }
-    fn transition(&mut self, id: u32, to: NSRect) {
-        let from = ws::bounds(id).unwrap_or(to);
-        self.transition_from(id, from, to);
     }
     fn transition_from(&mut self, id: u32, from: NSRect, to: NSRect) {
         // A retry for an older destination must not fight the new animation.
@@ -3996,6 +4059,7 @@ impl Manager {
         let Some(candidates) = ws::try_tile_windows() else {
             return;
         };
+        self.finish_desktop_reentry(&candidates, Instant::now());
         // One Space-membership memo per tick, so every reader of this frame
         // consults the same native answer instead of three mid-slide reads.
         let settling = self.settling_space();
@@ -4134,10 +4198,9 @@ impl Manager {
                 }
                 continue;
             };
+            self.apply_desktop_float(pid, id);
             if let std::collections::hash_map::Entry::Vacant(entry) = self.windows.entry(id) {
-                if self.desktop_floating.remove(&(pid, id))
-                    || crate::tile_rules::floats(defaults, pid)
-                {
+                if !self.floating.contains(&id) && crate::tile_rules::floats(defaults, pid) {
                     self.floating.insert(id);
                 }
                 entry.insert(Managed {
@@ -4167,7 +4230,6 @@ impl Manager {
             }
             w.space = space;
             actual_frames.insert(id, frame);
-            self.inactive_tabs.remove(&id); // A detached tab can become an ordinary window.
             let owns_slot = self
                 .desktops
                 .get(&space)
@@ -4187,6 +4249,7 @@ impl Manager {
                                 && source.pid == pid
                                 && source.space == space
                                 && !visible_ids.contains(old)
+                                && !self.inactive_tabs.contains(old)
                                 && (self.floating.contains(old)
                                     || self
                                         .desktops
@@ -4253,6 +4316,7 @@ impl Manager {
                     self.tab_groups.insert(id, group);
                 }
             }
+            self.inactive_tabs.remove(&id); // A detached tab can become an ordinary window.
             let w = self.windows.get_mut(&id).unwrap();
             if !self.floating.contains(&id) {
                 members.entry(space).or_default().push(id);
@@ -6700,6 +6764,187 @@ mod tests {
         assert!(context.proposal(Layout::Spiral).is_none());
         assert!(context.proposal(Layout::ThreeBands).is_some());
     }
+    #[test]
+    fn desktop_reentry_keeps_old_and_late_floats_out_of_the_layout() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager::default();
+        let pid = std::process::id() as i32;
+        let element = ax::application(pid).unwrap();
+        let space = (2, 8);
+        let area = rect(-900., -400., 880., 1580.);
+        let quick = rect(-800., -100., 500., 600.);
+        for id in [1, 2] {
+            manager.windows.insert(
+                id,
+                Managed {
+                    pid,
+                    space,
+                    original: quick,
+                    original_area: area,
+                    element: element.clone(),
+                },
+            );
+        }
+        manager.floating.insert(2);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1], area, 10.);
+        let before = desktop.frames(area, 10.);
+        manager.desktops.insert(space, desktop);
+        let now = Instant::now();
+        manager.set_presentation_at(
+            Mode::Desktop,
+            now,
+            Some(HashSet::from([(pid, 1), (pid, 2)])),
+        );
+        manager.set_presentation_at(
+            Mode::Normal,
+            now,
+            Some(HashSet::from([(pid, 1), (pid, 2), (pid, 3)])),
+        );
+        // A deferred entry may already be tracked. Window 4 is published only
+        // after macOS dismisses Desktop, during the existing reentry barrier.
+        for id in [3, 4] {
+            manager.windows.insert(
+                id,
+                Managed {
+                    pid,
+                    space,
+                    original: quick,
+                    original_area: area,
+                    element: element.clone(),
+                },
+            );
+            manager.transition_from(id, quick, area);
+            manager.verifications.insert(id, Verification::new(area));
+        }
+        manager
+            .desktops
+            .get_mut(&space)
+            .unwrap()
+            .reconcile(&[1, 3, 4], area, 10.);
+        let candidates = [1, 2, 3, 4].map(|id| (pid, id, quick));
+        manager.finish_desktop_reentry(&candidates, now + Duration::from_millis(600));
+        manager.apply_desktop_float(pid + 1, 4);
+        assert!(!manager.floating.contains(&4)); // A different PID cannot consume the classification.
+        for id in [3, 4] {
+            manager.apply_desktop_float(pid, id);
+        }
+        assert_eq!(manager.floating, HashSet::from([2, 3, 4]));
+        assert_eq!(manager.desktops[&space].frames(area, 10.), before);
+        assert!(manager.transitions.is_empty() && manager.verifications.is_empty());
+        for id in [2, 3, 4] {
+            assert!(!manager.can_tile_drag(id, space));
+            assert_eq!(manager.windows[&id].original, quick);
+        }
+        // Ordinary subsequent arrivals are not captured by the completed cycle.
+        manager.finish_desktop_reentry(&[(pid, 5, quick)], now + Duration::from_millis(700));
+        manager.apply_desktop_float(pid, 5);
+        assert!(!manager.floating.contains(&5));
+        let identities = HashSet::from([(pid, 1), (pid, 2), (pid, 3), (pid, 4)]);
+        manager.set_presentation_at(Mode::Desktop, now, Some(identities.clone()));
+        manager.set_presentation_at(Mode::Normal, now, Some(identities));
+        manager.finish_desktop_reentry(&candidates, now + Duration::from_millis(600));
+        assert_eq!(manager.floating, HashSet::from([2, 3, 4]));
+        assert_eq!(manager.desktops[&space].frames(area, 10.), before);
+    }
+
+    #[test]
+    fn delayed_manual_resume_does_not_float_unrelated_normal_windows() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager::default();
+        let now = Instant::now();
+        let frame = rect(0., 30., 800., 600.);
+        manager.set_presentation_at(Mode::Desktop, now, Some(HashSet::from([(7, 1)])));
+        manager.set_presentation_at(Mode::Normal, now, Some(HashSet::from([(7, 1), (7, 2)])));
+        manager.finish_desktop_reentry(
+            &[(7, 1, frame), (7, 2, frame), (7, 3, frame)],
+            now + Duration::from_secs(60),
+        );
+        manager.apply_desktop_float(7, 2);
+        manager.apply_desktop_float(7, 3);
+        assert!(manager.floating.contains(&2)); // Observed during Desktop: no expiry of its state.
+        assert!(!manager.floating.contains(&3)); // Opened during a later manual pause.
+    }
+
+    #[test]
+    fn native_tab_inheritance_cannot_tile_an_incoming_floating_window() {
+        use crate::desktop_mode::Mode;
+        for opened_on_desktop in [false, true] {
+            let mut manager = Manager::default();
+            let pid = std::process::id() as i32;
+            let element = ax::application(pid).unwrap();
+            let space = (1, 7);
+            let area = rect(10., 41., 1660., 947.);
+            let quick = rect(300., 200., 600., 400.);
+            let mut desktop = Desktop::configured(Layout::Spiral, None);
+            desktop.reconcile(&[1, 3], area, 10.);
+            manager.desktops.insert(space, desktop);
+            for (id, original) in [(1, area), (2, quick), (4, quick)] {
+                manager.windows.insert(
+                    id,
+                    Managed {
+                        pid,
+                        space,
+                        original,
+                        original_area: area,
+                        element: element.clone(),
+                    },
+                );
+            }
+            if opened_on_desktop {
+                let now = Instant::now();
+                manager.set_presentation_at(Mode::Desktop, now, Some(HashSet::from([(pid, 1)])));
+                manager.set_presentation_at(
+                    Mode::Normal,
+                    now,
+                    Some(HashSet::from([(pid, 1), (pid, 2)])),
+                );
+                manager.apply_desktop_float(pid, 2);
+            } else {
+                manager.floating.insert(2);
+            }
+            for id in [1, 2] {
+                manager.applied.insert(id, area);
+                manager.constrained.insert(id, (area, area));
+                manager.minimum_sizes.insert(id, area.size);
+                manager.transition_from(id, quick, area);
+                manager.verifications.insert(id, Verification::new(area));
+            }
+            manager.inherit_tab_slot(1, 2);
+            assert!(manager.floating.contains(&2));
+            assert_eq!(manager.windows[&2].original, quick);
+            assert_eq!(manager.desktops[&space].order, vec![3]);
+            assert!(manager.transitions.is_empty() && manager.verifications.is_empty());
+            assert!(manager.applied.is_empty() && manager.constrained.is_empty());
+            assert!(manager.minimum_sizes.is_empty());
+            // Switching native tabs keeps the entire native window floating.
+            manager.inherit_tab_slot(2, 1);
+            manager.inherit_tab_slot(1, 2);
+            manager.inherit_tab_slot(2, 4);
+            assert!(manager.floating.contains(&4));
+            assert!(manager.inactive_tabs.contains(&1) && manager.inactive_tabs.contains(&2));
+            manager.inherit_tab_slot(4, 2);
+            assert_eq!(manager.windows[&1].original, quick);
+            assert_eq!(manager.desktops[&space].order, vec![3]);
+            // An explicit shortcut back to tile must win over a stale inactive
+            // tab's previous float classification on the next native selection.
+            manager.floating.remove(&2);
+            manager
+                .desktops
+                .get_mut(&space)
+                .unwrap()
+                .reconcile(&[2, 3], area, 10.);
+            let expected: Vec<_> = manager.desktops[&space]
+                .frames(area, 10.)
+                .into_iter()
+                .map(|(id, frame)| (if id == 2 { 1 } else { id }, frame))
+                .collect();
+            manager.inherit_tab_slot(2, 1);
+            assert!(!manager.floating.contains(&1));
+            assert_eq!(manager.desktops[&space].frames(area, 10.), expected);
+        }
+    }
+
     #[test]
     fn show_desktop_preserves_tree_and_leaves_new_windows_floating_after_exit() {
         use crate::desktop_mode::Mode;

@@ -1,11 +1,10 @@
-AMSpace 0.9.16 — corrección de la reaparición de pestañas y optimización del arranque.
+AMSpace 0.9.17 — flotantes persistentes y salida del mosaico más cómoda.
 
-- Corregida una ruta que volvía a ocultar las barras de pestañas durante los cambios de escritorio solicitados desde la barra de menús.
-- Al volver de Mission Control, los paneles confirmados pueden reaparecer sin esperar a la reconciliación AX. Se conservan las protecciones de geometría, pausa, pertenencia y cambios de pantalla.
-- El descubrimiento inicial reutiliza una lista AX de ventanas por aplicación y pasada, evitando enumeraciones repetidas y multiplicar los fallos de consulta.
-- Corregida la cadencia inicial del mosaico; el puente de traslado no se resuelve si no hay atajos de envío que lo necesiten.
-- Se mantienen la reordenación por arrastre, separación, cierre y preferencias existentes. Sin nuevos temporizadores ni sondeo permanente.
+- Las ventanas abiertas durante «Mostrar escritorio» permanecen flotantes al volver al mosaico, incluidas las publicadas durante la reentrada.
+- Las ventanas que ya eran flotantes conservan su estado; la herencia de pestañas nativas no las reinserta en un hueco tiled.
+- Hacer flotante mediante el atajo o el menú centra la ventana en el área útil de su pantalla y adapta el tamaño para mejorar la lectura y dejar margen visible. Las flotantes automáticas no se recolocan.
+- Se reutilizan las transiciones y la preferencia de animación existentes, sin nuevos temporizadores ni sondeo.
 
-Verificado con pruebas del modelo y controles AppKit, incluida la restauración de un panel oculto antes de reconciliar. No se ha medido el arranque completo en la sesión del usuario ni verificado una transición física entre escritorios.
+Verificado con 243 pruebas y paneles AppKit propios en las pantallas horizontal y vertical. Pendiente comprobar el gesto físico completo de «Mostrar escritorio» y las restricciones de tamaño de otras aplicaciones. La captura adicional de llegadas tardías es acotada: no se extiende a una reanudación manual posterior.
 
 Universal Apple Silicon/Intel, macOS 13 o posterior. Firma ad hoc, sin Developer ID ni notarización. Comprobaciones: https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
