@@ -35,11 +35,11 @@ The border, the focus and the tiling are initially off: enable them once you hav
 
 ## Install
 
-Requires **macOS 13 Ventura or later**. [**Download the 0.9.16 installer**](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.16/AMSpace-installer.dmg). The universal package contains Apple Silicon and Intel; local execution is verified on Apple Silicon. See the news and files of the [official release](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.16).
+Requires **macOS 13 Ventura or later**. [**Download the 0.9.17 installer**](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.17/AMSpace-installer.dmg). The universal package contains Apple Silicon and Intel; local execution is verified on Apple Silicon. See the news and files of the [official release](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.17).
 
 The current distribution is signed **ad hoc**, without a Developer ID certificate or Apple notarization. A downloaded file may require explicit authorization in Privacy & Security. Do not disable Gatekeeper or SIP; you can also build it locally.
 
-Open the **DMG**, drag AMSpace to **Applications** and read **Léeme primero.rtf** before opening the installed copy. The window explains the steps and the required permission. See the [installation, permissions and privacy guide](docs/INSTALLATION.md). The [ZIP](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.16/AMSpace-universal.zip) is also available.
+Open the **DMG**, drag AMSpace to **Applications** and read **Léeme primero.rtf** before opening the installed copy. The window explains the steps and the required permission. See the [installation, permissions and privacy guide](docs/INSTALLATION.md). The [ZIP](https://github.com/amartinrojarvis/amspace/releases/download/v0.9.17/AMSpace-universal.zip) is also available.
 
 1. Open AMSpace. It only appears in the menu bar, with no permanent Dock icon.
 2. Right-click a desktop in the bar to open settings.
@@ -262,7 +262,7 @@ The desktop switch keeps the native stepping mechanism, also for the shortcuts. 
 
 ## Custom templates (0.8)
 
-[Last published: 0.9.16](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.16/AMSpace-universal.zip) · [Published notes](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.16).
+[Last published: 0.9.17](https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.17/AMSpace-universal.zip) · [Published notes](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.17).
 
 Version 0.8.0 adds **Mosaic → Grid and templates**: write a name and press **Save current** to keep the divisions and proportions of that screen. Choose a template to see its preview and apply it to another desktop with the same number of windows in the mosaic. The applications are not opened automatically; the destination's grid is kept. You can delete layouts without modifying the applied mosaic. The quick copy per desktop remains available.
 
