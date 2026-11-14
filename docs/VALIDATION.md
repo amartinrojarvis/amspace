@@ -9,6 +9,7 @@
 - Preparación de **0.9.17/build 72**, commit `bb10d9e`: repetidos `check.sh` (**243 correctas, ocho ignoradas**) y bundle universal arm64/x86_64, correctos. `prepare-release.py --with-dmg` generó y verificó ZIP, catálogo y DMG firmados; no se ha probado hardware Intel.
 - [CI 43566771334](https://github.com/amartinrojarvis/amspace/actions/runs/43566771334) correcta sobre `bb10d9e`: comprobaciones, fuentes del instalador, bundle universal y empaquetado completados. Esto no acredita una instalación inicial en una cuenta limpia ni una actualización instalada físicamente.
 - Publicada `v0.9.17`: cinco archivos descargados sin autenticación idénticos a los preparados y checksums correctos. DMG público montado en solo lectura: versión/build, firma, arquitecturas, guía, alias a Aplicaciones, fondo y disposición Finder correctos. ZIP inmutable publicado en `updates/0.9.17/AMSpace-universal.zip`, commit `e4250d8`; descarga raw idéntica byte a byte.
+- Catálogo anunciado después de comprobar descargas: la URL exacta de `SUFeedURL`, sin parámetros anticaché, devuelve el catálogo firmado idéntico tanto sin compresión como con las cabeceras comprimidas de Sparkle. La búsqueda informativa desde el bundle instalado **0.9.16/build 71** validó la firma y detectó **0.9.17/build 72**. No se solicitó descargar, instalar ni reiniciar; la consulta puede actualizar la fecha de última búsqueda.
 
 ## Versión 0.9.16/build 71: latencia de pestañas y arranque
 
