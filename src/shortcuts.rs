@@ -309,10 +309,11 @@ impl TapState {
         if repeat {
             return (false, None);
         }
+        let physical = (key, carbon_flags(flags));
         let action = self
             .bindings
             .iter()
-            .find(|b| b.physical() == (key, carbon_flags(flags)))
+            .find(|b| b.physical() == physical)
             .map(|b| b.action);
         if action.is_some() {
             self.held.insert(key);

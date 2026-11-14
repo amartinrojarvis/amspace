@@ -60,7 +60,7 @@ impl Clone for Owned {
 }
 impl Owned {
     pub fn new(p: Cf) -> Option<Self> {
-        (!p.is_null()).then_some(Self(p))
+        if p.is_null() { None } else { Some(Self(p)) }
     }
 }
 impl Drop for Owned {
@@ -445,7 +445,7 @@ impl Drop for Observer {
     }
 }
 extern "C" fn changed(_: Cf, _: Cf, notification: Cf, _: *mut c_void) {
-    crate::ui::queue_window_update(
+    crate::window_server::queue_accessibility_event(
         equals_text(notification, "AXFocusedWindowChanged")
             || equals_text(notification, "AXMainWindowChanged"),
     );
@@ -743,6 +743,10 @@ fn apply_frame(mut size: impl FnMut() -> bool, mut position: impl FnMut() -> boo
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn null_create_copy_results_do_not_construct_an_owner() {
+        assert!(Owned::new(ptr::null()).is_none());
+    }
     #[test]
     fn close_rejects_missing_and_non_ax_objects() {
         assert!(!request_close(ptr::null()));

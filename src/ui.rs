@@ -9,13 +9,16 @@ use objc2::{
     runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
     sel,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, ns_string};
 use std::{
     cell::RefCell,
     ptr,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+
+#[path = "ui_diagnostics.rs"]
+pub(crate) mod diagnostics;
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
 #[link(name = "QuartzCore", kind = "framework")]
@@ -220,7 +223,6 @@ struct App {
     mouse_since: Instant,
     hover_probe: focus::ProbeBudget,
     sleeping: bool,
-    update_queued: bool,
     last_title: String,
     status_detail: String,
     screen_configuration: Vec<ScreenGeometry>,
@@ -234,14 +236,36 @@ struct App {
     hover_switch: Obj,
     slider: Obj,
 }
-fn with_app(f: impl FnOnce(&mut App)) {
+fn try_with_app(f: impl FnOnce(&mut App)) -> bool {
     APP.with(|cell| {
-        if let Ok(mut a) = cell.try_borrow_mut() {
-            if let Some(a) = a.as_mut() {
-                f(a);
-            }
+        let Ok(mut app) = cell.try_borrow_mut() else {
+            return false;
+        };
+        if let Some(app) = app.as_mut() {
+            f(app);
         }
-    });
+        true
+    })
+}
+fn with_app(f: impl FnOnce(&mut App)) {
+    try_with_app(f);
+}
+
+/// One-shot callbacks must survive AX running a nested loop while App is
+/// borrowed. Replace only this selector's pending delivery, never queue copies.
+fn schedule_app_callback(target: Obj, selector: Sel, delay: f64) {
+    unsafe {
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:selector, object:ptr::null::<AnyObject>()];
+        let modes: Obj =
+            msg_send![class!(NSArray), arrayWithObject:objc2_foundation::NSRunLoopCommonModes];
+        let _: () = msg_send![target, performSelector:selector, withObject:ptr::null::<AnyObject>(), afterDelay:delay, inModes:modes];
+    }
+}
+
+fn with_app_deferred(target: Obj, selector: Sel, f: impl FnOnce(&mut App)) {
+    if !try_with_app(f) {
+        schedule_app_callback(target, selector, 0.01);
+    }
 }
 unsafe fn value(defaults: Obj, key: &str) -> bool {
     unsafe { msg_send![defaults, boolForKey:&*NSString::from_str(key)] }
@@ -447,7 +471,7 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = 650. + rows.saturating_sub(2) as f64 * 108.;
+    let height = 690. + rows.saturating_sub(2) as f64 * 108.;
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
@@ -639,7 +663,6 @@ impl App {
                 mouse_since: Instant::now(),
                 hover_probe: Default::default(),
                 sleeping: false,
-                update_queued: false,
                 last_title: String::new(),
                 permission: ptr::null_mut(),
                 width_label: ptr::null_mut(),
@@ -855,9 +878,11 @@ impl App {
             }
             return;
         }
-        if spaces::destination(id).is_some_and(|d| d.current == id) {
-            // No native slide happens, so the indicator is the only feedback.
-            self.flash_desktop();
+        if let Some(destination) = spaces::destination(id)
+            && destination.current == id
+        {
+            // Confirm on the destination display, not the focused screen.
+            self.flash_desktop(Some(destination.display));
             return;
         }
         match space_switch::Switch::start(id) {
@@ -910,12 +935,13 @@ impl App {
         self.border_suppressed = true;
         ws::stop();
         self.hide_border();
-        unsafe {
-            // One replaceable delivery, independent of tiling being enabled.
-            let target = Retained::as_ptr(&self.target) as Obj;
-            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:sel!(resumeSpaceBorder:), object:ptr::null::<AnyObject>()];
-            let _: () = msg_send![target, performSelector:sel!(resumeSpaceBorder:), withObject:ptr::null::<AnyObject>(), afterDelay:crate::border::SpacePause::DELAY.as_secs_f64()];
-        }
+        // One replaceable delivery, independent of tiling being enabled.
+        let target = Retained::as_ptr(&self.target) as Obj;
+        schedule_app_callback(
+            target,
+            sel!(resumeSpaceBorder:),
+            crate::border::SpacePause::DELAY.as_secs_f64(),
+        );
     }
     fn hide_border(&self) {
         unsafe {
@@ -924,22 +950,36 @@ impl App {
     }
     /// Soft full-screen frame for a reselected desktop. One lazily created
     /// panel, two replaceable one-shot deliveries and no polling timer.
-    fn flash_desktop(&mut self) {
+    fn flash_desktop(&mut self, display: Option<u32>) {
         if !self.flash_enabled {
             return;
         }
-        let now = Instant::now();
-        let fresh = !self.flash.pending(now);
-        self.flash.begin(now);
         unsafe {
-            let screen: Obj = msg_send![class!(NSScreen), mainScreen];
-            // visibleFrame leaves the stroke below the system menu bar, so all
-            // four sides are visible instead of the top one being clipped.
-            let frame: NSRect = if screen.is_null() {
-                rect(0., 0., 1440., 900.)
+            let screen: Obj = if let Some(display) = display {
+                let screens: Obj = msg_send![class!(NSScreen), screens];
+                let count: usize = msg_send![screens, count];
+                let Some(screen) = (0..count).find_map(|index| {
+                    let screen: Obj = msg_send![screens, objectAtIndex:index];
+                    let description: Obj = msg_send![screen, deviceDescription];
+                    let number: Obj =
+                        msg_send![description, objectForKey:ns_string!("NSScreenNumber")];
+                    let id: u32 = msg_send![number, unsignedIntValue];
+                    (id == display).then_some(screen)
+                }) else {
+                    return;
+                };
+                screen
             } else {
-                msg_send![screen, visibleFrame]
+                msg_send![class!(NSScreen), mainScreen]
             };
+            if screen.is_null() {
+                return;
+            }
+            let now = Instant::now();
+            let fresh = !self.flash.pending(now);
+            self.flash.begin(now);
+            // Keep all four sides below the system menu bar.
+            let frame: NSRect = msg_send![screen, visibleFrame];
             let panel = self.flash_panel.get_or_insert_with(|| {
                 let panel: Allocated<AnyObject> = msg_send![class!(NSPanel), alloc];
                 let panel: Retained<AnyObject> = msg_send![panel, initWithContentRect:frame, styleMask:128usize, backing:2usize, defer:false];
@@ -969,9 +1009,6 @@ impl App {
             let _: () = msg_send![class!(CATransaction), commit];
             let _: () = msg_send![class!(CATransaction), flush];
             let target = Retained::as_ptr(&self.target) as Obj;
-            for selector in [sel!(fadeFlash:), sel!(hideFlash:)] {
-                let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:target, selector:selector, object:ptr::null::<AnyObject>()];
-            }
             if fresh {
                 let _: () = msg_send![&**panel, setAlphaValue:0f64];
                 let _: () = msg_send![&**panel, orderFrontRegardless];
@@ -983,8 +1020,12 @@ impl App {
                 let _: () = msg_send![class!(NSAnimationContext), endGrouping];
             }
             let fade_at = crate::border::Flash::HOLD.as_secs_f64() - crate::border::Flash::FADE_OUT;
-            let _: () = msg_send![target, performSelector:sel!(fadeFlash:), withObject:ptr::null::<AnyObject>(), afterDelay:fade_at];
-            let _: () = msg_send![target, performSelector:sel!(hideFlash:), withObject:ptr::null::<AnyObject>(), afterDelay:crate::border::Flash::HOLD.as_secs_f64()];
+            schedule_app_callback(target, sel!(fadeFlash:), fade_at);
+            schedule_app_callback(
+                target,
+                sel!(hideFlash:),
+                crate::border::Flash::HOLD.as_secs_f64(),
+            );
         }
     }
     fn fade_flash(&self) {
@@ -1001,6 +1042,7 @@ impl App {
         }
     }
     fn hide_flash(&mut self) {
+        self.flash = Default::default();
         if let Some(panel) = &self.flash_panel {
             unsafe {
                 let _: () = msg_send![&**panel, setAlphaValue:0f64];
@@ -1009,7 +1051,6 @@ impl App {
         }
     }
     fn update_window(&mut self) {
-        self.update_queued = false;
         if self.border_space_pause.pending(Instant::now()) {
             self.hide_border();
             return;
@@ -1220,10 +1261,8 @@ impl App {
             return;
         }
         self.settle_queued = true;
-        unsafe {
-            // One bounded reconciliation after creation/activation, not a poll.
-            let _: () = msg_send![&self.target,performSelector:sel!(settle:),withObject:ptr::null::<AnyObject>(),afterDelay:0.08f64];
-        }
+        // One bounded reconciliation after creation/activation, not a poll.
+        schedule_app_callback(Retained::as_ptr(&self.target) as Obj, sel!(settle:), 0.08);
     }
     fn configure_hover(&mut self) {
         self.ensure_desktop_observer();
@@ -1329,7 +1368,11 @@ impl App {
                 retries: 0,
             });
             let delay = if front_pid == pid { 0.04f64 } else { 0.0f64 };
-            let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:delay];
+            schedule_app_callback(
+                Retained::as_ptr(&self.target) as Obj,
+                sel!(focusPending:),
+                delay,
+            );
         }
     }
     fn finish_focus(&mut self) {
@@ -1393,7 +1436,11 @@ impl App {
                 pending.verify = false;
                 pending.retries += 1;
                 self.pending_focus = Some(pending);
-                let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:0.04f64];
+                schedule_app_callback(
+                    Retained::as_ptr(&self.target) as Obj,
+                    sel!(focusPending:),
+                    0.04,
+                );
                 return;
             }
             let activated =
@@ -1420,7 +1467,11 @@ impl App {
             }
             if activated {
                 self.pending_focus = Some(pending);
-                let _: () = msg_send![&self.target, performSelector:sel!(focusPending:), withObject:ptr::null::<AnyObject>(), afterDelay:0.08f64];
+                schedule_app_callback(
+                    Retained::as_ptr(&self.target) as Obj,
+                    sel!(focusPending:),
+                    0.08,
+                );
             }
         }
     }
@@ -1730,11 +1781,10 @@ impl App {
         self.desktop_preview.hide();
         match action {
             Action::Desktop(index) => {
-                let snapshot = spaces::snapshot();
-                if let Some(id) = snapshot.desktops.get(index as usize) {
-                    self.select_desktop(*id);
+                if let Some(id) = spaces::shortcut_desktop(index as usize) {
+                    self.select_desktop(id);
                 } else {
-                    self.feedback("Ese escritorio no existe en la pantalla activa.");
+                    self.feedback("Ese escritorio no existe en la pantalla principal.");
                 }
             }
             Action::Float => {
@@ -1806,15 +1856,17 @@ impl App {
                 // A reselection of the current desktop produces no native
                 // slide, so the soft frame is the only visible confirmation.
                 if transfer_flashes(message) {
-                    self.flash_desktop();
+                    self.flash_desktop(None);
                 }
             }
         }
     }
     fn schedule_transfer_tick(&self) {
-        unsafe {
-            let _: () = msg_send![&self.target,performSelector:sel!(transferTick:),withObject:ptr::null::<AnyObject>(),afterDelay:0.05f64];
-        }
+        schedule_app_callback(
+            Retained::as_ptr(&self.target) as Obj,
+            sel!(transferTick:),
+            0.05,
+        );
     }
     fn step_transfer(&mut self) {
         if self.sleeping {
@@ -1993,7 +2045,7 @@ impl App {
             label(
                 root,
                 rect(18., 662., width - 36., 28.),
-                "Activa los atajos nuevos cuando hayas elegido tus combinaciones.",
+                "Los atajos cambian los escritorios de la pantalla principal.",
                 11.,
                 0.,
                 true,
@@ -2164,7 +2216,7 @@ impl App {
             self.refresh_picker_hint();
             self.tile_manager.invalidate();
             self.tile_manager.resume_space_strips();
-            self.update_tile_timer();
+            self.replace_tile_timer(self.tile_manager.tick_interval());
         }
     }
     fn update_tile_timer(&mut self) {
@@ -2176,10 +2228,18 @@ impl App {
             }
             return;
         }
-        let interval = self.tile_manager.tick_interval();
-        if self.tile_timer.is_some() && self.tile_interval == interval {
+        // Only configure_tiling may start the clock after checking permission,
+        // presentation and the enabled preference. Settings merely adjust it.
+        if self.tile_timer.is_none() {
             return;
         }
+        let interval = self.tile_manager.tick_interval();
+        if self.tile_interval == interval {
+            return;
+        }
+        self.replace_tile_timer(interval);
+    }
+    fn replace_tile_timer(&mut self, interval: f64) {
         unsafe {
             if let Some(timer) = self.tile_timer.take() {
                 let _: () = msg_send![&timer, invalidate];
@@ -2323,7 +2383,8 @@ impl App {
             // position for the current column count, so nothing overlaps.
             let last_row = cards.last().map_or(245., |card| card.origin.y);
             let animation_row = last_row - 37.;
-            let simple_row = animation_row - 40.;
+            let shake_row = animation_row - 40.;
+            let simple_row = shake_row - 40.;
             let preview_row = simple_row - 40.;
             let groups_row = preview_row - 40.;
             let max_row = groups_row - 40.;
@@ -2346,6 +2407,26 @@ impl App {
                 63,
                 crate::tile_manager::pref_or(defaults, "tile.animate", 1) != 0,
             );
+            let shake_label = label(
+                root,
+                rect(18., shake_row, width - 90., 22.),
+                "Agitar para alternar flotante / mosaico",
+                13.,
+                0.,
+                false,
+            );
+            let shake_switch = toggle(
+                root,
+                width - 58.,
+                shake_row,
+                "Agitar para alternar flotante / mosaico",
+                target,
+                68,
+                crate::tile_manager::pref_or(defaults, "tile.shake", 1) != 0,
+            );
+            for control in [shake_label, shake_switch] {
+                let _: () = msg_send![control, setToolTip:ns_string!("Agita brevemente la ventana mientras la arrastras. El borde blanco confirma el gesto; al soltar cambia entre flotante y mosaico.")];
+            }
             label(
                 root,
                 rect(18., simple_row, width - 90., 22.),
@@ -3494,10 +3575,7 @@ Otras apps pueden tener atajos propios no detectables.",
         self.notice
             .get_or_insert_with(crate::discovery::Notice::new)
             .show(message);
-        unsafe {
-            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(hideNotice:), object:ptr::null::<AnyObject>()];
-            let _: () = msg_send![&self.target, performSelector:sel!(hideNotice:), withObject:ptr::null::<AnyObject>(), afterDelay:5f64];
-        }
+        schedule_app_callback(Retained::as_ptr(&self.target) as Obj, sel!(hideNotice:), 5.);
     }
     fn show_feedback(&mut self) {
         let target = Retained::as_ptr(&self.target) as Obj;
@@ -3859,6 +3937,16 @@ Otras apps pueden tener atajos propios no detectables.",
                     }
                     return;
                 }
+                68 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        "tile.shake",
+                        state,
+                    );
+                    self.tile_manager.invalidate();
+                    self.update_tile_timer();
+                }
                 64 => {
                     let state: isize = msg_send![sender, state];
                     self.flash_enabled = state == 1;
@@ -4112,43 +4200,31 @@ unsafe fn open_url(url: &str) {
         let _: bool = msg_send![ws,openURL:url];
     }
 }
-// AX focus callbacks are coalesced onto the next turn, with no artificial delay.
-pub fn window_server_event(focus_changed: bool, lifecycle: bool) {
-    with_app(|a| {
-        if a.sleeping || !a.border_enabled {
-            return;
-        }
-        if focus_changed {
+// Native notifications retain their flags outside APP while AX reenters.
+pub fn window_server_event(focus_changed: bool, lifecycle: bool, accessibility: bool) -> bool {
+    try_with_app(|a| {
+        if accessibility {
+            if focus_changed
+                && a.focus_target
+                    .is_some_and(|(_, _, since)| since.elapsed() > Duration::from_millis(250))
+            {
+                a.focus_target = None;
+            }
             a.update_window();
-        } else {
-            a.update_border_geometry();
-        }
-        if lifecycle {
-            a.settle_focus();
-        }
-    });
-}
-pub fn queue_window_update(focus_changed: bool) {
-    with_app(|a| {
-        if focus_changed
-            && a.focus_target
-                .is_some_and(|(_, _, since)| since.elapsed() > Duration::from_millis(250))
-        {
-            a.focus_target = None;
-        }
-        if !a.update_queued {
-            a.update_queued = true;
-            unsafe {
-                let _: () = msg_send![&a.target,performSelector:sel!(update:),withObject:ptr::null::<AnyObject>(),afterDelay:0f64];
+        } else if !a.sleeping && a.border_enabled {
+            if focus_changed {
+                a.update_window();
+            } else {
+                a.update_border_geometry();
             }
         }
-    });
+        if lifecycle && !a.sleeping && a.border_enabled {
+            a.settle_focus();
+        }
+    })
 }
-extern "C-unwind" fn update(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.update_window());
-}
-extern "C-unwind" fn settle(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn settle(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         a.settle_queued = false;
         a.update_window();
     });
@@ -4249,8 +4325,8 @@ pub fn queue_shortcut_generation(action: crate::tile_hotkey::Action, generation:
         );
     }
 }
-extern "C-unwind" fn transfer_tick(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.step_transfer());
+extern "C-unwind" fn transfer_tick(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, App::step_transfer);
 }
 extern "C-unwind" fn settings_refresh(_: Obj, _: Sel, _: Obj) {
     with_app(|a| unsafe {
@@ -4503,8 +4579,8 @@ extern "C-unwind" fn show_feedback(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn change(_: Obj, _: Sel, sender: Obj) {
     with_app(|a| a.change(sender));
 }
-extern "C-unwind" fn focus_pending(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.finish_focus());
+extern "C-unwind" fn focus_pending(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, App::finish_focus);
 }
 pub fn cancel_layout_picker() {
     with_app(|a| {
@@ -4569,9 +4645,11 @@ pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) {
             a.configure_hover();
             a.configure_tiling();
             a.settle_focus();
-            unsafe {
-                let _: () = msg_send![&a.target, performSelector:sel!(resumeDesktop:), withObject:ptr::null::<AnyObject>(), afterDelay:0.65f64];
-            }
+            schedule_app_callback(
+                Retained::as_ptr(&a.target) as Obj,
+                sel!(resumeDesktop:),
+                0.65,
+            );
         }
     });
 }
@@ -4581,8 +4659,8 @@ extern "C-unwind" fn desktop_lifecycle(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn presentation_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| crate::desktop_mode::refresh());
 }
-extern "C-unwind" fn resume_desktop(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn resume_desktop(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         if crate::desktop_mode::active() {
             return;
         }
@@ -4590,9 +4668,11 @@ extern "C-unwind" fn resume_desktop(_: Obj, _: Sel, _: Obj) {
             .tile_manager
             .finish_deferred_restores(Retained::as_ptr(&a.defaults) as Obj)
         {
-            unsafe {
-                let _: () = msg_send![&a.target, performSelector:sel!(resumeDesktop:), withObject:ptr::null::<AnyObject>(), afterDelay:0.2f64];
-            }
+            schedule_app_callback(
+                Retained::as_ptr(&a.target) as Obj,
+                sel!(resumeDesktop:),
+                0.2,
+            );
         }
     });
 }
@@ -4606,8 +4686,8 @@ extern "C-unwind" fn desktop_distributed(_: Obj, _: Sel, notification: Obj) {
         }
     }
 }
-extern "C-unwind" fn hide_notice(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn hide_notice(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         if let Some(notice) = &a.notice {
             notice.hide();
         }
@@ -4886,18 +4966,18 @@ extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
 extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| with_app(|a| a.hover()));
 }
-extern "C-unwind" fn resume_space_border(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn resume_space_border(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         if !a.border_space_pause.pending(Instant::now()) {
             a.update_window();
         }
     });
 }
-extern "C-unwind" fn fade_flash(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.fade_flash());
+extern "C-unwind" fn fade_flash(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| a.fade_flash());
 }
-extern "C-unwind" fn hide_flash(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.hide_flash());
+extern "C-unwind" fn hide_flash(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, App::hide_flash);
 }
 extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
     with_app(|a| {
@@ -5068,7 +5148,6 @@ unsafe fn controller() -> Retained<AnyObject> {
             (sel!(presentationTick:), presentation_tick),
             (sel!(resumeDesktop:), resume_desktop),
             (sel!(focusPending:), focus_pending),
-            (sel!(update:), update),
             (sel!(settle:), settle),
             (sel!(workspace:), workspace),
             (sel!(spaceChanged:), space_changed),

@@ -23,7 +23,7 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 | `space_switch.rs` | Cambio directo asíncrono mediante gestos nativos de escritorio |
 | `space_style.rs` | Texto atribuido y SF Symbols; color activo/inactivo y preferencias por ID de escritorio |
 | `model.rs` | Presentación del indicador y normalización de preferencias |
-| `spaces.rs` | Resolución opcional de SkyLight, lectura y selección de pantalla (puntero, luego Space activo de WindowServer) |
+| `spaces.rs` | Resolución opcional de SkyLight; indicador por puntero/Space activo, navegación por teclado en la principal y envíos por pantalla de origen |
 | `accessibility.rs` | RAII de CoreFoundation, consultas AX, observador de foco y ciclo de vida, respaldo de geometría |
 | `window_server.rs` | Identidad, orden, geometría y radios reales; notificaciones de movimiento, tamaño, creación y cierre |
 | `native.rs` | Puente AppKit pequeño: vistas, texto y colores |
@@ -40,6 +40,10 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 ## Seguridad de memoria y ciclo de vida
 
 Todos los objetos de AppKit y las referencias AX se usan en el hilo principal. El tap de atajos utiliza un hilo propio únicamente para eventos y su run loop CF; encola las acciones de ventanas al hilo principal. Los objetos Objective-C propietarios usan `Retained`; AppKit retiene sus subvistas. Los punteros no propietarios a controles solo se usan mientras existe su ventana. Los resultados `Create` y `Copy` de CoreFoundation usan `Owned` y liberan su referencia en `Drop`.
+
+Los callbacks de una sola ejecución que completan asentamiento, traslado, foco, reanudación de presentación o retirada de overlays usan `with_app_deferred`. Si AX reentra mientras `APP` está prestada, se reprograma el mismo selector a 10 ms en `NSRunLoopCommonModes`; se cancela su copia anterior para mantener una única entrega pendiente. No se crea un temporizador recurrente. El diagnóstico de `ui_diagnostics.rs` fuerza esa reentrada con paneles y preferencias propios.
+
+Las notificaciones AX y del compositor comparten la cola de `window_server.rs`: su máscara pendiente vive fuera de `APP`, se combina sin asignaciones y solo existe una entrega encolada. Si la UI está prestada se conservan los indicadores y se reintenta a 10 ms, sin bucle activo. Las notificaciones recibidas durante una entrega tampoco se pierden. Se elimina el selector y el indicador redundante de actualización AX que antes podían quedar pendientes o perder el evento.
 
 El observador AX se elimina del run loop antes de liberarse o cambiar de ventana. Los temporizadores se invalidan al desactivar el foco o suspender la sesión. Los callbacks AX agrupan notificaciones en el siguiente turno del run loop, sin temporizador de 16 ms, para no modificar el observador mientras se ejecuta su callback. Los callbacks del compositor usan un ID atómico para mover el panel sin pasar por AppKit; los cambios de tamaño y foco se entregan al hilo principal mediante dispatch. La suscripción incluye todas las ventanas visibles de la app activa y eventos globales de creación/cierre, incluso cuando todavía no existe una ventana seleccionada. `try_borrow_mut` evita reentrancia de la UI durante llamadas a AppKit.
 
@@ -97,6 +101,8 @@ El NSStatusItem usa un único NSStatusBarButton para recibir clics físicos. Sus
 
 La selección vuelve a consultar la pantalla, el ID y la posición real del destino, incluyendo las posiciones de espacios a pantalla completa. Se resuelve CGDisplayID a partir del UUID de pantalla. `space_switch` envía una secuencia nativa de gesto horizontal sin abrir Mission Control. macOS 27 exige un payload IOHID serializado y orientado según la preferencia de desplazamiento natural. El protocolo está adaptado de [iss](https://github.com/joshuarli/iss) y [strafe](https://github.com/rileycx/strafe); se incluyen sus licencias. No hay interceptores globales de gestos.
 
+Los atajos numéricos resuelven `CGMainDisplayID` y el orden de escritorios normales de esa pantalla en cada pulsación, sin depender del foco ni del puntero. La lectura comparte el iterador nativo con los envíos, pero no construye una lista ni textos del indicador para elegir un único destino. El indicador y sus clics siguen al puntero; los envíos siguen usando la pantalla de la ventana. La reelección dibuja el marco en la pantalla del destino confirmado, no en `NSScreen.mainScreen`, que sigue al foco.
+
 Solo durante una petición hay un temporizador de 50 ms, registrado en los modos comunes del run loop. Cada salto debe confirmar su ID real antes del siguiente: dos segundos de plazo por salto y ocho para la operación completa, sin bloquear el hilo principal. Se concede un margen de 120 ms al asentarse cada salto. Un clic nuevo sustituye el destino pendiente, conservando el salto que ya está en curso. Un cambio inesperado de escritorio cancela la petición. La operación no modifica preferencias, atajos ni propiedades de SkyLight y no desactiva SIP. El borde y el foco automático se suspenden durante el cambio. Al terminar se libera el estado pendiente; no queda sondeo de escritorios en reposo.
 
 Las selecciones se entregan mediante un temporizador de una sola ejecución en los modos comunes del run loop. Si una llamada AX reentra mientras App está prestada, la entrega se reintenta en lugar de perder el clic.
@@ -130,7 +136,13 @@ Las transiciones guardan origen, destino y tiempo monotónico; interpolación qu
 
 ### Correcciones de flotantes, cobertura y coste de animación
 
-El conjunto `floating` solo cambia por atajo, regla inicial o destrucción/reutilización de la identidad de ventana. Las flotantes quedan fuera de la captura de arrastre y `place_drag` vuelve a comprobarlo antes de modificar el árbol; no existe reinserción por ratón. Tampoco se restauran al desactivar el mosaico.
+El conjunto `floating` cambia por acciones explícitas, reglas iniciales, Mostrar escritorio o destrucción/reutilización de la identidad. Una flotante no participa en los destinos ordinarios de arrastre: moverla no la reinserta. La agitación habilitada sí permite capturar su movimiento para solicitar una vuelta explícita al mosaico al soltar. No se restaura su geometría al desactivar el mosaico.
+
+`shake.rs` mantiene dos ejes escalares: exige tres inversiones de al menos 12 puntos dentro de 650 ms y rechaza excursiones de más de 96 puntos; una pausa de más de 250 ms descarta la secuencia parcial. Solo dispara una vez durante un arrastre. No asigna memoria ni conoce AX: el gestor aporta el movimiento real, contexto e identidad, muestra la confirmación blanca y confirma o cancela al soltar. `tile.shake` está activado por defecto; las colocaciones reutilizan `floating_frame` y la transición existente, incluida la preferencia `tile.animate`.
+
+El arrastre usa el reloj existente a 60 Hz, incluso si hay una invalidación pendiente; el asentamiento y el reposo conservan sus cadencias. El pulso reutiliza un panel sin captura de entrada y caduca a los 220 ms. Al soltar se revalidan PID/ID, pertenencia nativa, área y modelo original. Atajo y agitación comparten la transición flotante: la vuelta al mosaico prepara una propuesta con los mínimos conocidos antes de mutar el estado; si no cabe, conserva la ventana flotante y emite el aviso.
+
+La incorporación a una plantilla no personalizada solo actualiza su orden: no construye los árboles y rectángulos de todos los estados intermedios. Las distribuciones personalizadas conservan el cálculo geométrico necesario para decidir la inserción y mantener sus proporciones.
 
 Cancelar una transición invalida su destino pendiente. La reconciliación compara WindowServer con los frames esperados, incluso si el modelo no ha cambiado. Los tamaños impuestos por una app se registran junto con destino y geometría observada; solo vuelven a intentarse si cambia alguno de ellos o se elige explícitamente una plantilla. La escritura final sigue tamaño → posición → tamaño → posición: evita límites por el monitor anterior y desplazamientos introducidos al redimensionar. El redimensionado final también compara geometría real en lugar del caché de solicitudes.
 
@@ -201,6 +213,8 @@ El gesto distingue el redimensionado iniciado en un borde del cambio de tamaño 
 ### Selector de plantillas y estabilidad al cruzar monitores
 
 `tile_picker.rs` presenta un NSPanel no activante con ocho botones accesibles para las plantillas integradas, más una tarjeta por cada plantilla guardada, con miniaturas de orientación real y un único contenedor de previsualización. NSTrackingArea actualiza el hover por eventos, sin sondeo adicional. Teclado: números (1–8 y 9/0 para las dos primeras plantillas guardadas), flechas, Tab, Intro y Escape. El gestor de foco y la distribución quedan suspendidos mientras el selector está abierto. Cambiar de Space, desconectar/rotar pantalla, perder foco o suspender cancela. Solo confirmar modifica el modelo y valida de nuevo monitor, Space, área y conjunto de ventanas. Una tarjeta guardada está habilitada si tiene el mismo número de huecos que el mosaico actual y sus rectángulos caben en el área; las demás aparecen deshabilitadas.
+
+La galería mantiene el tamaño legible de sus tarjetas y usa un `NSScrollView` vertical cuando la biblioteca excede el alto útil. Las miniaturas y botones pertenecen a su documento, no al panel; al cambiar la selección con teclado se llama a `scrollRectToVisible:`. La escala depende del ancho disponible, no del número de plantillas.
 
 Las tarjetas personales y su preview grande se calculan sobre una copia del `PickerContext.desktop`, con identidades, grupos, reserva de cabecera, mínimos de aplicaciones y rejilla del contexto. No se usa el ejemplo ordinal de la biblioteca para decidir si una plantilla cabe. Solo las miniaturas de plantillas rechazadas pueden mostrar ese ejemplo; no habilita aplicar ni dibuja un destino válido.
 

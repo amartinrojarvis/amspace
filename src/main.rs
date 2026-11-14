@@ -13,6 +13,7 @@ mod instance;
 mod layout_thumbnail;
 mod model;
 mod native;
+mod shake;
 mod shortcuts;
 mod sky_bridge;
 mod space_style;

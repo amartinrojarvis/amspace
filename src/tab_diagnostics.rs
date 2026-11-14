@@ -401,8 +401,49 @@ pub fn check_controls() -> Result<(), String> {
         println!(
             "PASS: selección, arrastre/cancelación, menú con clic derecho y Control-clic, cierre individual, hover y reutilización de controles al mover la tira; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
         );
+        check_shake_feedback()?;
+        crate::ui::diagnostics::check_deferred_callbacks()?;
         Ok(())
     }
+}
+
+fn check_shake_feedback() -> Result<(), String> {
+    let mut manager = Manager::default();
+    let frame = rect(180., 180., 640., 420.);
+    manager.show_shake_pulse(frame);
+    let panel = manager.shake_pulse.as_ref().unwrap().clone();
+    let result = (|| unsafe {
+        pump(0.04);
+        let visible: bool = msg_send![&*panel, isVisible];
+        let passive: bool = msg_send![&*panel, ignoresMouseEvents];
+        let key: bool = msg_send![&*panel, isKeyWindow];
+        if !visible || !passive || key {
+            return Err("La confirmación blanca no es visible y pasiva.".into());
+        }
+        let view: Obj = msg_send![&*panel, contentView];
+        capture_control(view, ".cache/shake-feedback.png")?;
+        let moved = rect(220., 210., 640., 420.);
+        manager.show_shake_pulse(moved);
+        let current: NSRect = msg_send![&*panel, frame];
+        if !ptr::eq(
+            Retained::as_ptr(&panel),
+            Retained::as_ptr(manager.shake_pulse.as_ref().unwrap()),
+        ) || current != appkit(moved, primary_height())
+        {
+            return Err("La confirmación no sigue la ventana reutilizando su panel.".into());
+        }
+        manager.cancel_drag();
+        let visible: bool = msg_send![&*panel, isVisible];
+        if visible {
+            return Err("Cancelar el gesto dejó visible la confirmación.".into());
+        }
+        println!(
+            "Shake feedback: white passive panel, reused while moving and hidden on cancellation"
+        );
+        Ok(())
+    })();
+    manager.hide_shake_pulse();
+    result
 }
 
 fn check_reorder_presentation(strip: &mut TabStrip) -> Result<(), String> {

@@ -81,37 +81,58 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         _ => return None,
     })
 }
-fn gallery_geometry(area: NSRect, count: usize) -> (NSRect, Vec<NSRect>, usize) {
+struct Gallery {
+    frame: NSRect,
+    viewport: NSRect,
+    document: NSRect,
+    cards: Vec<NSRect>,
+    columns: usize,
+}
+
+fn gallery_geometry(area: NSRect, count: usize) -> Gallery {
     let portrait = area.size.height > area.size.width;
     let columns = if portrait { 2 } else { 4 };
     let rows = count.div_ceil(columns);
     let (cw, ch) = if portrait { (180., 244.) } else { (210., 158.) };
-    let width = columns as f64 * (cw + 12.) + 36.;
-    let height = rows as f64 * (ch + 12.) + 120.;
-    let scale = ((area.size.width - 32.) / width)
-        .min((area.size.height - 32.) / height)
-        .clamp(0.1, 1.);
-    let (width, height, cw, ch) = (width * scale, height * scale, cw * scale, ch * scale);
-    let panel = rect(
+    let natural_width = columns as f64 * (cw + 12.) + 36.;
+    // A large library scrolls instead of shrinking cards until their thumbnails
+    // have negative dimensions. Width still adapts to the physical screen.
+    let scale = ((area.size.width - 48.) / natural_width).clamp(0.1, 1.);
+    let (cw, ch, gap, margin) = (cw * scale, ch * scale, 12. * scale, 24. * scale);
+    // Keep a gutter even when macOS uses non-overlay scrollbars.
+    let width = natural_width * scale + 16.;
+    let content_height = rows as f64 * ch + rows.saturating_sub(1) as f64 * gap;
+    let height = (content_height + 130.).min(area.size.height - 32.);
+    let frame = rect(
         (area.size.width - width) / 2.,
         (area.size.height - height) / 2.,
         width,
         height,
     );
+    let viewport = rect(
+        frame.origin.x + margin,
+        frame.origin.y + 48.,
+        width - 2. * margin,
+        height - 130.,
+    );
+    let document = rect(0., 0., viewport.size.width, content_height);
     let cards = (0..count)
         .map(|index| {
             rect(
-                panel.origin.x + 24. * scale + (index % columns) as f64 * (cw + 12. * scale),
-                panel.origin.y + height
-                    - 82. * scale
-                    - ch
-                    - (index / columns) as f64 * (ch + 12. * scale),
+                (index % columns) as f64 * (cw + gap),
+                content_height - ch - (index / columns) as f64 * (ch + gap),
                 cw,
                 ch,
             )
         })
         .collect();
-    (panel, cards, columns)
+    Gallery {
+        frame,
+        viewport,
+        document,
+        cards,
+        columns,
+    }
 }
 fn thumbnail_area(card: NSRect, screen: NSRect) -> NSRect {
     let room = rect(
@@ -317,7 +338,13 @@ impl Picker {
             let _: () = msg_send![root,addSubview:&*ghost];
             let custom = crate::custom_templates::entries(defaults);
             let total = Layout::ALL.len() + custom.len();
-            let (gallery, cards, columns) = gallery_geometry(area, total);
+            let Gallery {
+                frame: gallery,
+                viewport,
+                document,
+                cards,
+                columns,
+            } = gallery_geometry(area, total);
             plate(root, gallery, 0.92, false, 22.);
             let orientation = if columns == 2 {
                 "vertical"
@@ -356,6 +383,14 @@ impl Picker {
                 12.,
                 false,
             );
+            let scroll = alloc_view(class!(NSScrollView), viewport);
+            let _: () = msg_send![&scroll, setDrawsBackground:false];
+            let _: () = msg_send![&scroll, setHasVerticalScroller:true];
+            let _: () = msg_send![&scroll, setAutohidesScrollers:true];
+            let document = alloc_view(class!(NSView), document);
+            let _: () = msg_send![&scroll, setDocumentView:&*document];
+            let _: () = msg_send![root, addSubview:&*scroll];
+            let root = Retained::as_ptr(&document) as Obj;
             let mut card_views = vec![];
             let mut buttons = vec![];
             let mut valid: Vec<bool> = Layout::ALL
@@ -474,6 +509,7 @@ impl Picker {
                     fits,
                 ));
             }
+            let root: Obj = msg_send![&panel, contentView];
             let status = light_label(
                 root,
                 rect(
@@ -564,6 +600,9 @@ impl Picker {
                 let _: () = msg_send![layer,setBackgroundColor:cg];
                 let _: () = msg_send![self.buttons[index],setState:if index==self.selected {1isize}else{0isize}];
             }
+            let selected = self.card_views[self.selected];
+            let bounds: NSRect = msg_send![selected, bounds];
+            let _: bool = msg_send![selected, scrollRectToVisible:bounds];
             let empty: Retained<AnyObject> = msg_send![class!(NSArray), new];
             let _: () = msg_send![self.ghost,setSubviews:&*empty];
             let proposed = if !self.valid[self.selected] {
@@ -623,9 +662,10 @@ mod tests {
             rect(-900., -400., 900., 1600.),
             rect(0., 0., 640., 480.),
         ] {
-            let (gallery, cards, cols) = gallery_geometry(area, Layout::ALL.len());
+            let geometry = gallery_geometry(area, Layout::ALL.len());
+            let gallery = geometry.frame;
             assert_eq!(
-                cols,
+                geometry.columns,
                 if area.size.height > area.size.width {
                     2
                 } else {
@@ -635,8 +675,8 @@ mod tests {
             assert!(gallery.origin.x >= 0. && gallery.origin.y >= 0.);
             assert!(gallery.origin.x + gallery.size.width <= area.size.width);
             assert!(gallery.origin.y + gallery.size.height <= area.size.height);
-            for card in cards {
-                assert!(card.origin.x >= gallery.origin.x && card.origin.y >= gallery.origin.y);
+            for card in geometry.cards {
+                assert!(card.origin.x >= 0. && card.origin.y >= -0.001);
                 let thumb = thumbnail_area(card, area);
                 assert!(thumb.size.width > 0. && thumb.size.height > 0.);
                 assert!(
@@ -663,14 +703,29 @@ mod tests {
         assert_eq!(key_input(29, 3, false), Some(Input::Select(9)));
     }
     #[test]
-    fn gallery_rows_grow_with_the_saved_template_library() {
-        let area = rect(0., 0., 1600., 900.);
-        let (_, eight, _) = gallery_geometry(area, Layout::ALL.len());
-        let (_, eleven, cols) = gallery_geometry(area, Layout::ALL.len() + 3);
-        assert_eq!(eight.len(), Layout::ALL.len());
-        assert_eq!(eleven.len(), Layout::ALL.len() + 3);
-        assert_eq!(cols, 4);
-        assert!(eleven[Layout::ALL.len()].origin.y < eleven[0].origin.y);
+    fn full_template_library_scrolls_without_shrinking_or_losing_cards() {
+        for area in [
+            rect(0., 0., 1600., 900.),
+            rect(-1080., -200., 1080., 1889.),
+            rect(0., 0., 640., 480.),
+        ] {
+            let short = gallery_geometry(area, Layout::ALL.len());
+            let full = gallery_geometry(area, Layout::ALL.len() + 64);
+            assert_eq!(short.cards[0].size, full.cards[0].size);
+            assert!(full.document.size.height > full.viewport.size.height);
+            assert!(full.frame.origin.y >= 0.);
+            assert!(full.frame.origin.y + full.frame.size.height <= area.size.height);
+            for card in &full.cards {
+                assert!(card.origin.x >= 0. && card.origin.y >= -0.001);
+                assert!(card.origin.x + card.size.width <= full.document.size.width + 0.001);
+                assert!(card.origin.y + card.size.height <= full.document.size.height + 0.001);
+                let thumb = thumbnail_area(*card, area);
+                assert!(thumb.size.width > 0. && thumb.size.height > 0.);
+                assert!(thumb.origin.y >= card.origin.y);
+                assert!(thumb.origin.y + thumb.size.height <= card.origin.y + card.size.height);
+            }
+            assert!(full.cards.last().unwrap().origin.y.abs() < 0.001);
+        }
     }
     #[test]
     fn saved_preview_rejects_current_app_minimums_and_wrong_slot_counts() {

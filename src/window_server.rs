@@ -25,6 +25,13 @@ unsafe extern "C" {
         context: *mut c_void,
         callback: extern "C" fn(*mut c_void),
     );
+    fn dispatch_time(when: u64, delta: i64) -> u64;
+    fn dispatch_after_f(
+        when: u64,
+        queue: *const c_void,
+        context: *mut c_void,
+        callback: extern "C" fn(*mut c_void),
+    );
 }
 struct Api {
     connection: unsafe extern "C" fn() -> i32,
@@ -376,6 +383,14 @@ extern "C" fn notification(event: u32, data: *const c_void, len: usize, _: *mut 
     if flag == 1 && event == 806 {
         move_border(target); // Translation now also needs an updated clipping mask.
     }
+    enqueue(flag);
+}
+
+// AX and compositor notifications share one pending main-queue delivery.
+pub fn queue_accessibility_event(focus_changed: bool) {
+    enqueue(16 | if focus_changed { 2 } else { 0 });
+}
+fn enqueue(flag: u32) {
     PENDING.fetch_or(flag, Ordering::AcqRel);
     if !QUEUED.swap(true, Ordering::AcqRel) {
         unsafe {
@@ -473,9 +488,31 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
     Some(Vec::new())
 }
 extern "C" fn deliver(_: *mut c_void) {
-    QUEUED.store(false, Ordering::Release);
     let flags = PENDING.swap(0, Ordering::AcqRel);
-    objc2::rc::autoreleasepool(|_| crate::ui::window_server_event(flags & 2 != 0, flags & 4 != 0));
+    let delivered = flags == 0
+        || objc2::rc::autoreleasepool(|_| {
+            crate::ui::window_server_event(flags & 2 != 0, flags & 4 != 0, flags & 16 != 0)
+        });
+    if !delivered {
+        PENDING.fetch_or(flags, Ordering::AcqRel);
+    }
+    QUEUED.store(false, Ordering::Release);
+    // Include notifications emitted during the callback. A borrowed App gets
+    // one delayed retry, not a busy dispatch loop or one task per notification.
+    if PENDING.load(Ordering::Acquire) != 0 && !QUEUED.swap(true, Ordering::AcqRel) {
+        unsafe {
+            if delivered {
+                dispatch_async_f(ptr::addr_of!(_dispatch_main_q), ptr::null_mut(), deliver);
+            } else {
+                dispatch_after_f(
+                    dispatch_time(0, 10_000_000),
+                    ptr::addr_of!(_dispatch_main_q),
+                    ptr::null_mut(),
+                    deliver,
+                );
+            }
+        }
+    }
 }
 
 /// Visible normal windows, including occluded windows. Excludes our UI/overlays.

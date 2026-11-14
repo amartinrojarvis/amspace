@@ -119,6 +119,56 @@ mod tests {
         // A display without a resolved number still participates by position.
         assert_eq!(chosen_display(&[(None, Some(5))], Some(1), 5), 0);
     }
+    fn fixture(json: &str) -> Owned {
+        unsafe {
+            let text = NSString::from_str(json);
+            let data: Obj = msg_send![&*text, dataUsingEncoding:4usize];
+            let value: Obj = msg_send![class!(NSJSONSerialization), JSONObjectWithData:data, options:0usize, error:std::ptr::null_mut::<Obj>()];
+            assert!(!value.is_null());
+            let retained: Obj = msg_send![value, retain];
+            Owned(retained.cast())
+        }
+    }
+    #[test]
+    fn desktop_numbering_isolated_from_secondary_and_fullscreen_spaces() {
+        objc2::rc::autoreleasepool(|_| {
+            let displays = fixture(
+                r#"[
+                  {"Display Identifier":2,"Spaces":[{"type":0,"ManagedSpaceID":834}]},
+                  {"Display Identifier":5,"Spaces":[
+                    {"type":0,"ManagedSpaceID":10},{"type":4,"ManagedSpaceID":77},
+                    {"type":0,"ManagedSpaceID":20}]}
+                ]"#,
+            );
+            let resolve = |identifier| number(identifier).map(|id| id as u32);
+            let primary = || desktops_from_snapshot(displays.0, 5, resolve);
+            assert_eq!(primary().next(), Some(10));
+            assert_eq!(primary().nth(1), Some(20));
+            assert_eq!(primary().nth(2), None);
+            assert_eq!(
+                desktops_from_snapshot(displays.0, 2, resolve).collect::<Vec<_>>(),
+                [834]
+            );
+            // A disconnected display must not silently select another monitor.
+            assert_eq!(desktops_from_snapshot(displays.0, 9, resolve).next(), None);
+        });
+    }
+    #[test]
+    fn shared_desktops_keep_their_native_order_on_every_display() {
+        objc2::rc::autoreleasepool(|_| {
+            let displays = fixture(
+                r#"[{"Display Identifier":"Main","Spaces":[
+                  {"type":0,"ManagedSpaceID":20},{"type":4,"ManagedSpaceID":77},
+                  {"type":0,"ManagedSpaceID":10}]}]"#,
+            );
+            for display in [2, 5] {
+                assert_eq!(
+                    desktops_from_snapshot(displays.0, display, |_| None).collect::<Vec<_>>(),
+                    [20, 10]
+                );
+            }
+        });
+    }
 }
 
 struct Api {
@@ -362,23 +412,39 @@ pub fn settings_desktops() -> Vec<(u64, String)> {
 
 /// Desktop numbering follows Mission Control on the requested physical screen.
 pub fn desktop_ids_for_display(display: u32) -> Vec<u64> {
-    let Some(api) = api() else {
-        return vec![];
-    };
-    let Some(displays) = Owned::new(unsafe { (api.displays)((api.connection)()) }) else {
-        return vec![];
-    };
-    for entry in array(displays.0) {
+    desktops_for_display(display).collect()
+}
+
+/// Keyboard navigation always addresses the primary display, never the pointer
+/// or focused window. Resolve again on every press, including after hotplug.
+pub fn shortcut_desktop(index: usize) -> Option<u64> {
+    desktops_for_display(unsafe { CGMainDisplayID() }).nth(index)
+}
+
+fn desktops_for_display(display: u32) -> impl Iterator<Item = u64> {
+    let displays = api().and_then(|api| Owned::new(unsafe { (api.displays)((api.connection)()) }));
+    desktops_from_snapshot(
+        displays.as_ref().map_or(std::ptr::null(), |value| value.0),
+        display,
+        display_number,
+    )
+}
+
+fn desktops_from_snapshot(
+    displays: Cf,
+    display: u32,
+    resolve: impl Fn(Cf) -> Option<u32>,
+) -> impl Iterator<Item = u64> {
+    let spaces = array(displays).find_map(|entry| {
         let identifier = get(entry, ns_string!("Display Identifier"));
-        if display_number(identifier) != Some(display) && !equals_text(identifier, "Main") {
-            continue;
-        }
-        return array(get(entry, ns_string!("Spaces")))
-            .filter(|space| number(get(*space, ns_string!("type"))) == Some(0))
-            .filter_map(|space| {
-                number(get(space, ns_string!("ManagedSpaceID"))).map(|id| id as u64)
-            })
-            .collect();
-    }
-    vec![]
+        (equals_text(identifier, "Main") || resolve(identifier) == Some(display))
+            .then(|| array(get(entry, ns_string!("Spaces"))))
+    });
+    // Array retains the selected native list; no temporary desktop Vec or
+    // indicator strings are needed for a single keyboard destination.
+    spaces
+        .into_iter()
+        .flatten()
+        .filter(|space| number(get(*space, ns_string!("type"))) == Some(0))
+        .filter_map(|space| number(get(space, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
 }

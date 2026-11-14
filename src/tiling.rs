@@ -1048,7 +1048,9 @@ impl Desktop {
             if self.groups.iter().any(|group| group.members.contains(id)) {
                 continue;
             }
-            if self.layout.centered_axis().is_some() {
+            // Default templates derive their tree from order; only a customized
+            // tree needs geometry to choose where a new window is inserted.
+            if self.layout.centered_axis().is_some() || self.resized.is_none() {
                 self.order.push(*id);
                 continue;
             }
