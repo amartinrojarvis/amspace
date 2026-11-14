@@ -44,6 +44,10 @@ NSStatusItem ─── clic izquierdo ─── cambio de escritorio
 
 Los textos propios se traducen explícitamente en su punto de consumo mediante catálogos `match` y formatos literales bilingües. No se traduce la entrada de helpers genéricos: títulos, nombres de aplicaciones y plantillas personales son datos. Idioma e índices de presentación nunca cambian IDs de layout, teclas, modificadores ni valores guardados. No hay red, sondeo, carga de catálogos por cuadro ni asignación adicional para obtener una traducción estática.
 
+## Geometría de Ajustes
+
+Al construir Ajustes se calcula la altura a partir de la página más larga y se limita al área útil de `NSScreen`; no se escala la interfaz mediante `setBoundsSize`. Las cinco páginas comparten el ancho disponible. La lista de escritorios ocupa el alto restante entre su cabecera y sus opciones inferiores. Mosaico, Atajos y General utilizan `NSScrollView`: sus documentos cortos se amplían hasta el viewport y se alinean arriba, mientras que los largos conservan desplazamiento nativo hasta ambos extremos. El cálculo se hace al construir los controles, sin observadores ni temporizadores adicionales y sin alterar el gestor de ventanas.
+
 ## Seguridad de memoria y ciclo de vida
 
 Todos los objetos de AppKit y las referencias AX se usan en el hilo principal. El tap de atajos utiliza un hilo propio únicamente para eventos y su run loop CF; encola las acciones de ventanas al hilo principal. Los objetos Objective-C propietarios usan `Retained`; AppKit retiene sus subvistas. Los punteros no propietarios a controles solo se usan mientras existe su ventana. Los resultados `Create` y `Copy` de CoreFoundation usan `Owned` y liberan su referencia en `Drop`.

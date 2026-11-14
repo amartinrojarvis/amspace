@@ -92,6 +92,8 @@ Left-click selects the pressed desktop; pressing the current desktop does nothin
 
 Settings are organized into **Windows**, **Menu bar**, **Tiling**, **Shortcuts** and **General**. In Menu bar choose Icons and configure each desktop with its menu; you can mix symbols and numbers. Choices are saved per desktop ID, not by position, to follow it when reordered. A new desktop gets its own initial choice.
 
+The window uses the screen's available area and every page uses the available width, without shrinking text or controls. Long pages and the desktop list only need scrolling when their content does not fit.
+
 In Windows, **Focus follows the cursor** moves the keyboard focus; **Bring to front** separately controls the raising. A partially covered window can receive the keyboard when passing over its visible part without moving the windows covering it.
 
 | State | Indicator |

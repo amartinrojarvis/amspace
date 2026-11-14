@@ -103,6 +103,8 @@ dist/AMSpace.app/Contents/MacOS/amspace -app.language en --check-localizations
 
 El override de argumentos dura solo ese proceso. El bundle debe contener `es.lproj` y `en.lproj` para comprobar la elección nativa y la de Sparkle. Los avisos técnicos de consola y el contenido externo —por ejemplo, títulos o notas de una versión ya publicada— no son traducciones automáticas.
 
+`--check-localizations` también abre las cinco páginas de Ajustes con áreas útiles de 1600 × 1200, 1280 × 740, 800 × 1400 y 1280 × 640 puntos. Comprueba la escala nativa, el uso del viewport, que el desplazamiento solo exista por desbordamiento real, que ambos extremos sean alcanzables y que los textos de Atajos no queden recortados; guarda capturas `.cache/locale-<idioma>-settings-<caso>-<página>.png`. Son ventanas AppKit propias en nivel flotante, con preferencias aisladas: no cambia resoluciones ni prueba físicamente esas pantallas.
+
 ## Diagnósticos versionados y efectos
 
 Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia normal; que exista una app abierta no los impide ejecutar. Cierra la app normal durante fixtures de traslado para que no intente gestionar sus ventanas temporales.

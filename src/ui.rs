@@ -476,12 +476,55 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
         }
     }
 }
-const SETTINGS_PAGE_HEIGHT: f64 = 690.;
+const SETTINGS_CHROME_HEIGHT: f64 = 156.;
+const SETTINGS_SHORTCUTS_HEIGHT: f64 = 740.;
+const SETTINGS_GENERAL_HEIGHT: f64 = 488.;
+
+fn settings_tile_height(width: f64) -> f64 {
+    let columns = if width >= 560. { 4 } else { 3 };
+    let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
+    842. + rows.saturating_sub(2) as f64 * 108.
+}
+
+fn settings_window_size(visible: NSSize) -> NSSize {
+    let width = (visible.width - 48.).clamp(700., 960.);
+    let document_width = width - 268. - 16.;
+    let height = settings_tile_height(document_width)
+        .max(SETTINGS_SHORTCUTS_HEIGHT)
+        .max(SETTINGS_GENERAL_HEIGHT)
+        + SETTINGS_CHROME_HEIGHT;
+    NSSize::new(width, height.min(visible.height - 52.))
+}
+
+// Preserve native point sizes and top alignment, even when a page is shorter
+// than its viewport. Only genuine overflow needs scrolling.
+unsafe fn finish_settings_scroll(scroll: Obj, document: Obj) {
+    unsafe {
+        let clip: Obj = msg_send![scroll, contentView];
+        let viewport: NSRect = msg_send![clip, bounds];
+        let mut frame: NSRect = msg_send![document, frame];
+        let extra = (viewport.size.height - frame.size.height).max(0.);
+        if extra > 0. {
+            frame.size.height += extra;
+            let _: () = msg_send![document, setFrame:frame];
+            let children: Obj = msg_send![document, subviews];
+            let count: usize = msg_send![children, count];
+            for i in 0..count {
+                let child: Obj = msg_send![children, objectAtIndex:i];
+                let mut frame: NSRect = msg_send![child, frame];
+                frame.origin.y += extra;
+                let _: () = msg_send![child, setFrame:frame];
+            }
+        }
+        let _: () = msg_send![scroll, setDocumentView:document];
+        let _: () = msg_send![clip, scrollToPoint:NSPoint::new(0., (frame.size.height - viewport.size.height).max(0.))];
+        let _: () = msg_send![scroll, reflectScrolledClipView:clip];
+    }
+}
 
 fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
     let columns = if width >= 560. { 4 } else { 3 };
-    let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    let height = SETTINGS_PAGE_HEIGHT + 152. + rows.saturating_sub(2) as f64 * 108.;
+    let height = settings_tile_height(width);
     let card_width = (width - 16. - (columns - 1) as f64 * 16.) / columns as f64;
     let cards = (0..crate::tiling::Layout::ALL.len())
         .map(|i| {
@@ -1523,10 +1566,16 @@ impl App {
             } else {
                 msg_send![screen, visibleFrame]
             };
-            let width = (visible.size.width - 48.).clamp(700., 960.);
+            self.build_settings_for_screen(visible);
+        }
+    }
+    unsafe fn build_settings_for_screen(&mut self, visible: NSRect) {
+        unsafe {
+            let size = settings_window_size(visible.size);
+            let width = size.width;
+            let height = size.height;
             let content_width = width - 268.;
-            let height = (SETTINGS_PAGE_HEIGHT + 156.).min(visible.size.height - 52.);
-            let tab_height = height - 156.;
+            let tab_height = height - SETTINGS_CHROME_HEIGHT;
             let w = window(rect(0., 0., width, height), 1 | 2 | 4 | 32768);
             let _: () =
                 msg_send![&w, setTitle:&*NSString::from_str(crate::i18n::tr("Ajustes de AMSpace"))];
@@ -1581,40 +1630,12 @@ impl App {
             let _: () = msg_send![&tabs, setTabViewType:6usize];
             for i in 0..5 {
                 let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
-                // Keep a stable readable scale; longer pages scroll natively.
-                let tile_height = SETTINGS_PAGE_HEIGHT;
-                let scale = (tab_height / tile_height).min(content_width / 560.).min(1.);
-                let page_width = if i == 2 || i == 3 {
-                    content_width / scale
-                } else {
-                    432.
-                };
-                let page_height = if i == 2 || i == 3 {
-                    tile_height
-                } else if i == 1 {
-                    430.
-                } else {
-                    360.
-                };
+                let page_height = if i == 0 { 360. } else { tab_height };
                 let inner = alloc_view(
                     class!(NSView),
-                    if i == 2 || i == 3 {
-                        rect(
-                            0.,
-                            tab_height - page_height * scale,
-                            content_width,
-                            page_height * scale,
-                        )
-                    } else {
-                        rect(
-                            (content_width - 432.) / 2.,
-                            tab_height - page_height,
-                            432.,
-                            page_height,
-                        )
-                    },
+                    rect(0., tab_height - page_height, content_width, page_height),
                 );
-                let _: () = msg_send![&inner, setBoundsSize:NSSize::new(page_width, page_height)];
+                // Frame and bounds match: never shrink text or hit targets.
                 let _: () = msg_send![&view, addSubview:&*inner];
                 let page = Retained::as_ptr(&inner) as Obj;
                 match i {
@@ -1661,10 +1682,12 @@ impl App {
     }
     unsafe fn build_window_page(&mut self, root: Obj, target: Obj) {
         unsafe {
-            card(root, rect(0., 180., 432., 180.));
+            let bounds: NSRect = msg_send![root, bounds];
+            let width = bounds.size.width;
+            card(root, rect(0., 180., width, 180.));
             label(
                 root,
-                rect(18., 319., 310., 24.),
+                rect(18., 319., width - 122., 24.),
                 crate::i18n::tr("Borde de la ventana activa"),
                 14.,
                 0.3,
@@ -1672,7 +1695,7 @@ impl App {
             );
             self.border_switch = toggle(
                 root,
-                374.,
+                width - 58.,
                 319.,
                 crate::i18n::tr("Borde de la ventana activa"),
                 target,
@@ -1687,7 +1710,7 @@ impl App {
                 0.,
                 false,
             );
-            let well = alloc_view(class!(NSColorWell), rect(365., 260., 48., 30.));
+            let well = alloc_view(class!(NSColorWell), rect(width - 67., 260., 48., 30.));
             let _: () = msg_send![&well, setColor:color(self.rgb[0],self.rgb[1],self.rgb[2],1.)];
             let _: () = msg_send![&well, setTarget:target];
             let _: () = msg_send![&well, setAction:sel!(change:)];
@@ -1723,13 +1746,13 @@ impl App {
             );
             self.width_label = label(
                 root,
-                rect(360., 212., 58., 22.),
+                rect(width - 72., 212., 58., 22.),
                 &format!("{:.1} pt", self.width),
                 12.,
                 0.,
                 true,
             );
-            let slider = alloc_view(class!(NSSlider), rect(105., 211., 230., 24.));
+            let slider = alloc_view(class!(NSSlider), rect(105., 211., width - 202., 24.));
             let _: () = msg_send![&slider, setMinValue:1f64];
             let _: () = msg_send![&slider, setMaxValue:6f64];
             let _: () = msg_send![&slider, setDoubleValue:self.width];
@@ -1740,10 +1763,10 @@ impl App {
             let _: () = msg_send![&slider, setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Grosor del borde en puntos"))];
             let _: () = msg_send![root, addSubview:&*slider];
             self.slider = Retained::as_ptr(&slider) as Obj;
-            card(root, rect(0., 20., 432., 144.));
+            card(root, rect(0., 20., width, 144.));
             label(
                 root,
-                rect(18., 122., 310., 24.),
+                rect(18., 122., width - 122., 24.),
                 crate::i18n::tr("Enfocar al pasar el cursor"),
                 14.,
                 0.3,
@@ -1751,7 +1774,7 @@ impl App {
             );
             self.hover_switch = toggle(
                 root,
-                374.,
+                width - 58.,
                 122.,
                 crate::i18n::tr("Enfocar al pasar el cursor"),
                 target,
@@ -1760,7 +1783,7 @@ impl App {
             );
             label(
                 root,
-                rect(18., 77., 310., 22.),
+                rect(18., 77., width - 122., 22.),
                 crate::i18n::tr("Traer al primer plano"),
                 13.,
                 0.,
@@ -1768,7 +1791,7 @@ impl App {
             );
             self.raise_switch = toggle(
                 root,
-                374.,
+                width - 58.,
                 77.,
                 crate::i18n::tr("Traer al primer plano"),
                 target,
@@ -1778,7 +1801,7 @@ impl App {
             let _: () = msg_send![self.raise_switch, setEnabled:self.hover_enabled];
             label(
                 root,
-                rect(18., 36., 385., 18.),
+                rect(18., 36., width - 47., 18.),
                 crate::i18n::tr("Mantén ⌥ para pausar el foco automático."),
                 11.,
                 0.,
@@ -2057,7 +2080,10 @@ impl App {
             let _: () = msg_send![&scroll, setAutohidesScrollers:true];
             let _: () = msg_send![&scroll, setDrawsBackground:false];
             let _: () = msg_send![root, addSubview:&*scroll];
-            let document = alloc_view(class!(NSView), rect(0., 0., bounds.size.width - 16., 740.));
+            let document = alloc_view(
+                class!(NSView),
+                rect(0., 0., bounds.size.width - 16., SETTINGS_SHORTCUTS_HEIGHT),
+            );
             let root = Retained::as_ptr(&document) as Obj;
             let width = bounds.size.width - 16.;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
@@ -2184,14 +2210,27 @@ impl App {
             .enumerate()
             {
                 let y = 496. - row as f64 * 43.;
-                label(
-                    root,
-                    rect(18., y + 3., width - 300., 22.),
-                    title,
-                    13.,
-                    0.,
-                    false,
-                );
+                if width < 560. {
+                    let title =
+                        wrapping_label(root, rect(18., y - 4., width - 300., 36.), title, 13.);
+                    let foreground: Obj = msg_send![class!(NSColor), labelColor];
+                    let _: () = msg_send![title, setTextColor:foreground];
+                    let _: () = msg_send![title, setSelectable:false];
+                    let cell: Obj = msg_send![title, cell];
+                    let fitted: NSSize =
+                        msg_send![cell, cellSizeForBounds:rect(0., 0., width - 300., 36.)];
+                    let height = fitted.height.min(36.);
+                    let _: () = msg_send![title, setFrame:rect(18., y + 14. - height / 2., width - 300., height)];
+                } else {
+                    label(
+                        root,
+                        rect(18., y + 3., width - 300., 22.),
+                        title,
+                        13.,
+                        0.,
+                        false,
+                    );
+                }
                 let mods = popup(
                     root,
                     rect(width - 264., y - 2., 122., 30.),
@@ -2239,19 +2278,15 @@ impl App {
             );
             let _: () = msg_send![stay,setButtonType:3usize];
             let _: () = msg_send![stay,setState:crate::tile_manager::pref_or(defaults,"shortcuts.stay",1).clamp(0,1)];
-            label(
+            wrapping_label(
                 root,
                 rect(18., 15., width - 36., 32.),
                 crate::i18n::tr(
                     "Los escritorios se numeran por pantalla. Flotante y selector requieren Mosaico activo.",
                 ),
                 11.,
-                0.,
-                true,
             );
-            let _: () = msg_send![&scroll, setDocumentView:&*document];
-            let _: () =
-                msg_send![root, scrollPoint:NSPoint::new(0., (740. - bounds.size.height).max(0.))];
+            finish_settings_scroll(Retained::as_ptr(&scroll) as Obj, root);
             self.refresh_shortcut_fields();
             self.refresh_shortcut_status();
         }
@@ -2677,11 +2712,7 @@ impl App {
                 46,
             );
             self.tile_controls = vec![title, enabled, hint];
-            let _: () = msg_send![&scroll, setDocumentView:&*document];
-            let clip: Obj = msg_send![&scroll, contentView];
-            let clip_bounds: NSRect = msg_send![clip, bounds];
-            let _: () = msg_send![clip, scrollToPoint:NSPoint::new(0., (height - clip_bounds.size.height).max(0.))];
-            let _: () = msg_send![&scroll, reflectScrolledClipView:clip];
+            finish_settings_scroll(Retained::as_ptr(&scroll) as Obj, root);
             self.refresh_tile_controls();
         }
     }
@@ -3376,7 +3407,7 @@ impl App {
             let _: () = msg_send![&scroll, setDrawsBackground:false];
             let _: () = msg_send![root, addSubview:&*scroll];
             let width = bounds.size.width - 16.;
-            let document = alloc_view(class!(NSView), rect(0., 0., width, 488.));
+            let document = alloc_view(class!(NSView), rect(0., 0., width, SETTINGS_GENERAL_HEIGHT));
             let root = Retained::as_ptr(&document) as Obj;
             card(root, rect(0., 376., width, 112.));
             label(
@@ -3501,9 +3532,7 @@ impl App {
                 target,
                 116,
             );
-            let _: () = msg_send![&scroll, setDocumentView:&*document];
-            let _: () =
-                msg_send![root, scrollPoint:NSPoint::new(0., (488. - bounds.size.height).max(0.))];
+            finish_settings_scroll(Retained::as_ptr(&scroll) as Obj, root);
         }
     }
     fn apply_bar_background(&self) {
@@ -3539,20 +3568,24 @@ impl App {
     unsafe fn build_space_page(&mut self, root: Obj, target: Obj) {
         unsafe {
             self.space_page = root;
-            card(root, rect(0., 216., 432., 144.));
+            let bounds: NSRect = msg_send![root, bounds];
+            let width = bounds.size.width;
+            let height = bounds.size.height;
+            card(root, rect(0., height - 144., width, 144.));
             label(
                 root,
-                rect(18., 322., 300., 22.),
+                rect(18., height - 38., width - 36., 22.),
                 crate::i18n::tr("Fondo del widget"),
                 14.,
                 0.3,
                 false,
             );
+            let step = (width - 32.) / crate::bar_background::OPTIONS.len() as f64;
             for (i, (name, rgb)) in crate::bar_background::OPTIONS.iter().enumerate() {
-                let x = 16. + i as f64 * 57.;
+                let x = 16. + i as f64 * step + (step - 54.) / 2.;
                 let b = button(
                     root,
-                    rect(x, 265., 54., 40.),
+                    rect(x, height - 95., 54., 40.),
                     if rgb.is_none() { "∅" } else { "●" },
                     target,
                     70 + i as isize,
@@ -3576,14 +3609,21 @@ impl App {
                     let _: () =
                         msg_send![b, setAccessibilityLabel:&*NSString::from_str(&accessibility)];
                 }
-                let caption = label(root, rect(x - 1., 239., 56., 18.), name, 10., 0., true);
+                let caption = label(
+                    root,
+                    rect(x - 1., height - 121., 56., 18.),
+                    name,
+                    10.,
+                    0.,
+                    true,
+                );
                 let _: () = msg_send![caption, setAlignment:1isize];
                 self.bar_colors.push(b);
             }
             self.apply_bar_background();
             label(
                 root,
-                rect(18., 171., 210., 22.),
+                rect(18., height - 189., width - 210., 22.),
                 crate::i18n::tr("Escritorios"),
                 14.,
                 0.3,
@@ -3591,7 +3631,7 @@ impl App {
             );
             let menu = popup(
                 root,
-                rect(248., 165., 168., 30.),
+                rect(width - 184., height - 195., 168., 30.),
                 &[
                     crate::i18n::tr("Puntos"),
                     crate::i18n::tr("Números"),
@@ -3601,15 +3641,7 @@ impl App {
                 12,
             );
             let _: () = msg_send![menu, selectItemAtIndex:space_style::mode(Retained::as_ptr(&self.defaults) as Obj)];
-            let children: Obj = msg_send![root, subviews];
-            let count: usize = msg_send![children, count];
-            for i in 0..count {
-                let child: Obj = msg_send![children, objectAtIndex:i];
-                let mut frame: NSRect = msg_send![child, frame];
-                frame.origin.y += 70.;
-                let _: () = msg_send![child, setFrame:frame];
-            }
-            let scroll = alloc_view(class!(NSScrollView), rect(0., 68., 432., 148.));
+            let scroll = alloc_view(class!(NSScrollView), rect(0., 68., width, height - 282.));
             let _: () = msg_send![&scroll, setHasVerticalScroller:true];
             let _: () = msg_send![&scroll, setAutohidesScrollers:true];
             let _: () = msg_send![&scroll, setDrawsBackground:false];
@@ -3617,7 +3649,7 @@ impl App {
             self.space_scroll = Retained::as_ptr(&scroll) as Obj;
             label(
                 root,
-                rect(18., 40., 330., 22.),
+                rect(18., 40., width - 102., 22.),
                 crate::i18n::tr("Preview al pasar por un escritorio"),
                 12.,
                 0.,
@@ -3629,7 +3661,7 @@ impl App {
             );
             toggle(
                 root,
-                374.,
+                width - 58.,
                 40.,
                 crate::i18n::tr("Preview al pasar por un escritorio"),
                 target,
@@ -3638,7 +3670,7 @@ impl App {
             );
             label(
                 root,
-                rect(18., 12., 330., 22.),
+                rect(18., 12., width - 102., 22.),
                 crate::i18n::tr("Borde al reelegir el escritorio"),
                 12.,
                 0.,
@@ -3646,7 +3678,7 @@ impl App {
             );
             self.flash_switch = toggle(
                 root,
-                374.,
+                width - 58.,
                 12.,
                 crate::i18n::tr("Borde al reelegir el escritorio"),
                 target,
@@ -3664,9 +3696,11 @@ impl App {
             let desktops = spaces::settings_desktops();
             self.space_ids = desktops.iter().map(|(id, _)| *id).collect();
             self.space_controls.clear();
-            let viewport: NSRect = msg_send![self.space_scroll, bounds];
+            let clip: Obj = msg_send![self.space_scroll, contentView];
+            let viewport: NSRect = msg_send![clip, bounds];
+            let width = viewport.size.width - 16.;
             let height = (desktops.len() as f64 * 52.).max(viewport.size.height);
-            let document = alloc_view(class!(NSView), rect(0., 0., 415., height));
+            let document = alloc_view(class!(NSView), rect(0., 0., width, height));
             let root = Retained::as_ptr(&document) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
             let defaults = Retained::as_ptr(&self.defaults) as Obj;
@@ -3676,10 +3710,17 @@ impl App {
                 .collect();
             for (index, (id, title)) in desktops.iter().enumerate() {
                 let y = height - (index + 1) as f64 * 52.;
-                label(root, rect(18., y + 18., 180., 22.), title, 13., 0., false);
+                label(
+                    root,
+                    rect(18., y + 18., width - 232., 22.),
+                    title,
+                    13.,
+                    0.,
+                    false,
+                );
                 let menu = popup(
                     root,
-                    rect(211., y + 13., 190., 30.),
+                    rect(width - 204., y + 13., 190., 30.),
                     &names,
                     target,
                     1000 + index as isize,
@@ -3698,15 +3739,14 @@ impl App {
             if desktops.is_empty() {
                 label(
                     root,
-                    rect(18., height - 48., 390., 24.),
+                    rect(18., height - 48., width - 36., 24.),
                     crate::i18n::tr("No hay escritorios disponibles en esta pantalla."),
                     12.,
                     0.,
                     true,
                 );
             }
-            let _: () = msg_send![self.space_scroll, setDocumentView:&*document];
-            let _: () = msg_send![root, scrollPoint:NSPoint::new(0., (height - viewport.size.height).max(0.))];
+            finish_settings_scroll(self.space_scroll, root);
         }
     }
     fn check_updates(&self) {

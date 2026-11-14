@@ -9,6 +9,150 @@ fn pump(seconds: f64) {
     }
 }
 
+// Exercise the production AppKit layout at several usable screen sizes without
+// changing display modes, user defaults, or windows belonging to other apps.
+unsafe fn check_settings_layout(
+    target: &Retained<AnyObject>,
+    defaults: &Retained<AnyObject>,
+) -> Result<(), String> {
+    unsafe {
+        for (name, width, height) in [
+            ("roomy", 1600., 1200.),
+            ("compact", 1280., 740.),
+            ("portrait", 800., 1400.),
+            ("short", 1280., 640.),
+        ] {
+            let mut app = App::build(target.clone(), defaults.clone());
+            app.border_enabled = false;
+            app.sleeping = true;
+            app.build_settings_for_screen(rect(0., 0., width, height));
+            let panel = app.settings.as_ref().unwrap().clone();
+            let _: () = msg_send![&panel, setLevel:3isize];
+            let _: () = msg_send![&panel, orderFrontRegardless];
+            let result = (|| -> Result<(), String> {
+                for (page, section) in SETTINGS_SECTIONS.iter().take(5).enumerate() {
+                    let _: () = msg_send![app.tabs, selectTabViewItemAtIndex:page];
+                    text(app.page_title, crate::i18n::tr(section.0));
+                    pump(0.08);
+                    let item: Obj = msg_send![app.tabs, tabViewItemAtIndex:page];
+                    let view: Obj = msg_send![item, view];
+                    let viewport: NSRect = msg_send![view, bounds];
+                    let children: Obj = msg_send![view, subviews];
+                    let inner: Obj = msg_send![children, firstObject];
+                    let frame: NSRect = msg_send![inner, frame];
+                    let bounds: NSRect = msg_send![inner, bounds];
+                    if (frame.size.width - bounds.size.width).abs() > 0.5
+                        || (frame.size.height - bounds.size.height).abs() > 0.5
+                        || (frame.size.width - viewport.size.width).abs() > 0.5
+                        || (page != 0 && (frame.size.height - viewport.size.height).abs() > 0.5)
+                    {
+                        return Err(format!(
+                            "{name}, page {page}: scaled or unused page viewport."
+                        ));
+                    }
+                    let scroll: Obj = if page == 1 {
+                        app.space_scroll
+                    } else if page == 0 {
+                        ptr::null_mut()
+                    } else {
+                        let control = match page {
+                            2 => app.tile_controls[0],
+                            3 => app.shortcut_fields[0].0,
+                            _ => app.login,
+                        };
+                        msg_send![control, enclosingScrollView]
+                    };
+                    if !scroll.is_null() {
+                        let clip: Obj = msg_send![scroll, contentView];
+                        let visible: NSRect = msg_send![clip, bounds];
+                        let document: Obj = msg_send![scroll, documentView];
+                        let extent: NSRect = msg_send![document, frame];
+                        let content_height = match page {
+                            1 => app.space_ids.len() as f64 * 52.,
+                            2 => settings_tile_height(extent.size.width),
+                            3 => SETTINGS_SHORTCUTS_HEIGHT,
+                            _ => SETTINGS_GENERAL_HEIGHT,
+                        };
+                        let reserved = if page == 1 { 282. } else { 0. };
+                        let available = bounds.size.height - reserved;
+                        let needs_scroll = content_height > available + 0.5;
+                        let scrolls = extent.size.height > visible.size.height + 0.5;
+                        if (visible.size.height - available).abs() > 0.5
+                            || scrolls != needs_scroll
+                            || (extent.size.height - content_height.max(available)).abs() > 0.5
+                        {
+                            return Err(format!(
+                                "{name}, page {page}: avoidable scrolling or unreachable content \
+                                 (content={content_height}, available={available}, \
+                                 viewport={}, document={}).",
+                                visible.size.height, extent.size.height,
+                            ));
+                        }
+                        // Check both ends through the actual native clip view.
+                        for y in [0., (extent.size.height - visible.size.height).max(0.)] {
+                            let _: () = msg_send![clip, scrollToPoint:NSPoint::new(0., y)];
+                            let actual: NSRect = msg_send![clip, bounds];
+                            if (actual.origin.y - y).abs() > 0.5 {
+                                return Err(format!(
+                                    "{name}, page {page}: unreachable scroll endpoint."
+                                ));
+                            }
+                        }
+                        let controls: Obj = msg_send![document, subviews];
+                        let count: usize = msg_send![controls, count];
+                        for i in 0..count {
+                            let control: Obj = msg_send![controls, objectAtIndex:i];
+                            let frame: NSRect = msg_send![control, frame];
+                            if frame.origin.x < -0.5
+                                || frame.origin.y < -0.5
+                                || frame.origin.x + frame.size.width > extent.size.width + 0.5
+                                || frame.origin.y + frame.size.height > extent.size.height + 0.5
+                            {
+                                return Err(format!(
+                                    "{name}, page {page}: clipped settings control."
+                                ));
+                            }
+                            let field: bool = msg_send![control, isKindOfClass:class!(NSTextField)];
+                            if page == 3 && field {
+                                let cell: Obj = msg_send![control, cell];
+                                let fitted: NSSize = msg_send![cell, cellSizeForBounds:rect(0., 0., frame.size.width, frame.size.height)];
+                                if fitted.width > frame.size.width + 0.5
+                                    || fitted.height > frame.size.height + 0.5
+                                {
+                                    let title: *mut NSString = msg_send![control, stringValue];
+                                    return Err(format!(
+                                        "{name}, page {page}: clipped shortcut text: {}.",
+                                        title
+                                            .as_ref()
+                                            .map(|value| value.to_string())
+                                            .unwrap_or_default(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    capture_window(
+                        &panel,
+                        &format!(
+                            ".cache/locale-{}-settings-{name}-{page}.png",
+                            crate::i18n::language().code()
+                        ),
+                    )?;
+                }
+                Ok(())
+            })();
+            let _: () = msg_send![&panel, orderOut:ptr::null::<AnyObject>()];
+            let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+            let _: () = msg_send![bar, removeStatusItem:&*app.status];
+            result?;
+        }
+        println!(
+            "Settings layout: all five pages at roomy, compact, portrait and short usable areas; native point sizes, necessary scrolling only, both endpoints reachable."
+        );
+        Ok(())
+    }
+}
+
 /// Explicit localization smoke proof; never registers hotkeys or controls foreign windows.
 pub(crate) fn check_localizations() -> Result<(), String> {
     if APP.with(|cell| cell.borrow().is_some()) {
@@ -77,6 +221,7 @@ pub(crate) fn check_localizations() -> Result<(), String> {
                     }
                 }
             }
+            check_settings_layout(&target, &defaults)?;
             let _: () = msg_send![&panel, orderFrontRegardless];
             for page in 0..5isize {
                 with_app(|app| {

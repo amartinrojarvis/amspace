@@ -92,6 +92,8 @@ El clic izquierdo selecciona el escritorio pulsado; pulsar el escritorio actual 
 
 Los ajustes se organizan en **Ventanas**, **Barra de menús**, **Mosaico**, **Atajos** y **General**. En Barra de menús elige Iconos y configura cada escritorio con su menú; puedes mezclar símbolos y números. Las elecciones se guardan por ID del escritorio, no por su posición, para acompañarlo al reordenarlo. Un escritorio nuevo obtiene su propia elección inicial.
 
+La ventana aprovecha el área útil de la pantalla y todas las páginas utilizan el ancho disponible, sin reducir el tamaño del texto ni de los controles. Las páginas largas y la lista de escritorios solo necesitan desplazamiento cuando su contenido no cabe.
+
 En Ventanas, **El foco sigue al cursor** mueve el foco del teclado; **Traer al primer plano** controla por separado la elevación. Una ventana parcialmente cubierta puede recibir el teclado al pasar por su parte visible sin apartar las ventanas que la cubren.
 
 | Estado | Indicador |
