@@ -78,11 +78,11 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             with_app(|app| app.build_tile_page(view, target_ptr));
             let toggle: Obj = msg_send![view, viewWithTag:68isize];
             if toggle.is_null() {
-                return Err("No aparece el ajuste del gesto de agitación.".into());
+                return Err("No aparece el ajuste de la zona superior.".into());
             }
             let initial: isize = msg_send![toggle, state];
             if initial != 1 {
-                return Err("El gesto no comienza activado en preferencias nuevas.".into());
+                return Err("La zona superior no comienza activada en preferencias nuevas.".into());
             }
             for state in [0isize, 1] {
                 let _: () = msg_send![toggle, setState:state];
@@ -91,7 +91,7 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
                     || crate::tile_manager::pref(Retained::as_ptr(&defaults) as Obj, "tile.shake")
                         != state
                 {
-                    return Err("El ajuste de agitación no guarda el estado elegido.".into());
+                    return Err("El ajuste de la zona superior no guarda el estado elegido.".into());
                 }
                 if APP.with(|cell| cell.borrow().as_ref().unwrap().tile_timer.is_some()) {
                     return Err(
@@ -101,11 +101,11 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             }
             let _: () = msg_send![&*panel, orderFrontRegardless];
             pump(0.06);
-            let capture = capture_window(&panel, ".cache/shake-settings.png");
+            let capture = capture_window(&panel, ".cache/float-drop-settings.png");
             let _: () = msg_send![&*panel, orderOut:ptr::null::<AnyObject>()];
             capture?;
             println!(
-                "Shake setting: default enabled, disable/enable persisted in isolated suite; native Mosaic page rendered"
+                "Float drop setting: default enabled, disable/enable persisted in isolated suite; native Mosaic page rendered"
             );
             check_full_picker(Retained::as_ptr(&defaults) as Obj)?;
             Ok(())

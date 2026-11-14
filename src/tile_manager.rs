@@ -80,10 +80,13 @@ fn trace_tiling() -> bool {
 }
 pub type Workspace = (u32, u64); // Display identity + native Space identity.
 
+#[path = "tile_manager/float_drop.rs"]
+mod float_drop;
+#[cfg(test)]
+#[path = "tile_manager/float_drop_tests.rs"]
+mod float_drop_tests;
 #[cfg(test)]
 mod robustness_tests;
-#[cfg(test)]
-mod shake_tests;
 
 #[derive(Clone)]
 pub struct PickerContext {
@@ -265,12 +268,10 @@ struct Drag {
     baseline: Desktop,
     area: NSRect,
     previews: DropPreviewCache,
-    /// Pure shake detector for this gesture; fires at most once per drag.
-    shake: Option<crate::shake::Shake>,
-    /// Armed one-shot toggle after the detector fired.
-    shake_armed: bool,
-    /// Remaining lifetime of the white pulse (visual only).
-    pulse_until: Option<Instant>,
+    /// Only a native mouse-down can opt this drag into the top drop zone.
+    float_drop_enabled: bool,
+    float_target: Option<(Workspace, NSRect)>,
+    float_hover: bool,
 }
 struct TabDrag {
     id: u32,
@@ -474,42 +475,39 @@ fn arrival_proposal(
     .then_some(proposed)
 }
 impl Drag {
-    fn observe_shake(
+    fn update_float_zone(
         &mut self,
-        frame: NSRect,
         point: NSPoint,
         workspace: Option<Workspace>,
+        target: Option<(Workspace, NSRect)>,
         enabled: bool,
-        now: Instant,
-    ) {
-        self.observe(frame, point, workspace);
-        if !enabled
-            || workspace != Some(self.space)
-            || self.resized
-            || !((frame.size.width - self.start.size.width).abs() <= 3.
-                && (frame.size.height - self.start.size.height).abs() <= 3.)
-        {
-            self.shake = None;
-            self.shake_armed = false;
-            self.pulse_until = None;
-            return;
+    ) -> Option<(NSRect, bool)> {
+        if !enabled {
+            self.float_drop_enabled = false;
         }
-        if self.moved
-            && !self.shake_armed
-            && self
-                .shake
-                .as_mut()
-                .is_some_and(|shake| shake.sample(frame.origin, now))
-        {
-            self.shake_armed = true;
-            self.pulse_until = Some(now + Duration::from_millis(220));
+        self.float_target = None;
+        self.float_hover = false;
+        if !self.float_drop_enabled || !self.moved || self.resized {
+            return None;
+        }
+        let (key, area) = target.filter(|(key, _)| Some(*key) == workspace)?;
+        let frame = float_drop::frame(area)?;
+        self.float_target = Some((key, area));
+        self.float_hover = contains(frame, point);
+        if self.float_hover {
             self.drop = None;
             self.candidate = None;
         }
+        Some((frame, self.float_hover))
     }
 
-    fn shake_released(&self, released: bool, workspace: Option<Workspace>) -> bool {
-        released && self.shake_armed && self.moved && !self.resized && workspace == Some(self.space)
+    fn float_released(&self, released: bool) -> bool {
+        released
+            && self.float_drop_enabled
+            && self.float_hover
+            && self.float_target.is_some()
+            && self.moved
+            && !self.resized
     }
 
     fn update_drop(
@@ -990,7 +988,7 @@ pub struct Manager {
     handoffs: HashMap<u32, MonitorHandoff>,
     pressed: bool,
     preview: Vec<Retained<AnyObject>>,
-    shake_pulse: Option<Retained<AnyObject>>,
+    float_overlay: Option<float_drop::Overlay>,
     /// One rounded strip per tabbed group, reused across ticks.
     strips: Vec<TabStrip>,
     tab_target: Option<Retained<AnyObject>>,
@@ -2009,7 +2007,7 @@ impl Manager {
         // belongs to another monitor. Never finalize it from sliding bounds or
         // a delayed mouse-up. Keep pressed latched until the physical release.
         self.drag = None;
-        self.hide_shake_pulse();
+        self.hide_float_overlay();
         self.tab_drag = None;
         self.gesture_candidates.clear();
         self.hide_preview_panels();
@@ -2321,7 +2319,7 @@ impl Manager {
         self.invalidate();
     }
     fn hide_preview(&self) {
-        self.hide_shake_pulse();
+        self.hide_float_overlay();
         self.hide_preview_panels();
         for strip in &self.strips {
             unsafe {
@@ -2351,43 +2349,18 @@ impl Manager {
             }
         }
     }
-    fn hide_shake_pulse(&self) {
-        if let Some(panel) = &self.shake_pulse {
-            unsafe {
-                let visible: bool = msg_send![&**panel, isVisible];
-                if visible {
-                    let _: () = msg_send![&**panel, orderOut:ptr::null::<AnyObject>()];
-                }
-            }
+    fn hide_float_overlay(&self) {
+        if let Some(overlay) = &self.float_overlay {
+            overlay.hide();
         }
     }
 
-    fn show_shake_pulse(&mut self, frame: NSRect) {
-        unsafe {
-            let panel = self.shake_pulse.get_or_insert_with(|| {
-                let panel = new_overlay(frame, primary_height());
-                let _: () = msg_send![&*panel, setLevel:4isize];
-                let view: Obj = msg_send![&*panel, contentView];
-                let _: () = msg_send![view, setWantsLayer:true];
-                let _: () = msg_send![view, setAccessibilityHidden:true];
-                let layer: Obj = msg_send![view, layer];
-                let white: Obj = msg_send![class!(NSColor), whiteColor];
-                let cg: *const crate::native::CgColor = msg_send![white, CGColor];
-                let _: () = msg_send![layer, setBorderColor:cg];
-                let _: () = msg_send![layer, setBorderWidth:3f64];
-                let _: () = msg_send![layer, setCornerRadius:10f64];
-                panel
-            });
-            let target = appkit(frame, primary_height());
-            let current: NSRect = msg_send![&**panel, frame];
-            if current != target {
-                let _: () = msg_send![&**panel, setFrame:target, display:true];
-            }
-            let visible: bool = msg_send![&**panel, isVisible];
-            if !visible {
-                let _: () = msg_send![&**panel, orderFrontRegardless];
-            }
-        }
+    fn show_float_overlay(&mut self, frame: NSRect, floating: bool, highlighted: bool) {
+        let primary = primary_height();
+        let overlay = self
+            .float_overlay
+            .get_or_insert_with(|| float_drop::Overlay::new(frame, floating, highlighted, primary));
+        overlay.update(frame, floating, highlighted, primary);
     }
 
     fn show_preview(&mut self, r: NSRect) {
@@ -2907,35 +2880,83 @@ impl Manager {
         from: NSRect,
         current: NSRect,
     ) -> Result<(), &'static str> {
-        let window = self
+        let destination = self
             .windows
             .get(&id)
-            .ok_or("La ventana ya no está disponible.")?;
-        let space = window.space;
+            .ok_or("La ventana ya no está disponible.")?
+            .space;
+        self.toggle_float_at(id, from, destination, current)
+    }
+
+    fn toggle_float_at(
+        &mut self,
+        id: u32,
+        from: NSRect,
+        destination: Workspace,
+        current: NSRect,
+    ) -> Result<(), &'static str> {
+        let source = self
+            .windows
+            .get(&id)
+            .ok_or("La ventana ya no está disponible.")?
+            .space;
         let floating = self.floating.contains(&id);
         let desktop = self
             .desktops
-            .get(&space)
+            .get(&destination)
             .ok_or("El escritorio ya no está disponible.")?;
         let proposed = if floating {
-            arrival_proposal(desktop, id, None, current, Some(&self.minimum_sizes))
-                .ok_or("No queda espacio para esta ventana en la plantilla; sigue flotante.")?
-        } else {
+            Some(
+                arrival_proposal(desktop, id, None, current, Some(&self.minimum_sizes))
+                    .ok_or("No queda espacio para esta ventana en la plantilla; sigue flotante.")?,
+            )
+        } else if source == destination {
             let mut proposed = desktop.clone();
             proposed.remove(id);
-            proposed
+            Some(proposed)
+        } else {
+            None // Floating onto another display must not disturb its layout.
         };
+        let mut old_source = if source != destination {
+            Some(
+                self.desktops
+                    .get(&source)
+                    .ok_or("El escritorio de origen ya no está disponible.")?
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        if let Some(desktop) = &mut old_source {
+            desktop.remove(id);
+        }
         let target = if floating {
             from
         } else {
             crate::tiling::floating_frame(from, current)
                 .ok_or("La geometría de la ventana o pantalla no es válida.")?
         };
+        // Prepare both models before changing ownership or any pending placement.
         self.cancel_window_placement(id);
+        if let Some(desktop) = old_source {
+            self.commit_tab_model(source, id, desktop);
+        }
+        if let Some(desktop) = proposed {
+            self.commit_tab_model(destination, id, desktop);
+        }
         let window = self.windows.get_mut(&id).unwrap();
         window.original = target;
         window.original_area = current;
-        self.commit_tab_model(space, id, proposed);
+        window.space = destination;
+        if source != destination {
+            self.handoffs.insert(
+                id,
+                MonitorHandoff {
+                    destination,
+                    expires: Instant::now() + Duration::from_millis(1200),
+                },
+            );
+        }
         if floating {
             self.floating.remove(&id);
         } else {
@@ -2949,7 +2970,7 @@ impl Manager {
         Ok(())
     }
 
-    fn shake_matches(&self, drag: &Drag) -> bool {
+    fn float_drag_matches(&self, drag: &Drag) -> bool {
         self.windows
             .get(&drag.id)
             .is_some_and(|window| window.pid == drag.pid && window.space == drag.space)
@@ -2961,17 +2982,21 @@ impl Manager {
                 .any(|(space, area)| *space == drag.space && *area == drag.area)
     }
 
-    fn commit_shake(&mut self, drag: &Drag) -> Result<(), &'static str> {
-        if !self.shake_matches(drag)
+    fn commit_float_drop(&mut self, drag: &Drag) -> Result<(), &'static str> {
+        let (destination, target_area) = drag
+            .float_target
+            .ok_or("La zona de soltado ya no está disponible.")?;
+        if !self.float_drag_matches(drag)
             || self.presentation_blocks_input()
             || !ax::trusted()
             || crate::focus::secure_input()
             || area(drag.space.0) != Some(drag.area)
-            || !spaces::visible_desktops().contains(&drag.space)
-            || spaces::window_space(drag.id) != Some(drag.space.1)
+            || area(destination.0) != Some(target_area)
+            || !self.active_areas.contains(&(destination, target_area))
+            || !spaces::visible_desktops().contains(&destination)
             || !ws::all_window_ids().is_some_and(|ids| ids.contains(&(drag.pid, drag.id)))
         {
-            return Err("La ventana o su escritorio cambiaron; se ha cancelado la agitación.");
+            return Err("La ventana o su escritorio cambiaron; se ha cancelado la acción.");
         }
         let window = &self.windows[&drag.id];
         if ax::window_id(window.element.0) != Some(drag.id) || !ax::tileable(window.element.0) {
@@ -2979,7 +3004,14 @@ impl Manager {
         }
         let frame =
             ws::bounds(drag.id).ok_or("No se pudo confirmar la geometría de la ventana.")?;
-        self.toggle_float_window(drag.id, frame, drag.area)
+        let native = spaces::window_space(drag.id)
+            .ok_or("No se pudo confirmar el escritorio de la ventana.")?;
+        if workspace_at_frame(native, frame, &self.active_areas) != Some(destination) {
+            return Err(
+                "La ventana todavía no pertenece a la pantalla de destino; acción cancelada.",
+            );
+        }
+        self.toggle_float_at(drag.id, frame, destination, target_area)
     }
     fn can_tile_drag(&self, id: u32, space: Workspace) -> bool {
         !self.floating.contains(&id)
@@ -3765,9 +3797,10 @@ impl Manager {
             desktop.max_group_tabs = group_limit;
         }
         let down = place_windows && down & 1 != 0;
-        let shake_enabled =
+        // Preserve the persisted switch, including an explicit user opt-out.
+        let float_enabled =
             (down || self.drag.is_some()) && pref_or(defaults, "tile.shake", 1) != 0;
-        let capture_shake = shake_enabled && input.is_some_and(|(down, _)| down);
+        let capture_float = float_enabled && input.is_some_and(|(down, _)| down);
         let Some(p) = input.map(|(_, p)| p).or_else(pointer) else {
             self.cancel_drag();
             return;
@@ -3843,7 +3876,7 @@ impl Manager {
                     self.windows.get(&id).and_then(|w| {
                         if w.pid != pid
                             || !(self.can_tile_drag(id, w.space)
-                                || (capture_shake
+                                || (capture_float
                                     && self.floating.contains(&id)
                                     && !self.inactive_tabs.contains(&id)))
                             || !active.iter().any(|(s, _)| *s == w.space)
@@ -3872,10 +3905,9 @@ impl Manager {
                             baseline: self.desktops.get(&w.space)?.clone(),
                             area: active.iter().find(|(s, _)| *s == w.space)?.1,
                             previews: DropPreviewCache::default(),
-                            shake: capture_shake
-                                .then(|| crate::shake::Shake::new(frame.origin, Instant::now())),
-                            shake_armed: false,
-                            pulse_until: None,
+                            float_drop_enabled: capture_float,
+                            float_target: None,
+                            float_hover: false,
                         })
                     })
                 });
@@ -3925,10 +3957,9 @@ impl Manager {
                         baseline: self.desktops.get(&w.space)?.clone(),
                         area,
                         previews: DropPreviewCache::default(),
-                        shake: capture_shake
-                            .then(|| crate::shake::Shake::new(frame.origin, Instant::now())),
-                        shake_armed: false,
-                        pulse_until: None,
+                        float_drop_enabled: capture_float,
+                        float_target: None,
+                        float_hover: false,
                     })
                 })
                 .collect();
@@ -3958,7 +3989,7 @@ impl Manager {
         if down || self.drag.is_some() {
             let mut preview = None;
             let mut hint: Option<DropHint> = None;
-            let mut pulse = None;
+            let mut float_hint = None;
             if let Some(drag) = &mut self.drag {
                 if !active
                     .iter()
@@ -3968,39 +3999,28 @@ impl Manager {
                     self.pressed = true; // Wait for release; never recapture halfway through a gesture.
                     return;
                 }
-                if (drag.moved || drag.shake_armed) && (drag.shake.is_some() || drag.shake_armed) {
-                    let armed = drag.shake_armed;
+                if drag.float_drop_enabled {
                     let valid =
                         self.windows.get(&drag.id).is_some_and(|window| {
                             window.pid == drag.pid && window.space == drag.space
-                        }) && self.floating.contains(&drag.id) == drag.was_floating;
-                    let Some(frame) = ws::bounds(drag.id) else {
-                        self.cancel_drag();
-                        self.pressed = down;
-                        return;
-                    };
-                    let now = Instant::now();
-                    drag.observe_shake(
-                        frame,
-                        p,
-                        pointer_workspace,
-                        shake_enabled && valid && !crate::focus::secure_input(),
-                        now,
-                    );
-                    if (armed && !drag.shake_armed)
-                        || (!armed
-                            && drag.shake_armed
-                            && (spaces::window_space(drag.id) != Some(drag.space.1)
-                                || !ws::all_window_ids()
-                                    .is_some_and(|ids| ids.contains(&(drag.pid, drag.id)))))
-                    {
+                        }) && self.floating.contains(&drag.id) == drag.was_floating
+                            && self.desktops.get(&drag.space) == Some(&drag.baseline);
+                    if !valid || crate::focus::secure_input() {
                         self.cancel_drag();
                         self.pressed = down;
                         return;
                     }
-                    if drag.pulse_until.is_some_and(|until| now < until) {
-                        pulse = Some(frame);
-                    }
+                    float_hint = drag
+                        .update_float_zone(
+                            p,
+                            pointer_workspace,
+                            active
+                                .iter()
+                                .copied()
+                                .find(|(key, _)| Some(*key) == pointer_workspace),
+                            float_enabled,
+                        )
+                        .map(|(frame, highlighted)| (frame, drag.was_floating, highlighted));
                 }
                 if drag.moved || drag.resized {
                     self.dirty |= !self.transitions.is_empty() || !self.verifications.is_empty();
@@ -4010,7 +4030,7 @@ impl Manager {
                 if drag.moved
                     && !drag.resized
                     && !drag.was_floating
-                    && !drag.shake_armed
+                    && !drag.float_hover
                     && (p.x - drag.point.x).abs() + (p.y - drag.point.y).abs() > 12.
                 {
                     let candidate = active
@@ -4088,10 +4108,10 @@ impl Manager {
                     drag.drop = None;
                 }
             }
-            if let Some(frame) = pulse {
-                self.show_shake_pulse(frame);
+            if let Some((frame, floating, highlighted)) = float_hint {
+                self.show_float_overlay(frame, floating, highlighted);
             } else {
-                self.hide_shake_pulse();
+                self.hide_float_overlay();
             }
             if down {
                 let resize_preview = self.resize_drag(
@@ -4145,11 +4165,9 @@ impl Manager {
                 );
             }
             self.hide_preview();
-            if drag.shake_armed {
-                if drag.shake_released(input.is_some_and(|(down, _)| !down), pointer_workspace)
-                    && shake_enabled
-                {
-                    if let Err(error) = self.commit_shake(&drag) {
+            if drag.float_hover {
+                if drag.float_released(input.is_some_and(|(down, _)| !down)) && float_enabled {
+                    if let Err(error) = self.commit_float_drop(&drag) {
                         self.interaction_error = Some(error.into());
                     }
                 }
@@ -6268,9 +6286,9 @@ mod tests {
             baseline: desktop.clone(),
             area,
             previews: Default::default(),
-            shake: None,
-            shake_armed: false,
-            pulse_until: None,
+            float_drop_enabled: false,
+            float_target: None,
+            float_hover: false,
         };
         let mut manager = Manager {
             pressed: true,
@@ -8191,9 +8209,9 @@ mod tests {
             baseline,
             area,
             previews: DropPreviewCache::default(),
-            shake: None,
-            shake_armed: false,
-            pulse_until: None,
+            float_drop_enabled: false,
+            float_target: None,
+            float_hover: false,
         }
     }
     #[test]

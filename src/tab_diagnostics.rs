@@ -401,48 +401,62 @@ pub fn check_controls() -> Result<(), String> {
         println!(
             "PASS: selección, arrastre/cancelación, menú con clic derecho y Control-clic, cierre individual, hover y reutilización de controles al mover la tira; captura .cache/tab-controls.png. Sin AX ni ventanas ajenas."
         );
-        check_shake_feedback()?;
+        check_float_drop_card()?;
         crate::ui::diagnostics::check_deferred_callbacks()?;
         Ok(())
     }
 }
 
-fn check_shake_feedback() -> Result<(), String> {
+fn check_float_drop_card() -> Result<(), String> {
     let mut manager = Manager::default();
-    let frame = rect(180., 180., 640., 420.);
-    manager.show_shake_pulse(frame);
-    let panel = manager.shake_pulse.as_ref().unwrap().clone();
+    let frame = float_drop::frame(rect(180., 180., 1100., 760.)).unwrap();
+    manager.show_float_overlay(frame, false, false);
+    let panel = manager.float_overlay.as_ref().unwrap().panel.clone();
     let result = (|| unsafe {
         pump(0.04);
         let visible: bool = msg_send![&*panel, isVisible];
         let passive: bool = msg_send![&*panel, ignoresMouseEvents];
         let key: bool = msg_send![&*panel, isKeyWindow];
         if !visible || !passive || key {
-            return Err("La confirmación blanca no es visible y pasiva.".into());
+            return Err("La zona superior no es visible y pasiva.".into());
         }
-        let view: Obj = msg_send![&*panel, contentView];
-        capture_control(view, ".cache/shake-feedback.png")?;
-        let moved = rect(220., 210., 640., 420.);
-        manager.show_shake_pulse(moved);
+        let root: Obj = msg_send![&*panel, contentView];
+        for (floating, highlighted, name) in [
+            (false, false, "float-drop-idle"),
+            (false, true, "float-drop-active"),
+            (true, false, "tile-drop-idle"),
+            (true, true, "tile-drop-active"),
+        ] {
+            manager.show_float_overlay(frame, floating, highlighted);
+            pump(0.04);
+            let current_root: Obj = msg_send![&*panel, contentView];
+            if current_root != root
+                || !ptr::eq(
+                    Retained::as_ptr(&panel),
+                    Retained::as_ptr(&manager.float_overlay.as_ref().unwrap().panel),
+                )
+            {
+                return Err("Cambiar de acción o resaltado reconstruyó la zona superior.".into());
+            }
+            capture_control(current_root, &format!(".cache/{name}.png"))?;
+        }
+        let moved = float_drop::frame(rect(-1000., 0., 1000., 1400.)).unwrap();
+        manager.show_float_overlay(moved, true, false);
         let current: NSRect = msg_send![&*panel, frame];
-        if !ptr::eq(
-            Retained::as_ptr(&panel),
-            Retained::as_ptr(manager.shake_pulse.as_ref().unwrap()),
-        ) || current != appkit(moved, primary_height())
-        {
-            return Err("La confirmación no sigue la ventana reutilizando su panel.".into());
+        if current != appkit(moved, primary_height()) {
+            return Err("La zona superior no sigue la pantalla reutilizando su panel.".into());
         }
         manager.cancel_drag();
         let visible: bool = msg_send![&*panel, isVisible];
         if visible {
-            return Err("Cancelar el gesto dejó visible la confirmación.".into());
+            return Err("Cancelar el arrastre dejó visible la zona superior.".into());
         }
         println!(
-            "Shake feedback: white passive panel, reused while moving and hidden on cancellation"
+            "Float drop: both actions, passive panel, shared drop-hint style, reused across hover/display changes and hidden on cancellation"
         );
         Ok(())
     })();
-    manager.hide_shake_pulse();
+    manager.hide_float_overlay();
     result
 }
 

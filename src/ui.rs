@@ -2383,8 +2383,8 @@ impl App {
             // position for the current column count, so nothing overlaps.
             let last_row = cards.last().map_or(245., |card| card.origin.y);
             let animation_row = last_row - 37.;
-            let shake_row = animation_row - 40.;
-            let simple_row = shake_row - 40.;
+            let float_drop_row = animation_row - 40.;
+            let simple_row = float_drop_row - 40.;
             let preview_row = simple_row - 40.;
             let groups_row = preview_row - 40.;
             let max_row = groups_row - 40.;
@@ -2407,25 +2407,25 @@ impl App {
                 63,
                 crate::tile_manager::pref_or(defaults, "tile.animate", 1) != 0,
             );
-            let shake_label = label(
+            let float_drop_label = label(
                 root,
-                rect(18., shake_row, width - 90., 22.),
-                "Agitar para alternar flotante / mosaico",
+                rect(18., float_drop_row, width - 90., 22.),
+                "Zona superior: flotante / mosaico",
                 13.,
                 0.,
                 false,
             );
-            let shake_switch = toggle(
+            let float_drop_switch = toggle(
                 root,
                 width - 58.,
-                shake_row,
-                "Agitar para alternar flotante / mosaico",
+                float_drop_row,
+                "Zona superior: flotante / mosaico",
                 target,
                 68,
                 crate::tile_manager::pref_or(defaults, "tile.shake", 1) != 0,
             );
-            for control in [shake_label, shake_switch] {
-                let _: () = msg_send![control, setToolTip:ns_string!("Agita brevemente la ventana mientras la arrastras. El borde blanco confirma el gesto; al soltar cambia entre flotante y mosaico.")];
+            for control in [float_drop_label, float_drop_switch] {
+                let _: () = msg_send![control, setToolTip:ns_string!("Al mover una ventana aparece un recuadro arriba, en el centro de la pantalla. Suelta dentro para hacerla flotante o devolverla al mosaico; salir cancela.")];
             }
             label(
                 root,
