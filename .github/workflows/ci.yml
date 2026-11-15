@@ -18,6 +18,7 @@ jobs:
       - name: Validate installer sources
         run: |
           bash -n scripts/dmg.sh
+          bash -n scripts/e2e.sh
           python3 -c 'import ast,pathlib; ast.parse(pathlib.Path("scripts/prepare-release.py").read_text())'
           xcrun swiftc -typecheck scripts/dmg-background.swift
       - run: ./scripts/bundle.sh --universal

@@ -80,6 +80,8 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ./scripts/bundle.sh --universal
 ```
 
+Run the E2E suite with `./scripts/e2e.sh dist/AMSpace.app/Contents/MacOS/amspace` after building. It requires a graphical session and Accessibility, uses disposable windows and checks that preferences remain unchanged. Scenarios that switch Spaces or inject global input require explicit opt-in and the normal app to be closed. These do not replace physical testing on other displays or machines. [Scenarios, reports and prerequisites](docs/DEVELOPMENT.md).
+
 To generate the guided installer from that bundle: `./scripts/dmg.sh`. It produces `dist/AMSpace-installer.dmg` and needs a Finder session during packaging. The end user needs no development tools nor Automation permission. [Installation and permissions details](docs/INSTALLATION.md).
 
 The running application is Rust + AppKit/Core Animation. `scripts/icon.swift` and `scripts/dmg-background.swift` are development tools to draw the icon and the installer background; they are not part of the executable. The packaging downloads Sparkle 2.10.1 from its official repository and verifies a pinned SHA-256 before integrating it. The direct Rust dependencies are `objc2`, `objc2-foundation`, `block2` and `libc`; the versions are pinned in Cargo.lock.
@@ -198,6 +200,8 @@ When dragging between slots in the same layout, the destination shows **both dro
 From version 0.9.8 the tabs sit in a translucent dark bar of **22 points**, **above the window's top edge**, with 4 points of separation. The mosaic reserves that space inside the slot: it does not cover the application's controls, the neighboring windows nor the menu. The active tab is highlighted; single-window groups recover the full height.
 
 Click a tab to activate and raise its window. **Drag within the strip to reorder it**: an insertion marker shows the destination without changing the active window or its size. **Drag outside the strip and release to detach it** into an independent mosaic slot, including an inactive tab; the preview shows its destination. Movements below 6 points remain clicks. If application minimum sizes prevent detachment, reordering is still available. Scroll horizontally when titles do not fit; while dragging, moving the pointer near either end scrolls the content. You can still detach the active window by dragging its title bar. Groups and tab order last for the session and are not saved in templates.
+
+You can also drag a tab onto **Make floating**, at the top center of its group's display, and release: it leaves the group using the floating size and centering. This works even when another tiled slot would not fit. Returning to the strip before releasing still reorders. **Top zone: floating / tiling** disables that destination; dragging a tab does not itself transfer windows to other displays. For that transfer, drag the window by its title bar or use the transfer actions.
 
 Tab strips retain their panels and controls on their group's desktop through the Space-switch pause. macOS handles visibility on each desktop. If native membership cannot be verified, the safe transition-hiding behavior remains; an interactive strip is never deliberately left on another desktop. Pausing Tiling, Show Desktop and Mission Control still hide strips.
 

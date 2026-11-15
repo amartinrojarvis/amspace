@@ -2,10 +2,19 @@
 use super::*;
 
 fn pump(seconds: f64) {
-    unsafe {
-        let run: Obj = msg_send![class!(NSRunLoop), currentRunLoop];
-        let until: Obj = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow:seconds];
-        let _: () = msg_send![run, runUntilDate:until];
+    let end = Instant::now() + Duration::from_secs_f64(seconds);
+    while Instant::now() < end {
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let date: Obj = msg_send![class!(NSDate), dateWithTimeIntervalSinceNow:0.01f64];
+            let event: Option<Retained<AnyObject>> = msg_send![app,
+                nextEventMatchingMask:usize::MAX, untilDate:date,
+                inMode:objc2_foundation::NSDefaultRunLoopMode, dequeue:true];
+            if let Some(event) = event {
+                let _: () = msg_send![app, sendEvent:&*event];
+            }
+            let _: () = msg_send![app, updateWindows];
+        });
     }
 }
 
@@ -630,6 +639,153 @@ pub(crate) fn check_reentrant_close(
         let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
         tab_delivery::clear(target_ptr);
         let _: () = msg_send![&*panel, orderOut:ptr::null::<AnyObject>()];
+        if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
+            *manager = std::mem::take(&mut app.tile_manager);
+            let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+            let _: () = msg_send![bar, removeStatusItem:&*app.status];
+        }
+        let _: () = msg_send![&*defaults, removePersistentDomainForName:&*suite];
+        result
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TabPanDelivery {
+    Immediate,
+    Reentrant,
+    Burst,
+    Expired,
+    ExpiredEnd,
+    Paused,
+    Cancelled,
+}
+
+/// Drive the real pan recognizer and production controller, including nested AX
+/// delivery. The caller owns every foreign window in this isolated manager.
+pub(crate) fn check_tab_pan(
+    manager: &mut crate::tile_manager::Manager,
+    button: &AnyObject,
+    destination: NSPoint,
+    release_at: NSPoint,
+    delivery: TabPanDelivery,
+    floating_enabled: bool,
+    inspect_preview: impl FnOnce(&crate::tile_manager::Manager) -> Result<(), String>,
+) -> Result<(), String> {
+    if APP.with(|cell| cell.borrow().is_some()) {
+        return Err("El diagnóstico de arrastre requiere una instancia UI aislada.".into());
+    }
+    unsafe {
+        let primary = primary_height().ok_or("Sin pantalla principal para el arrastre")?;
+        let suite = NSString::from_str(&format!("amspace.ui.pan.{}", std::process::id()));
+        let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![defaults, initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        let _: () = msg_send![&defaults, setBool:true, forKey:ns_string!("tile.enabled")];
+        let _: () = msg_send![&defaults, setBool:floating_enabled, forKey:ns_string!("tile.shake")];
+        let target = controller();
+        let target_ptr = Retained::as_ptr(&target) as Obj;
+        let mut app = App::build(target.clone(), defaults.clone());
+        app.border_enabled = false;
+        app.tile_manager = std::mem::take(manager);
+        APP.with(|cell| *cell.borrow_mut() = Some(app));
+        let gestures: Obj = msg_send![button, gestureRecognizers];
+        let gesture: Obj = msg_send![gestures, objectAtIndex:0usize];
+        let previous_target: Option<Retained<AnyObject>> = msg_send![gesture, target];
+        let previous_button_target: Option<Retained<AnyObject>> = msg_send![button, target];
+        let _: () = msg_send![gesture, setTarget:target_ptr];
+        let _: () = msg_send![button, setTarget:target_ptr];
+        let panel: Obj = msg_send![button, window];
+        let number: isize = msg_send![panel, windowNumber];
+        let bounds: NSRect = msg_send![button, bounds];
+        let start: NSPoint = msg_send![button, convertPoint:NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.), toView:ptr::null::<AnyObject>()];
+        let end: NSPoint = msg_send![panel, convertPointFromScreen:NSPoint::new(destination.x, primary - destination.y)];
+        let release: NSPoint = msg_send![panel, convertPointFromScreen:NSPoint::new(release_at.x, primary - release_at.y)];
+        let native_app: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let queue = |kind: usize, point: NSPoint| -> Result<(), String> {
+            let process: Obj = msg_send![class!(NSProcessInfo), processInfo];
+            let uptime: f64 = msg_send![process, systemUptime];
+            let event: Option<Retained<AnyObject>> = msg_send![class!(NSEvent),
+                mouseEventWithType:kind, location:point, modifierFlags:0usize,
+                timestamp:uptime, windowNumber:number, context:ptr::null::<AnyObject>(),
+                eventNumber:0isize, clickCount:1isize, pressure:if kind == 2 { 0f32 } else { 1f32 }];
+            let event = event.ok_or("No se pudo crear el evento local de arrastre")?;
+            let _: () = msg_send![native_app, postEvent:&*event, atStart:false];
+            Ok(())
+        };
+        let result = (|| -> Result<(), String> {
+            let reentrant = matches!(delivery, TabPanDelivery::Reentrant | TabPanDelivery::Burst);
+            queue(1, start)?;
+            queue(6, NSPoint::new(start.x + 10., start.y - 8.))?;
+            queue(6, end)?;
+            if matches!(delivery, TabPanDelivery::Immediate) {
+                pump(0.035);
+            } else {
+                APP.with(|cell| -> Result<(), String> {
+                    let mut borrowed = cell.borrow_mut();
+                    pump(if matches!(delivery, TabPanDelivery::Expired) {
+                        0.38
+                    } else {
+                        0.035
+                    });
+                    if matches!(delivery, TabPanDelivery::Burst) {
+                        // Stress reentrant delivery, not wall-clock throughput
+                        // of Cocoa's synthetic-event queue. The recognizer is
+                        // already moving from the real mouse sequence above.
+                        let state: isize = msg_send![gesture, state];
+                        if state != 2 {
+                            return Err("La ráfaga requiere un pan nativo en movimiento.".into());
+                        }
+                        for _ in 0..256 {
+                            let _: () = msg_send![target_ptr, dragTileTab:gesture];
+                        }
+                    }
+                    if reentrant && tab_delivery::pending_count() < 2 {
+                        return Err(
+                            "El inicio/movimiento del pan se perdió durante reentrada AX.".into(),
+                        );
+                    }
+                    if matches!(delivery, TabPanDelivery::Paused) {
+                        borrowed.as_mut().unwrap().tiling_paused = true;
+                    }
+                    if matches!(delivery, TabPanDelivery::Cancelled) {
+                        let _: () = msg_send![gesture, setEnabled:false];
+                    }
+                    Ok(())
+                })?;
+                pump(0.035);
+            }
+            APP.with(|cell| inspect_preview(&cell.borrow().as_ref().unwrap().tile_manager))?;
+            queue(2, release)?;
+            if reentrant || matches!(delivery, TabPanDelivery::ExpiredEnd) {
+                APP.with(|cell| -> Result<(), String> {
+                    let _borrowed = cell.borrow_mut();
+                    pump(if matches!(delivery, TabPanDelivery::ExpiredEnd) {
+                        0.38
+                    } else {
+                        0.025
+                    });
+                    if tab_delivery::pending_count() == 0 {
+                        return Err("El fin del pan se perdió durante reentrada AX.".into());
+                    }
+                    Ok(())
+                })?;
+            }
+            pump(0.045);
+            if tab_delivery::pending_count() != 0 {
+                return Err("El arrastre dejó acciones pendientes al liberar la UI.".into());
+            }
+            Ok(())
+        })();
+        // Also release AppKit tracking on an assertion/error, never inject input
+        // globally or leave a recognizer holding the next test's mouse sequence.
+        let _: () = msg_send![gesture, setEnabled:false];
+        let _ = queue(2, release);
+        pump(0.02);
+        let _: () = msg_send![gesture, setEnabled:true];
+        let _: () = msg_send![gesture, setTarget:previous_target.as_deref().map_or(ptr::null_mut(), |target| target as *const AnyObject as Obj)];
+        let _: () = msg_send![button, setTarget:previous_button_target.as_deref().map_or(ptr::null_mut(), |target| target as *const AnyObject as Obj)];
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        tab_delivery::clear(target_ptr);
         if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
             *manager = std::mem::take(&mut app.tile_manager);
             let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];

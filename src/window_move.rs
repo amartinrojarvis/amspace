@@ -39,6 +39,9 @@ pub fn space_moves_available() -> bool {
     }) && crate::sky_bridge::asynchronous_operation().is_some()
 }
 fn request(id: u32, space: u64) -> bool {
+    if id == 0 || space == 0 {
+        return false;
+    }
     let Some(class) = operation_class().filter(|_| space_moves_available()) else {
         return false;
     };

@@ -1,4 +1,4 @@
-//! Isolated close lifecycle: only elevated disposable windows, never user tiles.
+//! Isolated tab workflows: elevated disposable windows, never user tiles.
 use super::diagnostics::{Fixture, pump};
 use super::*;
 use objc2::runtime::Bool;
@@ -181,6 +181,7 @@ pub fn check() -> Result<(), String> {
             .ok_or("No se pudo agrupar fixture")?;
     }
     manager.desktops.insert(space, desktop);
+    super::drag_diagnostics::check(&mut manager, &ids, space, area)?;
     let send = |command: &str,
                 input: &mut std::process::ChildStdin,
                 output: &mut BufReader<std::process::ChildStdout>|

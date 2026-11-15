@@ -2294,6 +2294,7 @@ impl App {
     fn configure_tiling(&mut self) {
         mouse_delivery::clear(Retained::as_ptr(&self.target) as Obj);
         tab_delivery::clear(Retained::as_ptr(&self.target) as Obj);
+        self.tile_manager.cancel_tab_drag();
         self.ensure_desktop_observer();
         unsafe {
             if let Some(t) = self.tile_timer.take() {
@@ -5252,24 +5253,26 @@ extern "C-unwind" fn select_tile_tab(target: Obj, _: Sel, sender: Obj) {
 extern "C-unwind" fn close_tile_tab(target: Obj, _: Sel, sender: Obj) {
     tab_delivery::enqueue(target, sender, tab_delivery::Action::Close);
 }
-fn apply_tab_click(a: &mut App, sender: Obj, action: tab_delivery::Action) {
+fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
     if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
-        // A queued click must never reactivate a paused or transitioning manager.
+        // No queued action may reactivate a paused or transitioning manager.
+        a.tile_manager.cancel_tab_drag();
         return;
     }
-    let tag: isize = unsafe { msg_send![sender, tag] };
     match action {
         tab_delivery::Action::Select => {
+            let tag: isize = unsafe { msg_send![sender, tag] };
             if let Ok(id) = u32::try_from(tag)
                 && a.tile_manager.activate_tab(id)
             {
                 a.hover_resume = Instant::now() + Duration::from_millis(600);
                 a.update_tile_timer();
                 a.settle_focus();
-                a.show_tip(4, crate::i18n::tr("Arrastra una pestaña para separarla. Clic derecho o Control-clic abre las acciones; × solicita el cierre normal de la ventana."));
+                a.show_tip(4, crate::i18n::tr("Arrastra en la barra para reordenar; fuera para separar, o hasta Hacer flotante. Clic derecho: acciones; ×: cierre normal."));
             }
         }
         tab_delivery::Action::Close => {
+            let tag: isize = unsafe { msg_send![sender, tag] };
             let Some(id) = tag
                 .checked_add(2)
                 .and_then(isize::checked_neg)
@@ -5286,40 +5289,43 @@ fn apply_tab_click(a: &mut App, sender: Obj, action: tab_delivery::Action) {
             }
             // No settle_focus here: the application's save dialog owns focus.
         }
+        tab_delivery::Action::Drag { state, location } => {
+            apply_tab_drag(a, sender, state, location)
+        }
     }
 }
 /// Native pan coordinates choose reordering in the strip or detachment outside.
-extern "C-unwind" fn drag_tile_tab(_: Obj, _: Sel, sender: Obj) {
+extern "C-unwind" fn drag_tile_tab(target: Obj, _: Sel, sender: Obj) {
+    // A recognizer is mutable: snapshot its phase and point before deferring.
     let state: isize = unsafe { msg_send![sender, state] };
     let view: Option<Retained<AnyObject>> = unsafe { msg_send![sender, view] };
     let location: NSPoint = unsafe { msg_send![sender, locationInView:ptr::null::<AnyObject>()] };
-    with_app(|a| {
-        if a.tab_block_reason().is_some() || a.tab_menu.is_some() {
-            a.tile_manager.cancel_tab_drag();
-            return;
-        }
-        let Some(view) = view else {
-            a.tile_manager.cancel_tab_drag();
-            return;
-        };
-        use crate::tile_manager::TabDragOutcome;
-        match a
-            .tile_manager
-            .tab_drag(Retained::as_ptr(&view) as Obj, state, location)
-        {
-            TabDragOutcome::Rejected => a.tile_manager.cancel_tab_drag(),
-            outcome => {
-                a.hover_resume = Instant::now() + Duration::from_millis(600);
-                a.update_tile_timer();
-                if outcome == TabDragOutcome::Detached {
-                    a.settle_focus();
-                }
+    if let Some(view) = view {
+        tab_delivery::enqueue(
+            target,
+            Retained::as_ptr(&view) as Obj,
+            tab_delivery::Action::Drag { state, location },
+        );
+    } else {
+        tab_delivery::cancel_drag(target);
+    }
+}
+fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint) {
+    let enabled =
+        crate::tile_manager::pref_or(Retained::as_ptr(&a.defaults) as Obj, "tile.shake", 1) != 0;
+    match a.tile_manager.tab_drag(view, state, location, enabled) {
+        crate::tile_manager::TabDragOutcome::Rejected => a.tile_manager.cancel_tab_drag(),
+        outcome => {
+            a.hover_resume = Instant::now() + Duration::from_millis(600);
+            a.update_tile_timer();
+            if outcome == crate::tile_manager::TabDragOutcome::Detached {
+                a.settle_focus();
             }
         }
-        if let Some(error) = a.tile_manager.interaction_error.take() {
-            a.show_notice(&error);
-        }
-    });
+    }
+    if let Some(error) = a.tile_manager.interaction_error.take() {
+        a.show_notice(&error);
+    }
 }
 extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| {
@@ -5524,84 +5530,86 @@ unsafe fn make_menu(app: Obj, target: Obj) {
     }
 }
 unsafe fn controller() -> Retained<AnyObject> {
-    unsafe {
-        let mut builder = ClassBuilder::new(c"AMSpaceController", class!(NSObject)).unwrap();
-        for (s, f) in [
-            (
-                sel!(settings:),
-                settings as extern "C-unwind" fn(Obj, Sel, Obj),
-            ),
-            (sel!(selectDesktop:), select_desktop),
-            (sel!(selectDesktopRequest:), select_desktop_request),
-            (sel!(statusClick:), status_click),
-            (sel!(menuNeedsUpdate:), desktop_menu_update),
-            (sel!(desktopMenu:), desktop_menu),
-            (sel!(showDesktopMenu:), show_desktop_menu),
-            (sel!(switchStep:), switch_step),
-            (sel!(about:), about),
-            (sel!(checkUpdates:), check_updates),
-            (sel!(change:), change),
-            (sel!(hover:), hover),
-            (sel!(tileTick:), tile_tick),
-            (sel!(tileMouseEvent:), mouse_delivery::drain),
-            (sel!(selectTileTab:), select_tile_tab),
-            (sel!(closeTileTab:), close_tile_tab),
-            (sel!(tileTabClick:), tab_delivery::drain),
-            (sel!(dragTileTab:), drag_tile_tab),
-            (sel!(layoutChoice:), layout_choice),
-            (sel!(screensChanged:), screens_changed),
-            (sel!(desktopLifecycle:), desktop_lifecycle),
-            (sel!(desktopDistributed:), desktop_distributed),
-            (sel!(presentationTick:), presentation_tick),
-            (sel!(resumeDesktop:), resume_desktop),
-            (sel!(focusPending:), focus_pending),
-            (sel!(settle:), settle),
-            (sel!(workspace:), workspace),
-            (sel!(spaceChanged:), space_changed),
-            (sel!(resumeSpaceBorder:), resume_space_border),
-            (sel!(becameActive:), became_active),
-            (sel!(sleep:), sleep),
-            (sel!(wake:), wake),
-            (sel!(quit:), quit),
-            (sel!(settingsRefresh:), settings_refresh),
-            (sel!(transferTick:), transfer_tick),
-            (sel!(mouseEntered:), preview_enter),
-            (sel!(tabMenuAction:), tab_menu_action),
-            (sel!(toggleMosaicPause:), toggle_mosaic_pause),
-            (sel!(showGuide:), show_guide),
-            (sel!(showFeedback:), show_feedback),
-            (sel!(showTabGuide:), show_tab_guide),
-            (sel!(initialHelp:), initial_help),
-            (sel!(hideNotice:), hide_notice),
-            (sel!(mouseExited:), preview_exit),
-            (sel!(showDesktopPreview:), preview_show),
-            (sel!(fadeFlash:), fade_flash),
-            (sel!(hideFlash:), hide_flash),
-        ] {
-            builder.add_method(s, f);
-        }
-        builder.add_method(
-            sel!(showTileTabMenu:event:),
-            show_tile_tab_menu as extern "C-unwind" fn(Obj, Sel, Obj, Obj),
-        );
-        builder.add_method(
-            sel!(numberOfRowsInTableView:),
-            navigation_rows as extern "C-unwind" fn(Obj, Sel, Obj) -> isize,
-        );
-        builder.add_method(
-            sel!(tableView:viewForTableColumn:row:),
-            navigation_view as extern "C-unwind" fn(Obj, Sel, Obj, Obj, isize) -> Obj,
-        );
-        builder.add_method(
-            sel!(tableViewSelectionDidChange:),
-            navigation_selected as extern "C-unwind" fn(Obj, Sel, Obj),
-        );
-        builder.add_method(
-            sel!(applicationShouldHandleReopen:hasVisibleWindows:),
-            reopen as extern "C-unwind" fn(Obj, Sel, Obj, Bool) -> Bool,
-        );
-        msg_send![builder.register(), new]
-    }
+    static CLASS: std::sync::LazyLock<&'static objc2::runtime::AnyClass> =
+        std::sync::LazyLock::new(|| unsafe {
+            let mut builder = ClassBuilder::new(c"AMSpaceController", class!(NSObject)).unwrap();
+            for (s, f) in [
+                (
+                    sel!(settings:),
+                    settings as extern "C-unwind" fn(Obj, Sel, Obj),
+                ),
+                (sel!(selectDesktop:), select_desktop),
+                (sel!(selectDesktopRequest:), select_desktop_request),
+                (sel!(statusClick:), status_click),
+                (sel!(menuNeedsUpdate:), desktop_menu_update),
+                (sel!(desktopMenu:), desktop_menu),
+                (sel!(showDesktopMenu:), show_desktop_menu),
+                (sel!(switchStep:), switch_step),
+                (sel!(about:), about),
+                (sel!(checkUpdates:), check_updates),
+                (sel!(change:), change),
+                (sel!(hover:), hover),
+                (sel!(tileTick:), tile_tick),
+                (sel!(tileMouseEvent:), mouse_delivery::drain),
+                (sel!(selectTileTab:), select_tile_tab),
+                (sel!(closeTileTab:), close_tile_tab),
+                (sel!(tileTabClick:), tab_delivery::drain),
+                (sel!(dragTileTab:), drag_tile_tab),
+                (sel!(layoutChoice:), layout_choice),
+                (sel!(screensChanged:), screens_changed),
+                (sel!(desktopLifecycle:), desktop_lifecycle),
+                (sel!(desktopDistributed:), desktop_distributed),
+                (sel!(presentationTick:), presentation_tick),
+                (sel!(resumeDesktop:), resume_desktop),
+                (sel!(focusPending:), focus_pending),
+                (sel!(settle:), settle),
+                (sel!(workspace:), workspace),
+                (sel!(spaceChanged:), space_changed),
+                (sel!(resumeSpaceBorder:), resume_space_border),
+                (sel!(becameActive:), became_active),
+                (sel!(sleep:), sleep),
+                (sel!(wake:), wake),
+                (sel!(quit:), quit),
+                (sel!(settingsRefresh:), settings_refresh),
+                (sel!(transferTick:), transfer_tick),
+                (sel!(mouseEntered:), preview_enter),
+                (sel!(tabMenuAction:), tab_menu_action),
+                (sel!(toggleMosaicPause:), toggle_mosaic_pause),
+                (sel!(showGuide:), show_guide),
+                (sel!(showFeedback:), show_feedback),
+                (sel!(showTabGuide:), show_tab_guide),
+                (sel!(initialHelp:), initial_help),
+                (sel!(hideNotice:), hide_notice),
+                (sel!(mouseExited:), preview_exit),
+                (sel!(showDesktopPreview:), preview_show),
+                (sel!(fadeFlash:), fade_flash),
+                (sel!(hideFlash:), hide_flash),
+            ] {
+                builder.add_method(s, f);
+            }
+            builder.add_method(
+                sel!(showTileTabMenu:event:),
+                show_tile_tab_menu as extern "C-unwind" fn(Obj, Sel, Obj, Obj),
+            );
+            builder.add_method(
+                sel!(numberOfRowsInTableView:),
+                navigation_rows as extern "C-unwind" fn(Obj, Sel, Obj) -> isize,
+            );
+            builder.add_method(
+                sel!(tableView:viewForTableColumn:row:),
+                navigation_view as extern "C-unwind" fn(Obj, Sel, Obj, Obj, isize) -> Obj,
+            );
+            builder.add_method(
+                sel!(tableViewSelectionDidChange:),
+                navigation_selected as extern "C-unwind" fn(Obj, Sel, Obj),
+            );
+            builder.add_method(
+                sel!(applicationShouldHandleReopen:hasVisibleWindows:),
+                reopen as extern "C-unwind" fn(Obj, Sel, Obj, Bool) -> Bool,
+            );
+            builder.register()
+        });
+    unsafe { msg_send![*CLASS, new] }
 }
 
 pub fn run() {

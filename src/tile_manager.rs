@@ -28,6 +28,8 @@ use std::{
 pub mod close_diagnostics;
 #[path = "tab_diagnostics.rs"]
 pub mod diagnostics;
+#[path = "tab_drag_diagnostics.rs"]
+mod drag_diagnostics;
 
 fn centered_resize_request(
     from: NSRect,
@@ -301,6 +303,25 @@ struct TabDrag {
     released_at: Option<Instant>,
     proposed: Option<Desktop>,
     reorder: Option<usize>,
+    float_drop_enabled: bool,
+    float_hover: bool,
+}
+
+impl TabDrag {
+    fn update_float_zone(&mut self, point: NSPoint, enabled: bool) -> Option<(NSRect, bool)> {
+        if !enabled {
+            self.float_drop_enabled = false;
+        }
+        self.float_hover = false;
+        // A tab drag operates on its group's Workspace, not a native window
+        // already moved to another display. Returning to the bar is reordering.
+        if !self.float_drop_enabled || self.reorder.is_some() || !contains(self.area, point) {
+            return None;
+        }
+        let frame = float_drop::frame(self.area)?;
+        self.float_hover = contains(frame, point);
+        Some((frame, self.float_hover))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -309,6 +330,7 @@ pub enum TabDragOutcome {
     Tracking,
     Reordered,
     Detached,
+    Floated,
 }
 
 fn tab_detach_proposal(
@@ -1190,7 +1212,13 @@ impl Manager {
     }
 
     /// AppKit owns the threshold/click suppression. Only Ended changes the model.
-    pub fn tab_drag(&mut self, button: Obj, state: isize, location: NSPoint) -> TabDragOutcome {
+    pub fn tab_drag(
+        &mut self,
+        button: Obj,
+        state: isize,
+        location: NSPoint,
+        float_enabled: bool,
+    ) -> TabDragOutcome {
         use TabDragOutcome::*;
         if matches!(state, 4 | 5)
             || button.is_null()
@@ -1271,8 +1299,10 @@ impl Manager {
                     baseline: desktop.clone(),
                     proposed,
                     reorder: members.iter().position(|member| *member == id),
+                    float_drop_enabled: float_enabled,
+                    float_hover: false,
                 });
-                self.preview_tab_drag(location, false);
+                self.preview_tab_drag(location, false, float_enabled);
                 Tracking
             }
             2 | 3 => {
@@ -1284,12 +1314,13 @@ impl Manager {
                     self.cancel_tab_drag();
                     return Rejected;
                 }
-                self.preview_tab_drag(location, state == 2);
+                self.preview_tab_drag(location, state == 2, float_enabled);
                 if state == 2 {
                     return Tracking;
                 }
                 let drag = self.tab_drag.take().unwrap();
                 self.hide_preview_panels();
+                self.hide_float_overlay();
                 for strip in &mut self.strips {
                     strip.clear_marker();
                 }
@@ -1326,6 +1357,15 @@ impl Manager {
                     self.commit_tab_reorder(drag.space, id, index);
                     return Reordered;
                 }
+                if drag.float_hover {
+                    return match self.float_tab(id, drag.area) {
+                        Ok(()) => Floated,
+                        Err(reason) => {
+                            self.interaction_error = Some(reason.to_string());
+                            Rejected
+                        }
+                    };
+                }
                 if drag.proposed.is_none() {
                     self.interaction_error = Some(crate::i18n::tr(DETACH_CAPACITY).to_string());
                     return Rejected;
@@ -1340,7 +1380,7 @@ impl Manager {
         }
     }
 
-    fn preview_tab_drag(&mut self, location: NSPoint, scroll: bool) {
+    fn preview_tab_drag(&mut self, location: NSPoint, scroll: bool, float_enabled: bool) {
         let Some(drag) = &self.tab_drag else {
             return;
         };
@@ -1351,8 +1391,17 @@ impl Manager {
             return;
         };
         let reorder = strip.reorder_target(drag.id, location, scroll);
-        let changed = reorder != drag.reorder;
-        let frame = if changed && reorder.is_none() {
+        let point = NSPoint::new(
+            strip.frame.origin.x + location.x,
+            strip.frame.origin.y + strip.frame.size.height - location.y,
+        );
+        let drag = self.tab_drag.as_mut().unwrap();
+        let old_hover = drag.float_hover;
+        let old_reorder = drag.reorder;
+        drag.reorder = reorder;
+        let hint = drag.update_float_zone(point, float_enabled);
+        let changed = reorder != old_reorder || old_hover != drag.float_hover;
+        let frame = if changed && reorder.is_none() && !drag.float_hover {
             drag.proposed.as_ref().and_then(|desktop| {
                 desktop
                     .window_frames(drag.area, 10.)
@@ -1362,10 +1411,15 @@ impl Manager {
         } else {
             None
         };
-        self.tab_drag.as_mut().unwrap().reorder = reorder;
+        let hovering = drag.float_hover;
+        if let Some((frame, highlighted)) = hint {
+            self.show_float_overlay(frame, false, highlighted);
+        } else {
+            self.hide_float_overlay();
+        }
         if let Some(frame) = frame {
             self.show_preview(frame);
-        } else if changed {
+        } else if hovering || changed {
             self.hide_preview_panels();
         }
     }
@@ -1425,6 +1479,7 @@ impl Manager {
 
     pub fn cancel_tab_drag(&mut self) {
         if self.tab_drag.take().is_some() {
+            self.hide_float_overlay();
             self.hide_preview_panels();
             for strip in &mut self.strips {
                 strip.clear_marker();
@@ -9541,8 +9596,40 @@ mod tests {
             proposed: Some(proposed),
             reorder: None,
             released_at: None,
+            float_drop_enabled: true,
+            float_hover: false,
         });
         manager
+    }
+
+    #[test]
+    fn tab_float_intent_is_independent_of_tile_capacity_but_not_bar_or_screen_context() {
+        for area in [rect(10., 41., 1660., 947.), rect(-890., -390., 880., 1580.)] {
+            let mut manager = pending_tab_detach(1);
+            let drag = manager.tab_drag.as_mut().unwrap();
+            drag.area = area;
+            drag.proposed = None;
+            let baseline = drag.baseline.clone();
+            let card = float_drop::frame(area).unwrap();
+            let point = NSPoint::new(
+                card.origin.x + card.size.width / 2.,
+                card.origin.y + card.size.height / 2.,
+            );
+            assert_eq!(drag.update_float_zone(point, true), Some((card, true)));
+            assert!(drag.baseline == baseline);
+            let outside = NSPoint::new(area.origin.x - 1., point.y);
+            assert_eq!(drag.update_float_zone(outside, true), None);
+            assert!(!drag.float_hover);
+            assert_eq!(drag.update_float_zone(point, true), Some((card, true)));
+            drag.reorder = Some(1);
+            assert_eq!(drag.update_float_zone(point, true), None);
+            assert!(!drag.float_hover);
+            drag.reorder = None;
+            assert_eq!(drag.update_float_zone(point, false), None);
+            assert_eq!(drag.update_float_zone(point, true), None);
+            assert!(!drag.float_hover);
+            assert!(manager.floating.is_empty());
+        }
     }
 
     #[test]
