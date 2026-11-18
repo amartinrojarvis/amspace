@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.29</title><pubDate>Wed, 18 Nov 2026 15:45:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.29 — Conserva la ventana al arrastrarla de vuelta al mosaico.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.30</title><pubDate>Wed, 18 Nov 2026 16:12:26 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.30 — Recuperación del arrastre de ventanas flotantes.
 
-- Si macOS entrega tarde el clic con el identificador de la ventana pero sin el del proceso, AMSpace recupera el propietario de esa ventana en lugar de buscar otra bajo el punto inicial. Esto corrige un caso en el que no aparecía la zona para volver al mosaico.
+- Si el clic inicial no identifica la ventana, AMSpace también comprueba cuál de las flotantes se ha movido. Así puede mostrar «Volver al mosaico» mientras mantienes pulsado el ratón. La ventana sigue flotante hasta que la sueltas dentro del recuadro.
 
 English
 
-- When macOS delivers a late click with a window ID but no process ID, AMSpace looks up that window’s owner instead of looking for another window at the original click position. This fixes one case where the return-to-tiling drop zone did not appear.
+- If the initial click does not identify the window, AMSpace now checks floating windows for movement too. It can show “Return to tiling” while the mouse button is still down. The window stays floating until you release it inside the drop zone.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.29/AMSpace-universal.zip" length="3156982" type="application/octet-stream" sparkle:version="84" sparkle:shortVersionString="0.9.29" sparkle:edSignature="2kyJit3xbTxuDkwfvbYjEqQ9nE1vNKdKRVyCOVKxCg7pGyjkleGqn0af3iwyiDYt43PszJw3XD+MSrbSjQiQDQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 76p4il87l5se1UXApM10nzpWuMGi9Y3vINpk1ZZXrXC5rg+ni3cZjeMnKcLLcNDCtmLvn6MGWcaSkizJLtY9Bw==
-length: 1950
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.30/AMSpace-universal.zip" length="3177275" type="application/octet-stream" sparkle:version="85" sparkle:shortVersionString="0.9.30" sparkle:edSignature="G0cZE7OjUdKg0byQYzp0TKiN9hpZ10TKx1eO1c80NNNWghuA9bNBrkjMf2gTlTGWnnzwECTMvlyv5u/sDDZSCQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: s56fy6horMJa7HrxAAhQ6dk1yWL1f4FFEd0v20sfRrUW/tXlSZLspQmMOF6WhXVKePHPjqPVQ+aGRreTJ8oDDg==
+length: 1934
 -->
