@@ -4189,6 +4189,22 @@ impl Manager {
         place_windows: bool,
         input: Option<(bool, NSPoint, Option<crate::tile_mouse::Grab>)>,
     ) {
+        self.tick_pointer_sample(
+            defaults,
+            place_windows,
+            input,
+            || unsafe { msg_send![class!(NSEvent), pressedMouseButtons] },
+            pointer,
+        );
+    }
+    fn tick_pointer_sample(
+        &mut self,
+        defaults: Obj,
+        place_windows: bool,
+        input: Option<(bool, NSPoint, Option<crate::tile_mouse::Grab>)>,
+        buttons: impl FnOnce() -> usize,
+        cursor: impl FnOnce() -> Option<NSPoint>,
+    ) {
         if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
             return;
         }
@@ -4198,10 +4214,7 @@ impl Manager {
         if self.waiting_for_space(Instant::now()) {
             return;
         }
-        let down: usize = input.map_or_else(
-            || unsafe { msg_send![class!(NSEvent), pressedMouseButtons] },
-            |(down, _, _)| usize::from(down),
-        );
+        let down: usize = input.map_or_else(buttons, |(down, _, _)| usize::from(down));
         let scan_interval = if self.settling_space() { 100 } else { 500 };
         if down & 1 != 0
             || self.pressed
@@ -4308,7 +4321,7 @@ impl Manager {
         let native_captured = input.is_some_and(|(down, _, _)| down);
         let capture_float = float_enabled && native_captured;
         let grab = input.and_then(|(_, _, grab)| grab);
-        let Some(p) = input.map(|(_, p, _)| p).or_else(pointer) else {
+        let Some(p) = input.map(|(_, p, _)| p).or_else(cursor) else {
             self.cancel_drag();
             return;
         };
@@ -4460,13 +4473,34 @@ impl Manager {
                 .windows
                 .iter()
                 .filter_map(|(id, w)| {
+                    let floating = self.floating.contains(id);
+                    let recover_float = floating
+                        && capture_float
+                        && !self.drag.as_ref().is_some_and(|drag| drag.was_floating)
+                        && !self.inactive_tabs.contains(id)
+                        && !self.transitions.contains_key(id)
+                        && !self.verifications.contains_key(id);
                     if self.drag.as_ref().is_some_and(|drag| drag.id == *id)
-                        || !self.can_tile_drag(*id, w.space)
+                        || !(recover_float || self.can_tile_drag(*id, w.space))
                     {
                         return None;
                     }
                     let area = active.iter().find(|(key, _)| *key == w.space)?.1;
-                    let frame = ws::bounds(*id)?;
+                    let frame = if recover_float {
+                        // Proximity alone cannot select an overlapping float. Start
+                        // from its settled frame; resolve_gesture requires movement
+                        // of this specific window before it can own the card.
+                        let observed = self.observed_frames.get(id)?;
+                        if observed.pid != w.pid
+                            || observed.space != w.space
+                            || observed.area != area
+                        {
+                            return None;
+                        }
+                        observed.frame
+                    } else {
+                        ws::bounds(*id)?
+                    };
                     if !contains(
                         rect(
                             frame.origin.x - 12.,
@@ -4486,7 +4520,7 @@ impl Manager {
                     Some(Drag {
                         id: *id,
                         pid: w.pid,
-                        was_floating: false,
+                        was_floating: floating,
                         space: w.space,
                         start: frame,
                         point: p,

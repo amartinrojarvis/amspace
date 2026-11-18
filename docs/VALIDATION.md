@@ -1,3 +1,9 @@
+## 0.9.30/build 85 — recuadro durante el arrastre de una flotante
+
+- Durante una reproducción manual con la 0.9.29 instalada se registraron pulsaciones sin ventana seleccionada. La recuperación por movimiento solo consideraba ventanas del mosaico. La candidata también considera flotantes con marco observado en el mismo PID, escritorio y área, sin colocación pendiente.
+- `--check-tab-close` en arm64: con ventanas hermanas del fixture, una pulsación sin destinatario directo y una muestra de botón aún pulsado, el panel nativo estaba visible y la ventana correcta seguía flotante; al soltar dentro volvió al mosaico. Las muestras de entrada son controladas, no un arrastre físico. Pasaron los 246 escenarios y `./scripts/check.sh` (288 pruebas, ocho ignoradas); se compiló el bundle universal.
+- La candidata se abrió para una prueba manual que no pudo completarse. Se volvió a abrir la versión instalada sin traza. No se ha verificado la corrección con el gesto físico de Finder.
+
 ## 0.9.29/build 84 — retorno con destinatario nativo sin PID
 
 - `--check-tab-close`: una ventana AX desechable salió del mosaico al soltarla en la zona superior. En el arrastre de vuelta se entregó, después del primer movimiento, un `CGEvent` con ID de destinatario y sin PID. La prueba falló en 0.9.28 al recuperar otra ventana y pasó con la consulta del propietario por ID, con y sin animación. También se rechazó un ID desaparecido. Pasaron los 246 escenarios del diagnóstico, sin entrada global ni ventanas ajenas. El fallo manual observado en Finder no se ha verificado con este bundle.

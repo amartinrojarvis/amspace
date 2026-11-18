@@ -874,11 +874,19 @@ fn check_native_boundaries(
             finish_placements(manager, &[(id, moved)])?;
             let grab = check_event_recipient(id, manager.windows[&id].pid, down, moved, false)?;
             manager.last_area_update = Some(Instant::now());
-            manager.mouse_event(defaults, true, down, Some(grab));
+            manager.mouse_event(defaults, true, down, animated.then_some(grab));
+            manager.tick_pointer_sample(defaults, true, None, || 1, || Some(release));
+            let visible = manager
+                .float_overlay
+                .as_ref()
+                .is_some_and(|overlay| unsafe { msg_send![&*overlay.panel, isVisible] });
+            if !visible || !manager.floating.contains(&id) {
+                return Err("El recuadro de retorno no estaba visible antes de soltar".into());
+            }
             if !manager
                 .drag
                 .as_ref()
-                .is_some_and(|drag| drag.start == start && drag.was_floating)
+                .is_some_and(|drag| drag.id == id && drag.start == start && drag.was_floating)
             {
                 return Err(
                     "El primer arrastre flotante perdió su geometría anterior al down".into(),

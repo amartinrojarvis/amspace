@@ -1,10 +1,10 @@
-AMSpace 0.9.29 — Conserva la ventana al arrastrarla de vuelta al mosaico.
+AMSpace 0.9.30 — Recuperación del arrastre de ventanas flotantes.
 
-- Si macOS entrega tarde el clic con el identificador de la ventana pero sin el del proceso, AMSpace recupera el propietario de esa ventana en lugar de buscar otra bajo el punto inicial. Esto corrige un caso en el que no aparecía la zona para volver al mosaico.
+- Si el clic inicial no identifica la ventana, AMSpace también comprueba cuál de las flotantes se ha movido. Así puede mostrar «Volver al mosaico» mientras mantienes pulsado el ratón. La ventana sigue flotante hasta que la sueltas dentro del recuadro.
 
 English
 
-- When macOS delivers a late click with a window ID but no process ID, AMSpace looks up that window’s owner instead of looking for another window at the original click position. This fixes one case where the return-to-tiling drop zone did not appear.
+- If the initial click does not identify the window, AMSpace now checks floating windows for movement too. It can show “Return to tiling” while the mouse button is still down. The window stays floating until you release it inside the drop zone.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
