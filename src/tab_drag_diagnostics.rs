@@ -20,8 +20,10 @@ fn finish_placements(manager: &mut Manager, expected: &[(u32, NSRect)]) -> Resul
             .collect();
         let active = manager.active_areas.clone();
         let mut spaces = HashMap::new();
-        manager.animate(&active, &candidates, &mut spaces);
+        // Match the live tick: a snapshot taken before an animation write
+        // cannot verify the placement created by that same write.
         manager.verify_placements(&active, &candidates, false, &mut spaces);
+        manager.animate(&active, &candidates, &mut spaces);
         if manager.transitions.is_empty()
             && manager.verifications.is_empty()
             && expected.iter().all(|(id, frame)| {
