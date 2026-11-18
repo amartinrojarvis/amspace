@@ -2,6 +2,8 @@
 
 - `--check-tab-close`: una ventana AX desechable pasó a flotante y volvió al mosaico en el primer soltado en la zona superior, con y sin animación. El `CGEvent` se entregó después del movimiento, sin permitir una reconciliación completa entre la colocación flotante y el gesto. Pasaron los 246 escenarios de arrastre/retorno del diagnóstico, sin entrada global ni cambios de preferencias.
 - `./scripts/check.sh`: 288 correctas y ocho ignoradas; Clippy y plist correctos. Bundle universal arm64/x86_64 compilado y firmado ad hoc; ejecución local en arm64, sin prueba física multimonitor.
+- Publicación estable [v0.9.28](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.28) desde `e029839`; [CI](https://github.com/amartinrojarvis/amspace/actions/runs/44330609233) correcta en el segundo intento. Los cinco archivos públicos coincidieron con los artefactos firmados; el ZIP inmutable de `updates/0.9.28/` (`66527ce`) también coincidió: SHA-256 `7b96b445378aa0e9c01aab2dac69f5bea404970dc44ba8662124e848b9b5ed32`.
+- DMG público montado en solo lectura: firma ad hoc válida, ejecutable idéntico, guía, disposición guardada, fondo y enlace a `/Applications`. Catálogo firmado anunciado en `2f4eb82` y verificado públicamente sin compresión y con las cabeceras de Sparkle. No se sustituyó la app instalada ni se probó una actualización desde su cliente.
 
 ## 0.9.27/build 82 — borde y reservas de atajos
 
