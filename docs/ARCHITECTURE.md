@@ -73,6 +73,8 @@ WindowServer devuelve coordenadas globales con origen superior izquierdo de la p
 
 El panel usa `NSWindowCollectionBehaviorTransient`: macOS lo oculta en Mission Control, en lugar de mantenerlo inmóvil como un panel `Stationary`. Es transparente, no activable e ignora eventos del ratón. Está en nivel flotante y se muestra sin ordenarse respecto a ninguna ventana ajena. Una máscara Core Animation conserva únicamente la región del objetivo que no cubren otras ventanas. El recorte usa resta secuencial de rectángulos disjuntos y descarta oclusores totalmente transparentes. Los cambios de orden solo actualizan esa máscara: nunca activan ni elevan al propietario del borde.
 
+El panel usa la geometría del objetivo y su máscara de una misma lista de WindowServer. Si falta el objetivo, falla la consulta o no queda región visible, se oculta el panel sin reutilizar la máscara anterior. El recorte subdivide las regiones en el mismo vector: una ventana que no las toca no obliga a copiarlas.
+
 El movimiento adelanta la traslación del panel propio mediante `SLSMoveWindow`; el siguiente turno del hilo principal actualiza la máscara de oclusión si cambió. No se capturan texturas ni se dibuja una copia del contenido ajeno. Redimensionar actualiza el panel y su capa sin animaciones implícitas y fuerza el commit de Core Animation. Creación y activación ejecutan además una reconciliación a los 80 ms, porque una app puede activarse antes de ordenar su primera ventana. No hay sondeo permanente del borde.
 
 No se modifica ni se inyecta código en la ventana objetivo. Es un overlay externo; no puede ofrecer una garantía de composición atómica con cualquier aplicación o animación del sistema.

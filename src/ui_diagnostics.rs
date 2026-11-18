@@ -405,6 +405,33 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
         let target = controller();
         let target_ptr = Retained::as_ptr(&target) as Obj;
         let mut app = App::build(target.clone(), defaults.clone());
+        // Only our disposable target is ordered. A stale tracked frame must
+        // neither position the border nor keep it visible after orderOut.
+        let fixture = window(rect(120., 160., 260., 180.), 128);
+        let _: () = msg_send![&fixture, setLevel:3isize];
+        let _: () = msg_send![&fixture, setHidesOnDeactivate:false];
+        let _: () = msg_send![&fixture, orderFrontRegardless];
+        pump(0.06);
+        let id: isize = msg_send![&fixture, windowNumber];
+        app.tracked = Some(ws::Window {
+            id: id as u32,
+            frame: NSRect::ZERO,
+            radius: 8.,
+        });
+        app.update_border_geometry();
+        let visible: bool = msg_send![&app.border, isVisible];
+        let actual: NSRect = msg_send![&app.border, frame];
+        let expected: NSRect = msg_send![&fixture, frame];
+        let _: () = msg_send![&fixture, orderOut:ptr::null::<AnyObject>()];
+        pump(0.06);
+        app.update_border_geometry();
+        let stale: bool = msg_send![&app.border, isVisible];
+        if !visible || actual != expected || stale {
+            return Err(format!(
+                "Border fixture: visible={visible} frame={actual:?} expected={expected:?} stale={stale}"
+            ));
+        }
+        app.tracked = None;
         app.border_enabled = false;
         app.flash_enabled = true;
         app.sleeping = true;

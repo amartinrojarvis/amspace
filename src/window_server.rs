@@ -431,11 +431,12 @@ fn move_border(target: u32) -> bool {
     unsafe { move_window((api.connection)(), border, &frame.origin) == 0 }
 }
 
-pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
+/// Geometry and clipping must come from the same compositor snapshot.
+pub fn visible_border_regions(target: u32, border: u32) -> Option<(NSRect, Vec<NSRect>)> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
     observe_presentation(list.0);
     if crate::desktop_mode::active() {
-        return Some(Vec::new());
+        return None;
     }
     let mut occluders = Vec::new();
     let visible_spaces: Vec<_> = crate::spaces::visible_desktops()
@@ -455,11 +456,6 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
         {
             continue;
         }
-        if !visible_spaces.is_empty()
-            && !crate::focus::in_visible_space(crate::spaces::window_space(id), &visible_spaces)
-        {
-            continue;
-        }
         if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
             .is_some_and(|alpha| alpha <= 0.)
         {
@@ -474,18 +470,20 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<Vec<NSRect>> {
         } {
             continue;
         }
-        if id == target {
-            return Some(crate::border::visible_regions(frame, &occluders));
-        }
-        if number(get(info, ns_string!("kCGWindowLayer")))
-            .is_some_and(|layer| (0..=3).contains(&layer))
-            && frame.size.width > 0.
-            && frame.size.height > 0.
+        if !visible_spaces.is_empty()
+            && !crate::focus::in_visible_space(crate::spaces::window_space(id), &visible_spaces)
         {
+            continue;
+        }
+        if id == target {
+            return valid(frame)
+                .then(|| (frame, crate::border::visible_regions(frame, &occluders)));
+        }
+        if frame.size.width > 0. && frame.size.height > 0. {
             occluders.push(frame);
         }
     }
-    Some(Vec::new())
+    None
 }
 extern "C" fn deliver(_: *mut c_void) {
     let flags = PENDING.swap(0, Ordering::AcqRel);

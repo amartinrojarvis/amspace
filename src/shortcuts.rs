@@ -192,6 +192,9 @@ impl Service {
                 .collect(),
             ..Self::default()
         };
+        if valid.is_empty() {
+            return result;
+        }
         if priority && crate::accessibility::trusted() {
             result.tap = Tap::new(valid.clone());
             result.priority = result.tap.is_some();
@@ -200,8 +203,9 @@ impl Service {
             }
         }
         if !result.priority {
+            let system = crate::tile_hotkey::system_shortcuts();
             for b in valid {
-                if let Some(key) = HotKey::new(b.key, b.mods, b.action) {
+                if let Some(key) = HotKey::new(b.key, b.mods, b.action, system.as_ref()) {
                     result.hotkeys.push(key);
                     result.active.insert(b.action);
                 } else {

@@ -1249,16 +1249,19 @@ impl App {
             self.hide_border();
             return;
         };
-        target.frame = ws::bounds(target.id)
-            .or_else(|| {
-                self.observed_window
-                    .as_ref()
-                    .and_then(|w| ax::geometry(w.0))
-                    .map(|(p, s)| NSRect::new(p, s))
-            })
-            .unwrap_or(target.frame);
-        self.tracked = Some(target);
         unsafe {
+            let id: isize = msg_send![&self.border, windowNumber];
+            ws::set_border(id as u32);
+            let Some((bounds, regions)) = ws::visible_border_regions(target.id, id as u32) else {
+                self.hide_border();
+                return;
+            };
+            target.frame = bounds;
+            self.tracked = Some(target);
+            if regions.is_empty() {
+                self.hide_border();
+                return;
+            }
             let p = target.frame.origin;
             let s = target.frame.size;
             // Stroke is entirely INSIDE the real window boundary: no outer gap.
@@ -1267,17 +1270,13 @@ impl App {
                 return;
             };
             let frame = rect(p.x, height - p.y - s.height, s.width, s.height);
-            let id: isize = msg_send![&self.border, windowNumber];
-            ws::set_border(id as u32);
             let geometry_changed = ws::bounds(id as u32) != Some(target.frame);
-            let regions = ws::visible_border_regions(target.id, id as u32);
-            let clip_changed = regions.as_ref().is_some_and(|regions| {
-                self.border_clip
-                    .as_ref()
-                    .is_none_or(|(window, frame, old)| {
-                        *window != target.id || *frame != target.frame || old != regions
-                    })
-            });
+            let clip_changed = self
+                .border_clip
+                .as_ref()
+                .is_none_or(|(window, frame, old)| {
+                    *window != target.id || *frame != target.frame || *old != regions
+                });
             if geometry_changed {
                 let _: () = msg_send![class!(CATransaction), begin];
                 let _: () = msg_send![class!(CATransaction), setDisableActions:true];
@@ -1314,7 +1313,6 @@ impl App {
                 }
                 let view: Obj = msg_send![&self.border, contentView];
                 let layer: Obj = msg_send![view, layer];
-                let regions = regions.unwrap();
                 apply_border_clip(layer, target.frame, &regions);
                 self.border_clip = Some((target.id, target.frame, regions));
             }
@@ -1326,7 +1324,6 @@ impl App {
             if !visible {
                 let _: () = msg_send![&self.border, orderFrontRegardless];
             }
-            ws::set_border(id as u32);
         }
     }
     fn settle_focus(&mut self) {

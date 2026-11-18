@@ -51,12 +51,14 @@ fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
 pub fn visible_regions(target: NSRect, occluders: &[NSRect]) -> Vec<NSRect> {
     let mut regions = vec![target];
     for occluder in occluders {
-        let mut next = Vec::new();
-        for region in regions {
+        // Only original pieces need cutting. Appended pieces and the entry
+        // moved by swap_remove are already outside this occluder.
+        for i in (0..regions.len()).rev() {
+            let region = regions[i];
             let Some(cut) = intersection(region, *occluder) else {
-                next.push(region);
                 continue;
             };
+            regions.swap_remove(i);
             for piece in [
                 rect(
                     region.origin.x,
@@ -84,11 +86,10 @@ pub fn visible_regions(target: NSRect, occluders: &[NSRect]) -> Vec<NSRect> {
                 ),
             ] {
                 if piece.size.width > 0. && piece.size.height > 0. {
-                    next.push(piece);
+                    regions.push(piece);
                 }
             }
         }
-        regions = next;
         if regions.is_empty() {
             break;
         }

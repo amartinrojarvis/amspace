@@ -123,7 +123,7 @@ pub fn modifier_index(value: isize) -> usize {
 pub fn title(key: usize, mods: usize) -> String {
     format!("{}{}", MODIFIERS[mods].0, crate::i18n::tr(KEYS[key].0))
 }
-fn system_shortcuts() -> Option<std::collections::HashSet<(u32, u32)>> {
+pub fn system_shortcuts() -> Option<std::collections::HashSet<(u32, u32)>> {
     use crate::accessibility::{Owned, array, get, number};
     let mut raw = ptr::null();
     if unsafe { CopySymbolicHotKeys(&mut raw) } != 0 {
@@ -245,9 +245,14 @@ pub struct HotKey {
     handler: *mut c_void,
 }
 impl HotKey {
-    pub fn new(key: usize, mods: usize, action: Action) -> Option<Self> {
+    pub fn new(
+        key: usize,
+        mods: usize,
+        action: Action,
+        system: Option<&std::collections::HashSet<(u32, u32)>>,
+    ) -> Option<Self> {
         let physical = (KEYS.get(key)?.1, MODIFIERS.get(mods)?.1);
-        if system_shortcuts().is_some_and(|system| system.contains(&physical)) {
+        if system.is_some_and(|system| system.contains(&physical)) {
             return None;
         }
         unsafe {
@@ -272,8 +277,8 @@ impl HotKey {
                 return None;
             }
             if RegisterEventHotKey(
-                KEYS.get(key)?.1,
-                MODIFIERS.get(mods)?.1,
+                physical.0,
+                physical.1,
                 HotKeyId {
                     signature: u32::from_be_bytes(*b"AMSt"),
                     id: action.id(),
@@ -367,8 +372,8 @@ mod tests {
             let Some(&(key, mods)) = candidates.first() else {
                 return;
             };
-            let held =
-                HotKey::new(key, mods, Action::Layouts).expect("suggested shortcut must register");
+            let held = HotKey::new(key, mods, Action::Layouts, system_shortcuts().as_ref())
+                .expect("suggested shortcut must register");
             assert!(!probe(key, mods));
             drop(held);
             assert!(probe(key, mods));

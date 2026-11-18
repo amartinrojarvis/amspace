@@ -1,3 +1,10 @@
+## Revisión posterior a 0.9.26
+
+- Recorte del borde: microprueba de `visible_regions` compilada con `rustc -O` y un contador de asignaciones del heap. Objetivo de 800 × 600 puntos y 32 ventanas delante sin solapamiento: **33 → 1 asignación** por máscara. Sustituyendo la primera por un rectángulo interior de 400 × 300: **33 → 2**, con cuatro regiones visibles. Mide el cálculo puro, no las consultas a WindowServer, la CPU total ni la memoria residente de la app.
+- `--check-tab-controls` en sesión gráfica: el panel del borde tomó el frame exacto de una ventana AppKit desechable pese a partir de un frame obsoleto; tras `orderOut:` de la ventana, el panel dejó de ser visible. No se movieron ventanas ajenas ni se cambió de escritorio.
+- Atajos normales: al reconfigurar las reservas Carbon se lee una vez la lista de atajos del sistema para todo el lote, no una vez por combinación. No se conserva entre configuraciones: los cambios de macOS se vuelven a consultar y cada reserva sigue siendo exclusiva. Si no hay combinaciones válidas no se consulta el permiso AX ni se instala un tap.
+- `./scripts/check.sh`: formato, Clippy, 288 pruebas correctas, ocho ignoradas y plist válido. `./scripts/bundle.sh --universal`: arm64 y x86_64, firma ad hoc verificada. El bundle completó 20 ciclos de alta y baja del tap prioritario con `--check-priority-shortcuts`; no prueba el teclado físico ni la ejecución en Intel.
+
 ## 0.9.26/build 81 — permisos, foco y acciones de ventanas
 
 - Accesibilidad: se reconcilia la autorización real al arrancar, volver a la app y despertar; la espera temporal de concesión programa la primera colocación sin necesitar abrir, cerrar o mover otra ventana. La revocación detiene las acciones dependientes del permiso. No se añade sondeo permanente ni se cambian permisos del usuario.
