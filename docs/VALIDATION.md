@@ -1,3 +1,8 @@
+## 0.9.28/build 83 — retorno de una flotante
+
+- `--check-tab-close`: una ventana AX desechable pasó a flotante y volvió al mosaico en el primer soltado en la zona superior, con y sin animación. El `CGEvent` se entregó después del movimiento, sin permitir una reconciliación completa entre la colocación flotante y el gesto. Pasaron los 246 escenarios de arrastre/retorno del diagnóstico, sin entrada global ni cambios de preferencias.
+- `./scripts/check.sh`: 288 correctas y ocho ignoradas; Clippy y plist correctos. Bundle universal arm64/x86_64 compilado y firmado ad hoc; ejecución local en arm64, sin prueba física multimonitor.
+
 ## 0.9.27/build 82 — borde y reservas de atajos
 
 - Recorte del borde: microprueba de `visible_regions` compilada con `rustc -O` y un contador de asignaciones del heap. Objetivo de 800 × 600 puntos y 32 ventanas delante sin solapamiento: **33 → 1 asignación** por máscara. Sustituyendo la primera por un rectángulo interior de 400 × 300: **33 → 2**, con cuatro regiones visibles. Mide el cálculo puro, no las consultas a WindowServer, la CPU total ni la memoria residente de la app.

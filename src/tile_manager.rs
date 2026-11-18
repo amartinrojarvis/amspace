@@ -3526,6 +3526,9 @@ impl Manager {
         self.observed_frames.remove(&id);
         if near(from, to) {
             self.transitions.remove(&id);
+            if self.floating.contains(&id) {
+                self.verifications.insert(id, Verification::new(to));
+            }
             return;
         }
         if self.animated == Some(false) {
@@ -3616,12 +3619,44 @@ impl Manager {
                 self.verifications.remove(&id);
                 continue;
             };
-            if self.floating.contains(&id)
-                || !active.iter().any(|(key, _)| *key == w.space)
+            if !active.iter().any(|(key, _)| *key == w.space)
                 || window_space_cached(id, space_of) != Some(w.space.1)
                 || !visible.contains(&(w.pid, id))
             {
                 self.verifications.remove(&id);
+                continue;
+            }
+            if self.floating.contains(&id) {
+                // A float must keep its native gesture baseline even when the
+                // next full scan isn't due. Never retry its automatic placement.
+                let verification = self.verifications[&id];
+                let observed = candidates
+                    .iter()
+                    .find(|(pid, candidate, _)| *pid == w.pid && *candidate == id)
+                    .and_then(|(_, _, frame)| {
+                        (near(*frame, verification.target) || now >= verification.due)
+                            .then_some(*frame)
+                    })
+                    .and_then(|frame| {
+                        let (p, s) = ax::geometry(w.element.0)?;
+                        near(frame, NSRect::new(p, s)).then_some(frame)
+                    });
+                if let Some(frame) = observed
+                    && let Some((_, area)) = active.iter().find(|(key, _)| *key == w.space)
+                {
+                    self.observed_frames.insert(
+                        id,
+                        ObservedFrame {
+                            pid: w.pid,
+                            space: w.space,
+                            area: *area,
+                            frame,
+                        },
+                    );
+                }
+                if observed.is_some() || now >= verification.due {
+                    self.verifications.remove(&id);
+                }
                 continue;
             }
             let Some((position, size)) = ax::geometry(w.element.0) else {

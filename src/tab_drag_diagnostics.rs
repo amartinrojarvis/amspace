@@ -815,6 +815,57 @@ fn check_native_boundaries(
                 "PASS E2E: {layout:?}, intercambio y apilado al primer down/up diferido; flotante desactivado"
             );
         }
+        unsafe {
+            let _: () = msg_send![&*defaults, setBool:true, forKey:ns_string!("tile.shake")];
+        }
+        for animated in [false, true] {
+            let mut baseline = Desktop::configured(Layout::Grid, None);
+            baseline.reconcile_at(ids, area, 10., None);
+            prepare_model(manager, space, area, baseline, animated)?;
+            let id = ids[0];
+            let from = geometry(manager, id)?;
+            let target = crate::tiling::floating_frame(from, area).ok_or("Sin marco flotante")?;
+            manager.toggle_float_window(id, from, area)?;
+            // Only service animation/verification, not an idle model scan.
+            finish_placements(manager, &[(id, target)])?;
+            let start = ws::bounds(id).ok_or("Sin marco nativo flotante")?;
+            let down = NSPoint::new(
+                start.origin.x + start.size.width * 0.4,
+                start.origin.y + 32.,
+            );
+            let mut moved = start;
+            moved.origin.x += 30.;
+            if !ax::set_frame(manager.windows[&id].element.0, moved) {
+                return Err("AX rechazó el arrastre de la ventana recién flotante".into());
+            }
+            finish_placements(manager, &[(id, moved)])?;
+            let grab = check_event_recipient(id, manager.windows[&id].pid, down, moved)?;
+            manager.last_area_update = Some(Instant::now());
+            manager.mouse_event(defaults, true, down, Some(grab));
+            if !manager
+                .drag
+                .as_ref()
+                .is_some_and(|drag| drag.start == start && drag.was_floating)
+            {
+                return Err(
+                    "El primer arrastre flotante perdió su geometría anterior al down".into(),
+                );
+            }
+            let card = float_drop::frame(area).ok_or("Sin zona para devolver al mosaico")?;
+            let release = NSPoint::new(
+                card.origin.x + card.size.width * 0.5,
+                card.origin.y + card.size.height * 0.5,
+            );
+            manager.mouse_event(defaults, false, release, None);
+            if manager.floating.contains(&id) || !manager.desktops[&space].order.contains(&id) {
+                return Err("El primer soltado no devolvió la ventana flotante al mosaico".into());
+            }
+            assert_finished(manager)?;
+            println!(
+                "PASS E2E: retorno de ventana recién flotante con down tardío; animación={animated}"
+            );
+            cases += 1;
+        }
         Ok(cases)
     })();
     unsafe {
