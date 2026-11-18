@@ -21,8 +21,8 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
             "With Tiling and grouping enabled, drag a window onto another window's upper zone. Click a tab to select it; × requests the window's normal close. Each application still handles its own save prompts."
         }
         "Separar y reorganizar" => "Detach and reorder",
-        "Arrastra dentro de la barra para reordenar; fuera de ella para separar la ventana. La marca indica dónde quedará. Clic derecho o Control-clic: Separar, Hacer flotante, Mover a otro grupo y Cerrar. Si no cabe, la distribución no cambia." => {
-            "Drag within the strip to reorder; outside it to detach the window. The marker shows its destination. Right-click or Control-click: Detach, Make floating, Move to another group and Close. If it does not fit, the layout stays unchanged."
+        "Arrastra el asa o el título: en la barra reordenas; fuera eliges un hueco. ⌥ coloca sin apilar. Clic derecho o Control-clic: Colocar en…, Separar, Hacer flotante, Mover a otro grupo y Cerrar. Un destino rechazado muestra el motivo sin cambiar la distribución." => {
+            "Drag the grip or title: reorder within the strip; choose a slot outside it. ⌥ places without grouping. Right-click or Control-click: Place in…, Detach, Make floating, Move to another group and Close. A rejected destination explains why without changing the layout."
         }
         "Atajos y pausa a mano" => "Shortcuts and pause at hand",
         "En Ajustes → Atajos puedes activar y configurar pestaña anterior, siguiente y separar la activa. Están desactivados inicialmente para no reservar teclas. Pausar Mosaico detiene sus colocaciones sin deshacer la distribución; reanúdalo en la barra lateral de Ajustes." => {

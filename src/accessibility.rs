@@ -162,9 +162,15 @@ pub fn equals_text(value: Cf, text: &str) -> bool {
     !value.is_null() && unsafe { CFEqual(value, cf(&NSString::from_str(text))) }
 }
 pub fn auxiliary_window_role(role: Cf) -> bool {
-    ["AXMenu", "AXMenuBar", "AXPopover", "AXToolTip"]
-        .iter()
-        .any(|name| equals_text(role, name))
+    !role.is_null()
+        && [
+            ns_string!("AXMenu"),
+            ns_string!("AXMenuBar"),
+            ns_string!("AXPopover"),
+            ns_string!("AXToolTip"),
+        ]
+        .into_iter()
+        .any(|name| unsafe { CFEqual(role, cf(name)) })
 }
 pub fn trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
@@ -203,18 +209,29 @@ pub fn focused_id(pid: i32) -> Option<u32> {
     window_id(attr(application(pid)?.0, "AXFocusedWindow")?.0)
 }
 fn protected_focus_role(role: Cf) -> bool {
-    [
-        "AXDialog",
-        "AXSystemDialog",
-        "AXSheet",
-        "AXSecureTextField",
-        "AXMenu",
-        "AXMenuItem",
-        "AXMenuBarItem",
-    ]
-    .iter()
-    .any(|name| equals_text(role, name))
+    !role.is_null()
+        && [
+            ns_string!("AXDialog"),
+            ns_string!("AXSystemDialog"),
+            ns_string!("AXSheet"),
+            ns_string!("AXSecureTextField"),
+            ns_string!("AXMenu"),
+            ns_string!("AXMenuItem"),
+            ns_string!("AXMenuBarItem"),
+        ]
+        .into_iter()
+        .any(|name| unsafe { CFEqual(role, cf(name)) })
 }
+fn pointer_focus_role_excluded(role: Cf) -> bool {
+    auxiliary_window_role(role) || protected_focus_role(role)
+}
+
+fn accepts_pointer_focus(window: Cf) -> bool {
+    ["AXRole", "AXSubrole"]
+        .iter()
+        .all(|name| attr(window, name).is_none_or(|role| !pointer_focus_role_excluded(role.0)))
+}
+
 /// Modal dialogs and sheets keep keyboard ownership even when the pointer rests
 /// on another app. Secure input is checked separately and needs no AX access.
 pub fn focus_is_protected(pid: i32) -> bool {
@@ -349,12 +366,16 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         let role = attr(hit.0, "AXRole")?;
         unsafe { CFEqual(role.0, cf(ns_string!("AXWindow"))) }.then_some(hit)
     })?;
-    let role = attr(hit_window.0, "AXSubrole")?;
-    if !unsafe { CFEqual(role.0, cf(ns_string!("AXStandardWindow"))) } {
+    // A compositor-corroborated real window may omit its subrole or report
+    // AXUnknown (including browser windows). Reject known auxiliary/modal
+    // surfaces, not every value other than AXStandardWindow.
+    if !accepts_pointer_focus(hit_window.0) {
         return None;
     }
     let mut hit_pid = 0;
-    if unsafe { AXUIElementGetPid(hit_window.0, &mut hit_pid) } != 0 {
+    if unsafe { AXUIElementGetPid(hit_window.0, &mut hit_pid) } != 0
+        || hit_pid == std::process::id() as i32
+    {
         return None;
     }
     let hit_id = window_id(hit_window.0);
@@ -366,8 +387,7 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         return Some((hit_window, hit_pid));
     }
     let window = window_for_id(owner, id)?;
-    let role = attr(window.0, "AXSubrole")?;
-    if !unsafe { CFEqual(role.0, cf(ns_string!("AXStandardWindow"))) } {
+    if !accepts_pointer_focus(window.0) {
         return None;
     }
     let mut pid = 0;
@@ -712,34 +732,58 @@ pub fn set_frame_step(
     }
     let previous = integral_frame(previous);
     let next = integral_frame(next);
-    let (size, position) = frame_changes(previous, next);
-    let mut ok = true;
-    if size {
-        let Some(value) =
-            Owned::new(unsafe { AXValueCreate(2, (&next.size as *const NSSize).cast()) })
-        else {
-            return false;
-        };
-        ok &=
-            unsafe { AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), value.0) == 0 };
-    }
-    if position {
-        let Some(value) =
-            Owned::new(unsafe { AXValueCreate(1, (&next.origin as *const NSPoint).cast()) })
-        else {
-            return false;
-        };
-        ok &= unsafe {
-            AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), value.0) == 0
-        };
-    }
-    ok
+    apply_changed_frame(
+        frame_changes(previous, next),
+        || !crate::desktop_mode::active(),
+        || {
+            let Some(value) =
+                Owned::new(unsafe { AXValueCreate(2, (&next.size as *const NSSize).cast()) })
+            else {
+                return false;
+            };
+            unsafe { AXUIElementSetAttributeValue(window, cf(ns_string!("AXSize")), value.0) == 0 }
+        },
+        || {
+            let Some(value) =
+                Owned::new(unsafe { AXValueCreate(1, (&next.origin as *const NSPoint).cast()) })
+            else {
+                return false;
+            };
+            unsafe {
+                AXUIElementSetAttributeValue(window, cf(ns_string!("AXPosition")), value.0) == 0
+            }
+        },
+    )
 }
 fn frame_changes(a: objc2_foundation::NSRect, b: objc2_foundation::NSRect) -> (bool, bool) {
     (
         (a.size.width - b.size.width).abs() >= 0.5 || (a.size.height - b.size.height).abs() >= 0.5,
         (a.origin.x - b.origin.x).abs() >= 0.5 || (a.origin.y - b.origin.y).abs() >= 0.5,
     )
+}
+
+fn apply_changed_frame(
+    changed: (bool, bool),
+    mut allowed: impl FnMut() -> bool,
+    size: impl FnOnce() -> bool,
+    position: impl FnOnce() -> bool,
+) -> bool {
+    let mut ok = true;
+    if changed.0 {
+        if !allowed() {
+            return false;
+        }
+        ok &= size();
+    }
+    if changed.1 {
+        // An AX size write can run a nested loop and enter Mission Control.
+        // Authorization for that write does not authorize the next position.
+        if !allowed() {
+            return false;
+        }
+        ok &= position();
+    }
+    ok
 }
 
 // An app may clamp the first expansion against the old screen edge. Apply the
@@ -974,6 +1018,26 @@ mod placement_tests {
         }
     }
     #[test]
+    fn native_pointer_focus_accepts_unknown_roles_but_not_auxiliary_or_modal_surfaces() {
+        for role in ["AXWindow", "AXStandardWindow", "AXUnknown"] {
+            assert!(!pointer_focus_role_excluded(cf(&NSString::from_str(role))));
+        }
+        assert!(!pointer_focus_role_excluded(ptr::null()));
+        for role in [
+            "AXMenu",
+            "AXMenuBar",
+            "AXMenuItem",
+            "AXPopover",
+            "AXToolTip",
+            "AXDialog",
+            "AXSystemDialog",
+            "AXSheet",
+            "AXSecureTextField",
+        ] {
+            assert!(pointer_focus_role_excluded(cf(&NSString::from_str(role))));
+        }
+    }
+    #[test]
     fn fractional_window_opacity_is_not_truncated_to_transparent() {
         objc2::rc::autoreleasepool(|_| unsafe {
             use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
@@ -1059,6 +1123,26 @@ mod placement_tests {
             (false, false)
         );
     }
+    #[test]
+    fn presentation_during_an_animation_size_write_cancels_the_remaining_position() {
+        use std::cell::Cell;
+        let allowed = Cell::new(true);
+        let position = Cell::new(700.);
+        assert!(!apply_changed_frame(
+            (true, true),
+            || allowed.get(),
+            || {
+                allowed.set(false);
+                true
+            },
+            || {
+                position.set(0.);
+                true
+            },
+        ));
+        assert_eq!(position.get(), 700.);
+    }
+
     #[test]
     fn expansion_is_retried_after_moving_away_from_screen_edge() {
         use std::cell::Cell;

@@ -231,6 +231,8 @@ struct App {
     status_detail: String,
     screen_configuration: Vec<ScreenGeometry>,
     permission: Obj,
+    permission_trusted: bool,
+    permission_deadline: Option<Instant>,
     width_label: Obj,
     color_well: Obj,
     login: Obj,
@@ -565,6 +567,9 @@ impl App {
             app.update_window();
             app.configure_hover();
             app.configure_tiling();
+            if !app.permission_trusted && app.wants_accessibility() {
+                app.watch_permission();
+            }
             app
         }
     }
@@ -717,6 +722,8 @@ impl App {
                 sleeping: false,
                 last_title: String::new(),
                 permission: ptr::null_mut(),
+                permission_trusted: ax::trusted(),
+                permission_deadline: None,
                 width_label: ptr::null_mut(),
                 color_well: ptr::null_mut(),
                 login: ptr::null_mut(),
@@ -925,6 +932,15 @@ impl App {
         }
     }
     fn select_desktop(&mut self, id: u64) {
+        if self.sleeping {
+            return;
+        }
+        if self.transfer.is_some() {
+            self.show_notice(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio o el traslado anterior.",
+            ));
+            return;
+        }
         if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
             eprintln!("spaces: click={id} pending={}", self.switching.is_some());
         }
@@ -944,6 +960,7 @@ impl App {
         match space_switch::Switch::start(id) {
             Ok(switch) => {
                 self.switching = Some(switch);
+                self.layout_picker = None;
                 self.tile_manager.space_changed();
                 self.pause_border_for_space();
                 self.schedule_switch_step();
@@ -1326,6 +1343,9 @@ impl App {
             if let Some(t) = self.hover_timer.take() {
                 let _: () = msg_send![&t, invalidate];
             }
+            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(focusPending:), object:ptr::null::<AnyObject>()];
+            self.pending_focus = None;
+            self.mouse_since = Instant::now();
             self.hover_probe.reset();
             if self.hover_enabled
                 && ax::trusted()
@@ -1341,7 +1361,9 @@ impl App {
         }
     }
     fn hover(&mut self) {
-        if self.layout_picker.is_some()
+        if !self.hover_enabled
+            || self.sleeping
+            || self.layout_picker.is_some()
             || self.tab_menu.is_some()
             || self.transfer.is_some()
             || self.switching.is_some()
@@ -1388,7 +1410,6 @@ impl App {
             let Some((w, pid)) = ax::window_at(point.x, height - point.y) else {
                 return;
             };
-            self.hover_probe.complete();
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let front: Obj = msg_send![ws, frontmostApplication];
             let front_pid: i32 = msg_send![front, processIdentifier];
@@ -1405,8 +1426,8 @@ impl App {
                 return;
             }
             let focused = (front_pid == pid).then(|| ax::focused_id(pid)).flatten();
-            let applied = self.focus_target.map(|(owner, window, _)| (owner, window));
-            if !focus::activation_needed(front_pid, applied, pid, id) {
+            if !focus::activation_needed(front_pid, focused, pid, id) {
+                self.hover_probe.complete();
                 self.focus_target = Some((pid, id, Instant::now()));
                 self.update_window();
                 return;
@@ -1448,6 +1469,7 @@ impl App {
                 || self.transfer.is_some()
                 || Instant::now() < self.hover_resume
                 || !self.hover_enabled
+                || !ax::trusted()
                 || self.sleeping
                 || front_pid != pending.front_pid
                 || point != pending.point
@@ -1476,6 +1498,7 @@ impl App {
             if pending.verify {
                 let reported = ax::focused_id(pending.pid);
                 if reported == Some(pending.id) {
+                    self.hover_probe.complete();
                     self.focus_target = Some((pending.pid, pending.id, Instant::now()));
                     self.update_window();
                     return;
@@ -2292,6 +2315,9 @@ impl App {
         }
     }
     fn configure_tiling(&mut self) {
+        unsafe {
+            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(tileTick:), object:ptr::null::<AnyObject>()];
+        }
         mouse_delivery::clear(Retained::as_ptr(&self.target) as Obj);
         tab_delivery::clear(Retained::as_ptr(&self.target) as Obj);
         self.tile_manager.cancel_tab_drag();
@@ -2314,8 +2340,8 @@ impl App {
                 return;
             }
             let target = Retained::as_ptr(&self.target) as Obj;
-            self.tile_mouse = crate::tile_mouse::Monitor::new(move |down, point| {
-                mouse_delivery::enqueue(target, down, point);
+            self.tile_mouse = crate::tile_mouse::Monitor::new(move |down, point, grab| {
+                mouse_delivery::enqueue(target, down, point, grab);
             });
             self.refresh_picker_hint();
             self.tile_manager.invalidate();
@@ -2882,6 +2908,12 @@ impl App {
             return;
         }
         if self.layout_picker.take().is_some() {
+            return;
+        }
+        if self.transfer.is_some() || self.tab_menu.is_some() {
+            self.show_notice(crate::i18n::tr(
+                "Espera a que termine el cambio de escritorio o el traslado anterior.",
+            ));
             return;
         }
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
@@ -3841,11 +3873,24 @@ impl App {
             let _: () = msg_send![self.about.as_ref().unwrap(), makeKeyAndOrderFront:ptr::null::<AnyObject>()];
         }
     }
-    fn refresh_permission(&self) {
-        if self.guide.is_none() && self.permission.is_null() {
-            return;
-        }
+    fn refresh_permission(&mut self) -> bool {
         let trusted = ax::trusted();
+        let changed = trusted != self.permission_trusted;
+        self.permission_trusted = trusted;
+        if trusted {
+            self.stop_permission_watch();
+        }
+        if changed {
+            self.configure_hover();
+            self.configure_tiling();
+            self.update_window();
+            if trusted && self.tile_timer.is_some() {
+                // Start on the next main-thread turn, not on a later window event.
+                schedule_app_callback(Retained::as_ptr(&self.target) as Obj, sel!(tileTick:), 0.);
+            } else if !trusted && !self.sleeping && self.wants_accessibility() {
+                self.watch_permission();
+            }
+        }
         unsafe {
             if let Some(guide) = &self.guide {
                 guide.refresh(trusted);
@@ -3860,6 +3905,45 @@ impl App {
                     },
                 );
             }
+        }
+        changed
+    }
+    fn wants_accessibility(&self) -> bool {
+        self.border_enabled
+            || self.hover_enabled
+            || crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled")
+                != 0
+    }
+    fn watch_permission(&mut self) {
+        if ax::trusted() {
+            self.refresh_permission();
+            return;
+        }
+        if self.permission_trusted {
+            // Reconcile a revocation before waiting for the next grant.
+            self.refresh_permission();
+            if self.permission_trusted || self.permission_deadline.is_some() {
+                return;
+            }
+        }
+        if self.sleeping {
+            return;
+        }
+        // TCC has no public trust-change notification. This temporary fallback
+        // covers consent while System Settings, not AMSpace, owns focus.
+        self.permission_deadline = Some(Instant::now() + Duration::from_secs(300));
+        schedule_app_callback(
+            Retained::as_ptr(&self.target) as Obj,
+            sel!(permissionTick:),
+            0.1,
+        );
+    }
+    fn stop_permission_watch(&mut self) {
+        if self.permission_deadline.take().is_none() {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*self.target, selector:sel!(permissionTick:), object:ptr::null::<AnyObject>()];
         }
     }
     fn feedback(&self, message: &str) {
@@ -4070,6 +4154,35 @@ impl App {
             if self.transfer.is_some()
                 && ((40..=87).contains(&tag) || (95..=98).contains(&tag) || tag >= 2000)
             {
+                // Native controls already reflect the click. Restore persisted
+                // values when the in-flight transfer vetoes that edit.
+                let defaults = Retained::as_ptr(&self.defaults) as Obj;
+                let state = match tag {
+                    40 => Some(crate::tile_manager::pref(defaults, "tile.enabled")),
+                    43 => Some(1 - crate::tile_manager::pref(defaults, "tile.simple")),
+                    50 => Some(crate::tile_manager::pref(defaults, "tile.grid.enabled")),
+                    63 => Some(crate::tile_manager::pref_or(defaults, "tile.animate", 1)),
+                    65 => Some(crate::tile_manager::pref_or(defaults, "tile.groups", 1)),
+                    68 => Some(crate::tile_manager::pref_or(defaults, "tile.shake", 1)),
+                    _ => None,
+                };
+                if let Some(state) = state {
+                    let _: () = msg_send![sender, setState:state];
+                }
+                if matches!(tag, 77 | 78) {
+                    let layout = crate::tile_manager::default_layout(defaults, tag == 78);
+                    let selection = crate::tiling::Layout::ALL
+                        .iter()
+                        .position(|candidate| *candidate == layout)
+                        .unwrap_or(0);
+                    let _: () = msg_send![sender, selectItemAtIndex:selection as isize];
+                } else if tag == 66 {
+                    text(
+                        sender,
+                        &crate::tile_manager::max_group_tabs(defaults).to_string(),
+                    );
+                }
+                self.refresh_tile_controls();
                 self.feedback(crate::i18n::tr(
                     "Espera a que termine el traslado antes de cambiar Mosaico.",
                 ));
@@ -4127,6 +4240,7 @@ impl App {
                 }
                 6 => {
                     ax::request_permission();
+                    self.watch_permission();
                     open_url(
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
                     );
@@ -4199,6 +4313,9 @@ impl App {
                             self.configure_tiling();
                             self.refresh_pause_button();
                             if selected != 0 {
+                                if !ax::trusted() {
+                                    self.watch_permission();
+                                }
                                 self.show_tip(2, crate::i18n::tr("Agrupa soltando una ventana en la parte superior de otra. Arrastra una pestaña para separarla; clic derecho para ver sus acciones."));
                             }
                         }
@@ -5083,9 +5200,10 @@ extern "C-unwind" fn tab_menu_action(_: Obj, _: Sel, sender: Obj) {
     });
 }
 
-unsafe fn tab_menu(
+pub(crate) unsafe fn tab_menu(
     target: Obj,
     targets: Vec<crate::tile_manager::TabGroupTarget>,
+    placements: Vec<crate::tile_manager::TabPlacementTarget>,
 ) -> (Retained<AnyObject>, Vec<crate::tile_manager::TabAction>) {
     use crate::tile_manager::TabAction;
     unsafe {
@@ -5120,6 +5238,40 @@ unsafe fn tab_menu(
             1,
             true,
         );
+        let place_item = add(
+            &menu,
+            crate::i18n::tr("Colocar en…"),
+            sel!(tabMenuAction:),
+            -1,
+            true,
+        );
+        let positions: Retained<AnyObject> = msg_send![class!(NSMenu), new];
+        let _: () = msg_send![&positions, setAutoenablesItems:false];
+        if placements.is_empty() {
+            add(
+                &positions,
+                crate::i18n::tr("No hay posiciones disponibles"),
+                sel!(tabMenuAction:),
+                -1,
+                false,
+            );
+        }
+        for placement in placements {
+            let title = if let Some(reason) = placement.unavailable {
+                format!("{} — {reason}", placement.title)
+            } else {
+                placement.title
+            };
+            add(
+                &positions,
+                &title,
+                sel!(tabMenuAction:),
+                actions.len() as isize,
+                placement.unavailable.is_none(),
+            );
+            actions.push(TabAction::Place(placement.index));
+        }
+        let _: () = msg_send![&place_item, setSubmenu:&*positions];
         let move_item = add(
             &menu,
             crate::i18n::tr("Mover a otro grupo"),
@@ -5202,8 +5354,9 @@ fn show_tab_menu(button: Obj, event: Obj) {
         match a.tile_manager.tab_context(id) {
             Ok(context) => {
                 let targets = a.tile_manager.tab_group_targets(&context);
+                let placements = a.tile_manager.tab_placement_targets(&context);
                 let (menu, actions) =
-                    unsafe { tab_menu(Retained::as_ptr(&a.target) as Obj, targets) };
+                    unsafe { tab_menu(Retained::as_ptr(&a.target) as Obj, targets, placements) };
                 a.pending_focus = None;
                 a.tab_menu = Some(TabMenuState {
                     context,
@@ -5268,7 +5421,7 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
                 a.hover_resume = Instant::now() + Duration::from_millis(600);
                 a.update_tile_timer();
                 a.settle_focus();
-                a.show_tip(4, crate::i18n::tr("Arrastra en la barra para reordenar; fuera elige un hueco, apila o haz flotante. Clic derecho: acciones; ×: cierre normal."));
+                a.show_tip(4, crate::i18n::tr("En la barra reordenas; fuera eliges destino. ⌥: colocar sin apilar. Clic derecho: Colocar en… y otras acciones; ×: cierre normal."));
             }
         }
         tab_delivery::Action::Close => {
@@ -5289,9 +5442,11 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
             }
             // No settle_focus here: the application's save dialog owns focus.
         }
-        tab_delivery::Action::Drag { state, location } => {
-            apply_tab_drag(a, sender, state, location)
-        }
+        tab_delivery::Action::Drag {
+            state,
+            location,
+            independent,
+        } => apply_tab_drag(a, sender, state, location, independent),
     }
 }
 /// Native pan coordinates choose reordering, floating or a tile destination.
@@ -5300,20 +5455,25 @@ extern "C-unwind" fn drag_tile_tab(target: Obj, _: Sel, sender: Obj) {
     let state: isize = unsafe { msg_send![sender, state] };
     let view: Option<Retained<AnyObject>> = unsafe { msg_send![sender, view] };
     let location: NSPoint = unsafe { msg_send![sender, locationInView:ptr::null::<AnyObject>()] };
+    let modifiers: usize = unsafe { msg_send![sender, dragModifierFlags] };
     if let Some(view) = view {
         tab_delivery::enqueue(
             target,
             Retained::as_ptr(&view) as Obj,
-            tab_delivery::Action::Drag { state, location },
+            tab_delivery::Action::Drag {
+                state,
+                location,
+                independent: modifiers & (1 << 19) != 0,
+            },
         );
     } else {
         tab_delivery::cancel_drag(target);
     }
 }
-fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint) {
+fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint, independent: bool) {
     let defaults = Retained::as_ptr(&a.defaults) as Obj;
     let enabled = crate::tile_manager::pref_or(defaults, "tile.shake", 1) != 0;
-    let grouped = crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0;
+    let grouped = crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0 && !independent;
     match a
         .tile_manager
         .tab_drag(view, state, location, enabled, grouped)
@@ -5331,10 +5491,11 @@ fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint) {
         a.show_notice(&error);
     }
 }
-extern "C-unwind" fn tile_tick(_: Obj, _: Sel, _: Obj) {
+extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, _: Obj) {
     autoreleasepool(|_| {
-        with_app(|a| {
-            if a.tiling_paused
+        with_app_deferred(target, selector, |a| {
+            if a.tile_timer.is_none()
+                || a.tiling_paused
                 || a.tab_menu.is_some()
                 || a.layout_picker.is_some()
                 || a.transfer.is_some()
@@ -5438,34 +5599,69 @@ extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {
         a.settle_focus();
     });
 }
-extern "C-unwind" fn became_active(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn permission_changed(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         a.refresh_permission();
-        a.refresh_login();
-        a.configure_hover();
-        a.configure_tiling();
-        a.update_window();
     });
 }
-extern "C-unwind" fn sleep(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn permission_tick(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
+        if a.permission_deadline.is_none() {
+            return;
+        }
+        if a.sleeping {
+            a.stop_permission_watch();
+            return;
+        }
+        if ax::trusted() != a.permission_trusted {
+            a.refresh_permission();
+        }
+        if a.permission_deadline
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            schedule_app_callback(target, selector, 0.1);
+        } else {
+            a.stop_permission_watch();
+        }
+    });
+}
+extern "C-unwind" fn became_active(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
+        if !a.refresh_permission() {
+            a.configure_hover();
+            a.configure_tiling();
+            a.update_window();
+        }
+        a.refresh_login();
+    });
+}
+extern "C-unwind" fn sleep(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         a.sleeping = true;
+        a.switching = None;
+        a.transfer = None;
         a.desktop_preview.hide();
+        a.stop_permission_watch();
         a.update_presentation_timer();
         a.configure_hover();
         a.configure_tiling();
         a.update_window();
     });
 }
-extern "C-unwind" fn wake(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn wake(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         a.sleeping = false;
         crate::desktop_mode::refresh();
         a.update_presentation_timer();
-        a.configure_hover();
-        a.configure_tiling();
+        if !a.refresh_permission() {
+            a.configure_hover();
+            a.configure_tiling();
+            a.update_window();
+        }
         a.refresh_spaces();
-        a.update_window();
+        if !a.permission_trusted && a.wants_accessibility() {
+            a.watch_permission();
+        }
     });
 }
 extern "C-unwind" fn reopen(_: Obj, _: Sel, _: Obj, _: Bool) -> Bool {
@@ -5571,6 +5767,8 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(spaceChanged:), space_changed),
                 (sel!(resumeSpaceBorder:), resume_space_border),
                 (sel!(becameActive:), became_active),
+                (sel!(permissionChanged:), permission_changed),
+                (sel!(permissionTick:), permission_tick),
                 (sel!(sleep:), sleep),
                 (sel!(wake:), wake),
                 (sel!(quit:), quit),
@@ -5683,6 +5881,8 @@ pub fn run() {
             sel!(becameActive:),
         );
         let distributed: Obj = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
+        // Optional, undocumented invalidation only: never trust its payload.
+        let _: () = msg_send![distributed, addObserver:&*target, selector:sel!(permissionChanged:), name:ns_string!("com.apple.accessibility.api"), object:ptr::null::<AnyObject>(), suspensionBehavior:4usize];
         for (name, _) in crate::desktop_mode::DISTRIBUTED_NOTIFICATIONS {
             let _: () = msg_send![distributed, addObserver:&*target, selector:sel!(desktopDistributed:), name:&*NSString::from_str(name), object:ptr::null::<AnyObject>(), suspensionBehavior:4usize];
         }
@@ -5696,7 +5896,13 @@ pub fn run() {
         let _: () = msg_send![&app, run];
     });
     APP.with(|cell| {
-        cell.borrow_mut().take();
+        if let Some(mut state) = cell.borrow_mut().take() {
+            state.stop_permission_watch();
+            unsafe {
+                let distributed: Obj = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
+                let _: () = msg_send![distributed, removeObserver:&*state.target, name:ns_string!("com.apple.accessibility.api"), object:ptr::null::<AnyObject>()];
+            }
+        }
     });
 }
 

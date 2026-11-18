@@ -66,7 +66,7 @@ impl Guide {
                         (
                             crate::i18n::tr("Separar y reorganizar"),
                             crate::i18n::tr(
-                                "Arrastra dentro de la barra para reordenar; fuera de ella para separar la ventana. La marca indica dónde quedará. Clic derecho o Control-clic: Separar, Hacer flotante, Mover a otro grupo y Cerrar. Si no cabe, la distribución no cambia.",
+                                "Arrastra el asa o el título: en la barra reordenas; fuera eliges un hueco. ⌥ coloca sin apilar. Clic derecho o Control-clic: Colocar en…, Separar, Hacer flotante, Mover a otro grupo y Cerrar. Un destino rechazado muestra el motivo sin cambiar la distribución.",
                             ),
                         ),
                         (

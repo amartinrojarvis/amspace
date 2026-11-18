@@ -36,7 +36,7 @@ Solo si la descarga procede de la publicación oficial y confías en ella:
 
 1. En la guía de AMSpace pulsa **Abrir Accesibilidad…**, o abre **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. En algunas versiones el panel puede llamarse «Control de dispositivos y acceso a datos».
 2. Activa **AMSpace**. Si no aparece, pulsa **+** y selecciona **Aplicaciones/AMSpace.app**. Autoriza el cambio con contraseña o Touch ID si macOS lo pide.
-3. Vuelve a la guía y pulsa **Revisar permiso**. Si el sistema solicita reiniciar la app, sal y abre otra vez la copia instalada.
+3. Las funciones que ya estaban habilitadas se reactivan al conceder el permiso, sin mover, abrir o cerrar otra ventana. **Revisar permiso** permite comprobarlo manualmente. Si el sistema solicita reiniciar la app, sal y abre otra vez la copia instalada.
 4. Activa Borde, Foco o Mosaico solo cuando lo desees: están desactivados inicialmente. Los nuevos atajos de pestañas se activan expresamente en Ajustes → Atajos.
 
 El indicador de escritorios funciona sin Accesibilidad; gestionar ventanas y cambiar de escritorio con clic requiere el permiso. **No se solicita Grabación de pantalla ni Monitorización de entrada.** AMSpace no puede concederse Accesibilidad a sí misma.

@@ -63,9 +63,13 @@ pub(super) fn clear(target: Obj) {
     }
 }
 
-pub(super) fn enqueue(target: Obj, down: bool, point: NSPoint) {
+pub(super) fn enqueue(
+    target: Obj,
+    down: bool,
+    point: NSPoint,
+    grab: Option<crate::tile_mouse::Grab>,
+) {
     let queued = Instant::now();
-    let grab = down.then(|| crate::tile_mouse::Grab::at(point)).flatten();
     PENDING.with(|pending| {
         pending.borrow_mut().push(Boundary {
             down,

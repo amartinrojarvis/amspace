@@ -215,6 +215,11 @@ impl Switch {
         })
     }
     pub fn step(&mut self) -> Result<Progress, &'static str> {
+        if !ax::trusted() {
+            return Err(crate::i18n::tr(
+                "Concede Accesibilidad para cambiar de escritorio.",
+            ));
+        }
         let destination = spaces::destination(self.target).ok_or(crate::i18n::tr(
             "El escritorio seleccionado ya no está disponible.",
         ))?;

@@ -6,10 +6,11 @@ use objc2_foundation::{NSPoint, NSRect};
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGEventGetLocation(event: *const std::ffi::c_void) -> NSPoint;
+    fn CGEventGetIntegerValueField(event: *const std::ffi::c_void, field: u32) -> i64;
 }
 
-/// Native identity and geometry sampled before an AX/AppKit reentry can defer
-/// delivery to the manager. The pointer alone cannot identify a moved window.
+/// Preserve the recipient recorded when the native event was generated, even
+/// when AppKit delivers its global-monitor copy after the window has moved.
 #[derive(Clone, Copy)]
 pub(crate) struct Grab {
     pub pid: i32,
@@ -17,7 +18,30 @@ pub(crate) struct Grab {
     pub frame: NSRect,
 }
 impl Grab {
-    pub fn at(point: NSPoint) -> Option<Self> {
+    /// # Safety
+    /// `event` must be a live CGEvent, or null when no native payload is available.
+    pub unsafe fn from_event(event: *const std::ffi::c_void, point: NSPoint) -> Option<Self> {
+        if !event.is_null() {
+            // Public CGEvent fields: recipient under pointer (92), geometric
+            // window under pointer (91), and target Unix process ID (40).
+            let recipient = unsafe { CGEventGetIntegerValueField(event, 92) };
+            let id = if recipient > 0 {
+                recipient
+            } else {
+                unsafe { CGEventGetIntegerValueField(event, 91) }
+            };
+            let pid = unsafe { CGEventGetIntegerValueField(event, 40) };
+            if let (Ok(id), Ok(pid)) = (u32::try_from(id), i32::try_from(pid))
+                && id != 0
+                && pid > 0
+            {
+                // A vanished recipient must not become a different window
+                // merely because that window now occupies the old point.
+                let frame = crate::window_server::bounds(id)?;
+                return Some(Self { pid, id, frame });
+            }
+        }
+        // Older or synthetic events can omit recipient metadata.
         let (pid, id) = crate::window_server::window_at(point)?;
         let frame = crate::window_server::bounds(id)?;
         Some(Self { pid, id, frame })
@@ -26,12 +50,15 @@ impl Grab {
 
 pub struct Monitor(Retained<AnyObject>);
 impl Monitor {
-    pub fn new(handler: impl Fn(bool, NSPoint) + 'static) -> Option<Self> {
+    pub fn new(handler: impl Fn(bool, NSPoint, Option<Grab>) + 'static) -> Option<Self> {
         let block = block2::RcBlock::new(move |event: Obj| unsafe {
             let kind: usize = msg_send![event, type];
             let cg: *const std::ffi::c_void = msg_send![event, CGEvent];
             if !cg.is_null() && matches!(kind, 1 | 2) {
-                handler(kind == 1, CGEventGetLocation(cg));
+                let down = kind == 1;
+                let point = CGEventGetLocation(cg);
+                let grab = down.then(|| Grab::from_event(cg, point)).flatten();
+                handler(down, point, grab);
             }
         });
         unsafe {

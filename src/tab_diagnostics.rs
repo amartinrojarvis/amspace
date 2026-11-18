@@ -187,6 +187,11 @@ pub fn check_controls() -> Result<(), String> {
                 "Arrastre sin comienzo/fin único o con clic espurio: {dragged:?}"
             ));
         }
+        let ended_cursor: Obj = msg_send![class!(NSCursor), currentCursor];
+        let closed: Obj = msg_send![class!(NSCursor), closedHandCursor];
+        if ended_cursor == closed {
+            return Err("Terminar el arrastre dejó la mano cerrada activa".into());
+        }
         let _: () = msg_send![&button,performClick:ptr::null::<AnyObject>()];
         let programmatic = CONTROL_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
         if programmatic != [(2, 0)] {
@@ -196,6 +201,11 @@ pub fn check_controls() -> Result<(), String> {
         }
         queue(&[(1, 0., 0.), (6, 15., -8.)])?;
         pump(0.1);
+        let closed_hand: Obj = msg_send![class!(NSCursor), closedHandCursor];
+        let dragging_cursor: Obj = msg_send![class!(NSCursor), currentCursor];
+        if dragging_cursor != closed_hand {
+            return Err("El pan reconocido no muestra el cursor de mano cerrada".into());
+        }
         let gestures: Obj = msg_send![&button, gestureRecognizers];
         let gesture: Obj = msg_send![gestures,objectAtIndex:0usize];
         let _: () = msg_send![gesture,setEnabled:false];
@@ -205,6 +215,10 @@ pub fn check_controls() -> Result<(), String> {
         if !cancelled.contains(&(2, 4)) || cancelled.iter().any(|(_, phase)| matches!(phase, 0 | 3))
         {
             return Err(format!("Cancelación nativa incorrecta: {cancelled:?}"));
+        }
+        let cancelled_cursor: Obj = msg_send![class!(NSCursor), currentCursor];
+        if cancelled_cursor == closed_hand {
+            return Err("Cancelar el pan dejó la mano cerrada activa".into());
         }
         let _: () = msg_send![gesture,setEnabled:true];
         queue(&[(1, 0., 0.), (2, 0., 0.)])?;
@@ -308,6 +322,24 @@ pub fn check_controls() -> Result<(), String> {
                 return Err("Mover la tira reconstruyó los controles o perdió su posición.".into());
             }
         }
+        queue(&[(1, 0., 0.), (6, 15., -8.)])?;
+        pump(0.08);
+        manager.trim_overlays(0, 0);
+        let hidden_cursor: Obj = msg_send![class!(NSCursor), currentCursor];
+        if hidden_cursor == closed_hand {
+            return Err("Ocultar la tira dejó el cursor del pan activo".into());
+        }
+        let _: () = msg_send![gesture, setEnabled:false];
+        queue(&[(2, 15., -8.)])?;
+        pump(0.04);
+        let _: () = msg_send![gesture, setEnabled:true];
+        CONTROL_EVENTS.with(|events| events.borrow_mut().clear());
+        let used = manager.draw_strips((0, 0), &desktop, &[(2, slot)], primary_height(), 0, false);
+        manager.trim_overlays(used, 0);
+        // trim_overlays removed the previous panel. Inspect the replacement,
+        // not the retired controls deliberately retained by this fixture.
+        let panel = manager.strips[0].panel.clone();
+        let content: Retained<AnyObject> = msg_send![&*panel, contentView];
         check_reorder_presentation(&mut manager.strips[0])?;
         check_strip_lifecycle(&target)?;
         capture_control(
@@ -327,12 +359,11 @@ pub fn check_controls() -> Result<(), String> {
             return Err("Cambiar el color no actualizó la pestaña activa.".into());
         }
         manager.set_tab_accent([0.42, 0.48, 0.95]);
-        let mut hint = DropHint {
-            frame: slot,
-            kind: HintKind::Zones,
-            available: [true, true],
-            active: Some(0),
-        };
+        let mut hint = DropHint::single(DropIntent::Group(1), slot, None);
+        hint.frame = slot;
+        hint.kind = HintKind::Zones;
+        hint.available = [true, true];
+        hint.active = Some(0);
         manager.show_badge(hint, primary_height());
         let badge: Retained<AnyObject> = msg_send![&*manager.badges[0].panel, contentView];
         let ignores_mouse: bool = msg_send![&*manager.badges[0].panel, ignoresMouseEvents];
@@ -363,8 +394,30 @@ pub fn check_controls() -> Result<(), String> {
         {
             return Err("Cruzar las zonas no cambió el resaltado visible.".into());
         }
-        hint.available[0] = false;
-        hint.active = None;
+        let mut full = Desktop::default();
+        full.reconcile_at(&[1, 2, 3], slot, 10., None);
+        full = full
+            .proposed_drop(2, DropIntent::Group(1), slot, 10.)
+            .ok_or("No se pudo preparar el grupo lleno del indicador")?;
+        full.max_group_tabs = 2;
+        let minimums = HashMap::new();
+        let mut previews = DropPreviewCache::default();
+        let frame = hint.frame;
+        hint = previews
+            .hint(
+                DropContext {
+                    workspace: (0, 0),
+                    id: 3,
+                    area: slot,
+                    desktop: &full,
+                    minimums: &minimums,
+                },
+                DropIntent::Group(full.order[0]),
+                true,
+                None,
+            )
+            .ok_or("El grupo lleno no generó indicador")?;
+        hint.frame = frame;
         manager.show_badge(hint, primary_height());
         pump(0.05);
         let unavailable: Obj = msg_send![&*manager.badges[0].panel, contentView];
@@ -375,7 +428,7 @@ pub fn check_controls() -> Result<(), String> {
         let compact: Obj = msg_send![&*manager.badges[0].panel, contentView];
         capture_control(compact, ".cache/drop-zones-compact.png")?;
         manager.show_badge(
-            DropHint::single(DropIntent::Screen(Zone::Left), slot),
+            DropHint::single(DropIntent::Screen(Zone::Left), slot, None),
             primary_height(),
         );
         manager.trim_overlays(1, 0);

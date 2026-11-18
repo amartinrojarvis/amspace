@@ -249,6 +249,15 @@ struct Managed {
     original_area: NSRect,
     element: ax::Owned,
 }
+
+/// Native geometry observed while settled, never a requested layout frame.
+#[derive(Clone, Copy)]
+struct ObservedFrame {
+    pid: i32,
+    space: Workspace,
+    area: NSRect,
+    frame: NSRect,
+}
 impl Managed {
     fn restoration_target(
         &self,
@@ -366,6 +375,38 @@ impl TabDrag {
         });
         true
     }
+    /// The concrete limit the shared solver hit for the hovered intent, or
+    /// `None` when it accepts. Same desktop, minima and area the gesture
+    /// commits with, so the badge and the commit can never disagree.
+    fn rejection(&self, minimums: &HashMap<u32, objc2_foundation::NSSize>) -> Option<&'static str> {
+        let intent = self.intent?;
+        let desktop = match intent {
+            // The provisional independent tile does not exist yet.
+            DropIntent::Group(_) => &self.baseline,
+            _ => self.destination.as_ref()?,
+        };
+        Some(drop_rejection(
+            desktop,
+            minimums,
+            self.id,
+            Some(intent),
+            self.area,
+        ))
+    }
+
+    /// The virtual hit box the hovered intent was resolved against, so a
+    /// rejected hover still gets a plate of the right shape.
+    fn hovered_slot(&self) -> Option<NSRect> {
+        let id = match self.intent? {
+            DropIntent::Group(id) | DropIntent::Window(id, _) => id,
+            DropIntent::Screen(_) => return Some(self.area),
+        };
+        self.targets
+            .iter()
+            .find(|(member, _)| *member == id)
+            .map(|(_, frame)| *frame)
+            .or(Some(self.area))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -428,7 +469,7 @@ struct PreviewContext {
     desktop: Desktop,
     minimums: HashMap<u32, objc2_foundation::NSSize>,
     slots: Vec<(u32, NSRect)>,
-    proposals: Vec<(DropIntent, Option<NSRect>)>,
+    proposals: Vec<(DropIntent, Option<NSRect>, Option<&'static str>)>,
 }
 #[derive(Clone, Default)]
 struct DropPreviewCache {
@@ -469,7 +510,7 @@ impl DropPreviewCache {
         &self.context(input).slots
     }
     fn preview(&mut self, input: DropContext<'_>, intent: DropIntent) -> Option<NSRect> {
-        self.context(input).preview(intent)
+        self.context(input).solve(intent).0
     }
 
     fn hint(
@@ -490,47 +531,72 @@ impl DropPreviewCache {
             if let Some((target, frame)) = target
                 .and_then(|target| context.slots.iter().find(|(id, _)| *id == target).copied())
             {
-                let available = [
-                    context.preview(DropIntent::Group(target)).is_some(),
-                    context
-                        .preview(DropIntent::Window(target, Zone::Center))
-                        .is_some(),
-                ];
+                // One cached solve per zone: the plate, the availability and the
+                // written reason all come from the very solver the release uses.
+                let group = context.solve(DropIntent::Group(target));
+                let swap = context.solve(DropIntent::Window(target, Zone::Center));
                 return Some(DropHint {
                     frame,
                     kind: HintKind::Zones,
-                    available,
+                    available: [group.0.is_some(), swap.0.is_some()],
                     active: preview.map(|_| usize::from(!matches!(intent, DropIntent::Group(_)))),
+                    reasons: [group.1, swap.1],
                 });
             }
         }
-        preview.map(|frame| DropHint::single(intent, frame))
+        let reason = if preview.is_some() {
+            None
+        } else {
+            context.solve(intent).1
+        };
+        let frame = preview.or_else(|| match intent {
+            DropIntent::Group(id) | DropIntent::Window(id, _) => context
+                .slots
+                .iter()
+                .find_map(|(target, frame)| (*target == id).then_some(*frame)),
+            DropIntent::Screen(_) => Some(input.area),
+        })?;
+        Some(DropHint::single(intent, frame, reason))
     }
 }
 
 impl PreviewContext {
-    fn preview(&mut self, intent: DropIntent) -> Option<NSRect> {
-        if let Some((_, frame)) = self.proposals.iter().find(|(key, _)| *key == intent) {
-            return *frame;
+    /// One bounded memo per `(intent)`: the proposed frame plus the concrete
+    /// limit that made it fail. An unchanged hover replays the entry with no
+    /// solver call, no allocation and no AX read.
+    fn solve(&mut self, intent: DropIntent) -> (Option<NSRect>, Option<&'static str>) {
+        if let Some((_, frame, reason)) = self.proposals.iter().find(|(key, _, _)| *key == intent) {
+            return (*frame, *reason);
         }
-        let frame = arrival_proposal(
+        let proposed = arrival_proposal(
             &self.desktop,
             self.id,
             Some(intent),
             self.area,
             Some(&self.minimums),
-        )
-        .and_then(|d| {
-            d.window_frames(self.area, 10.)
+        );
+        let frame = proposed.as_ref().and_then(|desktop| {
+            desktop
+                .window_frames(self.area, 10.)
                 .into_iter()
                 .find(|(id, _)| *id == self.id)
                 .map(|(_, r)| r)
         });
+        // The same solver the gesture commits with names the limit.
+        let reason = frame.is_none().then(|| {
+            drop_rejection(
+                &self.desktop,
+                &self.minimums,
+                self.id,
+                Some(intent),
+                self.area,
+            )
+        });
         if self.proposals.len() == 32 {
             self.proposals.remove(0);
         }
-        self.proposals.push((intent, frame));
-        frame
+        self.proposals.push((intent, frame, reason));
+        (frame, reason)
     }
 }
 struct PendingDrop {
@@ -910,6 +976,14 @@ impl TabStrip {
         }
     }
 
+    fn hide(&self) {
+        unsafe {
+            let content: Obj = msg_send![&*self.panel, contentView];
+            release_tab_cursor_in_view(content);
+            let _: () = msg_send![&*self.panel, orderOut:ptr::null::<AnyObject>()];
+        }
+    }
+
     fn confirm_space(&mut self) {
         let StripSpaceBinding::Pending(until) = self.binding else {
             return;
@@ -1013,9 +1087,7 @@ impl TabStrip {
 
 impl Drop for TabStrip {
     fn drop(&mut self) {
-        unsafe {
-            let _: () = msg_send![&*self.panel, orderOut:ptr::null::<AnyObject>()];
-        }
+        self.hide();
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1031,10 +1103,13 @@ struct DropHint {
     kind: HintKind,
     available: [bool; 2],
     active: Option<usize>,
+    /// Per-zone concrete limit from the shared solver, `None` when that zone
+    /// is accepted. Written under the plate so a disabled zone explains itself.
+    reasons: [Option<&'static str>; 2],
 }
 
 impl DropHint {
-    fn single(intent: DropIntent, slot: NSRect) -> Self {
+    fn single(intent: DropIntent, slot: NSRect, reason: Option<&'static str>) -> Self {
         let width = slot.size.width.min(280.);
         let height = slot.size.height.min(156.);
         Self {
@@ -1049,8 +1124,9 @@ impl DropHint {
             } else {
                 HintKind::Place
             },
-            available: [true, false],
-            active: Some(0),
+            available: [reason.is_none(), false],
+            active: reason.is_none().then_some(0),
+            reasons: [reason, None],
         }
     }
 }
@@ -1069,6 +1145,7 @@ pub struct Manager {
     tab_groups: HashMap<u32, ax::Owned>,
     inactive_tabs: HashSet<u32>,
     applied: HashMap<u32, NSRect>,
+    observed_frames: HashMap<u32, ObservedFrame>,
     transitions: HashMap<u32, Transition>,
     verifications: HashMap<u32, Verification>,
     constrained: HashMap<u32, (NSRect, NSRect)>,
@@ -1498,6 +1575,15 @@ impl Manager {
         };
         let hovering = drag.float_hover;
         let intent = drag.intent;
+        // The badge is only rebuilt by `show_badge` when kind, availability or
+        // size actually differ, so an unchanged hover stays allocation-free.
+        let rejection = if changed && drag.proposed.is_none() {
+            drag.rejection(&self.minimum_sizes)
+        } else {
+            None
+        };
+        let rejected_slot =
+            rejection.and_then(|reason| drag.hovered_slot().map(|slot| (slot, reason)));
         if let Some((frame, highlighted)) = hint {
             self.show_float_overlay(frame, false, highlighted);
         } else {
@@ -1506,8 +1592,14 @@ impl Manager {
         if let Some(frame) = frame {
             self.show_preview(frame);
             if let Some(intent) = intent {
-                self.show_badge(DropHint::single(intent, frame), primary_height());
+                self.show_badge(DropHint::single(intent, frame, None), primary_height());
             }
+        } else if let (Some(intent), Some((slot, reason))) = (intent, rejected_slot) {
+            self.hide_preview_panels();
+            self.show_badge(
+                DropHint::single(intent, slot, Some(reason)),
+                primary_height(),
+            );
         } else if hovering || changed {
             self.hide_preview_panels();
             self.hide_badges();
@@ -1713,6 +1805,8 @@ impl Manager {
                 id,
                 pid,
                 workspace: space,
+                baseline: desktop.clone(),
+                area: slot,
             },
             slot,
         ))
@@ -1730,6 +1824,7 @@ impl Manager {
             TabAction::Detach => self.detach_tab(id, area),
             TabAction::Float => self.float_tab(id, area),
             TabAction::MoveToGroup(target) => self.move_tab_to_group(context, target, area),
+            TabAction::Place(index) => self.place_tab(context, index, area),
             TabAction::Close => {
                 if self.close_tab(id) {
                     return Ok(());
@@ -1743,6 +1838,69 @@ impl Manager {
                 Err(reason)
             }
         }
+    }
+
+    pub fn tab_placement_targets(&self, context: &TabContext) -> Vec<TabPlacementTarget> {
+        if self.desktops.get(&context.workspace) != Some(&context.baseline)
+            || !self
+                .active_areas
+                .contains(&(context.workspace, context.area))
+        {
+            return Vec::new();
+        }
+        let (destination, targets) = tab_drag_layout(&context.baseline, context.id, context.area);
+        targets
+            .iter()
+            .enumerate()
+            .map(|(index, (target, _))| {
+                let available = destination.as_ref().is_some_and(|desktop| {
+                    arrival_proposal(
+                        desktop,
+                        context.id,
+                        Some(DropIntent::Window(*target, Zone::Center)),
+                        context.area,
+                        Some(&self.minimum_sizes),
+                    )
+                    .is_some()
+                });
+                TabPlacementTarget {
+                    index,
+                    title: crate::tr_format!(
+                        "Posición {number}",
+                        "Position {number}",
+                        number = index + 1
+                    ),
+                    unavailable: (!available).then(|| crate::i18n::tr(MINIMUM_CAPACITY)),
+                }
+            })
+            .collect()
+    }
+
+    fn place_tab(
+        &mut self,
+        context: &TabContext,
+        index: usize,
+        area: NSRect,
+    ) -> Result<(), &'static str> {
+        let (destination, targets) = tab_drag_layout(&context.baseline, context.id, area);
+        let (target, _) = targets.get(index).ok_or(crate::i18n::tr(
+            "La pestaña cambió; vuelve a abrir el menú.",
+        ))?;
+        let proposed = destination
+            .as_ref()
+            .and_then(|desktop| {
+                arrival_proposal(
+                    desktop,
+                    context.id,
+                    Some(DropIntent::Window(*target, Zone::Center)),
+                    area,
+                    Some(&self.minimum_sizes),
+                )
+            })
+            .ok_or(crate::i18n::tr(MINIMUM_CAPACITY))?;
+        self.focus_member(context.id)?;
+        self.commit_tab_model(context.workspace, context.id, proposed);
+        Ok(())
     }
 
     fn detach_tab(&mut self, id: u32, area: NSRect) -> Result<(), &'static str> {
@@ -2157,6 +2315,7 @@ impl Manager {
         self.pressed = pressed; // Never recapture a gesture already in progress.
         self.handoffs.clear();
         self.applied.clear();
+        self.observed_frames.clear();
         self.constrained.clear();
         self.invalidate();
         self.space_settle = Some(Instant::now() + Duration::from_millis(600));
@@ -2220,9 +2379,7 @@ impl Manager {
             strip.clear_marker();
             strip.confirm_space();
             if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
-                unsafe {
-                    let _: () = msg_send![&*strip.panel, orderOut:ptr::null::<AnyObject>()];
-                }
+                strip.hide();
             }
         }
         for badge in &self.badges {
@@ -2514,6 +2671,7 @@ impl Manager {
             }
         }
         self.applied.clear();
+        self.observed_frames.clear();
         self.constrained.clear();
         self.windows.clear();
         self.tab_groups.clear();
@@ -2529,7 +2687,7 @@ impl Manager {
             unsafe {
                 let visible: bool = msg_send![&*strip.panel, isVisible];
                 if visible {
-                    let _: () = msg_send![&*strip.panel,orderOut:ptr::null::<AnyObject>()];
+                    strip.hide();
                 }
             }
         }
@@ -2800,6 +2958,7 @@ impl Manager {
             let badge = &mut self.badges[0];
             let rebuilt = badge.hint.kind != hint.kind
                 || badge.hint.available != hint.available
+                || badge.hint.reasons != hint.reasons
                 || badge.hint.frame.size != hint.frame.size;
             if badge.hint.frame != hint.frame {
                 let _: () =
@@ -3347,6 +3506,7 @@ impl Manager {
         self.transitions.remove(&id);
         self.constrained.remove(&id);
         let element = w.element.0;
+        self.observed_frames.remove(&id);
         let mut verification = Verification::new(frame);
         verification.accepted = ax::set_frame(element, frame);
         self.verifications.insert(id, verification);
@@ -3363,6 +3523,7 @@ impl Manager {
     fn transition_from(&mut self, id: u32, from: NSRect, to: NSRect) {
         // A retry for an older destination must not fight the new animation.
         self.verifications.remove(&id);
+        self.observed_frames.remove(&id);
         if near(from, to) {
             self.transitions.remove(&id);
             return;
@@ -3485,6 +3646,17 @@ impl Manager {
                 VerificationStep::Complete => {
                     self.verifications.remove(&id);
                     self.constrained.remove(&id);
+                    if let Some((_, area)) = active.iter().find(|(key, _)| *key == w.space) {
+                        self.observed_frames.insert(
+                            id,
+                            ObservedFrame {
+                                pid: w.pid,
+                                space: w.space,
+                                area: *area,
+                                frame: actual,
+                            },
+                        );
+                    }
                     // The settled frame is the proof of the smallest workable
                     // size. A larger minimum learned by an earlier Limited step
                     // must not keep nudging the tree on later round trips.
@@ -4194,6 +4366,30 @@ impl Manager {
                             .filter(|grab| grab.id == id && grab.pid == pid)
                             .map(|grab| grab.frame)
                             .or_else(|| ws::bounds(id))?;
+                        // AppKit's global monitor is asynchronous. Its bounds
+                        // may already include the whole move. Recover only an
+                        // actually observed, settled frame in this same context.
+                        let frame = self
+                            .observed_frames
+                            .get(&id)
+                            .filter(|old| {
+                                native_captured
+                                    && old.pid == pid
+                                    && old.space == w.space
+                                    && active.contains(&(w.space, old.area))
+                                    && !self.transitions.contains_key(&id)
+                                    && !self.verifications.contains_key(&id)
+                                    && contains(
+                                        rect(
+                                            old.frame.origin.x - 12.,
+                                            old.frame.origin.y - 12.,
+                                            old.frame.size.width + 24.,
+                                            old.frame.size.height + 24.,
+                                        ),
+                                        p,
+                                    )
+                            })
+                            .map_or(frame, |old| old.frame);
                         let edge = (p.x - frame.origin.x)
                             .abs()
                             .min((p.x - frame.origin.x - frame.size.width).abs())
@@ -4784,6 +4980,23 @@ impl Manager {
                 self.applied.remove(&id);
             }
             w.space = space;
+            if !down
+                && !settling
+                && near(compositor_frame, frame)
+                && !self.transitions.contains_key(&id)
+                && !self.verifications.contains_key(&id)
+                && let Some((_, area)) = active.iter().find(|(key, _)| *key == space)
+            {
+                self.observed_frames.insert(
+                    id,
+                    ObservedFrame {
+                        pid,
+                        space,
+                        area: *area,
+                        frame,
+                    },
+                );
+            }
             actual_frames.insert(id, frame);
             let owns_slot = self
                 .desktops
@@ -5053,6 +5266,7 @@ impl Manager {
                     self.transition_from(id, actual.unwrap(), frame);
                 }
                 // Cache destinations; animation owns intermediate frames.
+                self.observed_frames.remove(&id);
                 self.applied.insert(id, frame);
             }
             for (id, frame) in hidden {
@@ -5129,6 +5343,7 @@ impl Manager {
     }
 
     fn forget_window(&mut self, id: u32) {
+        self.observed_frames.remove(&id);
         if self.tab_drag.as_ref().is_some_and(|drag| {
             drag.baseline.order.contains(&id) || drag.baseline.tab_role(id).is_some()
         }) {
@@ -5204,6 +5419,8 @@ pub struct TabContext {
     pub id: u32,
     pub pid: i32,
     pub workspace: Workspace,
+    baseline: Desktop,
+    area: NSRect,
 }
 
 /// The native requests a tab strip offers.
@@ -5213,12 +5430,19 @@ pub enum TabAction {
     Float,
     MoveToGroup(u32),
     Close,
+    Place(usize),
 }
 
 /// One receiving strip in the menu. `unavailable` is the concrete reason the
 /// item is disabled, so the menu never has to guess.
 pub struct TabGroupTarget {
     pub id: u32,
+    pub title: String,
+    pub unavailable: Option<&'static str>,
+}
+
+pub struct TabPlacementTarget {
+    pub index: usize,
     pub title: String,
     pub unavailable: Option<&'static str>,
 }
@@ -5568,7 +5792,7 @@ unsafe fn rounded_plate(parent: Obj, frame: NSRect, rgb: [f64; 3], alpha: f64, r
     }
 }
 
-unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
+unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) -> Obj {
     unsafe {
         let field: Allocated<AnyObject> = msg_send![class!(NSTextField), alloc];
         let field: Retained<AnyObject> = msg_send![field,initWithFrame:frame];
@@ -5589,6 +5813,91 @@ unsafe fn caption(parent: Obj, frame: NSRect, value: &str, bold: bool) {
         let _: () = msg_send![&field,setTextColor:text];
         let _: () = msg_send![&field,setAccessibilityLabel:&*NSString::from_str(value)];
         let _: () = msg_send![parent,addSubview:&*field];
+        Retained::as_ptr(&field) as Obj
+    }
+}
+
+extern "C-unwind" fn tab_button_reset_cursor_rects(button: Obj, _: Sel) {
+    unsafe {
+        let _: () = msg_send![super(button, class!(NSButton)), resetCursorRects];
+        let cursor: Obj = msg_send![class!(NSCursor), openHandCursor];
+        let visible: NSRect = msg_send![button, visibleRect];
+        let _: () = msg_send![button, addCursorRect:visible, cursor:cursor];
+    }
+}
+
+extern "C-unwind" fn tab_button_will_move_to_window(button: Obj, _: Sel, window: Obj) {
+    unsafe {
+        release_tab_cursor_in_view(button);
+        let _: () = msg_send![super(button, class!(NSButton)), viewWillMoveToWindow:window];
+    }
+}
+
+/// Restore only the cursor stack entry owned by this recognizer, once. The
+/// receiver is alive throughout native event delivery and strip teardown.
+unsafe fn release_tab_pan_cursor(gesture: Obj) {
+    unsafe {
+        if gesture.is_null() {
+            return;
+        }
+        let Some(ivar) = (*gesture).class().instance_variable(c"cursorPushed") else {
+            return;
+        };
+        let pushed = ivar.load_ptr::<u8>(&*gesture);
+        if pushed.read() != 0 {
+            pushed.write(0);
+            let _: () = msg_send![class!(NSCursor), pop];
+        }
+    }
+}
+
+unsafe fn push_tab_pan_cursor(gesture: Obj) {
+    unsafe {
+        let ivar = (*gesture)
+            .class()
+            .instance_variable(c"cursorPushed")
+            .unwrap();
+        let pushed = ivar.load_ptr::<u8>(&*gesture);
+        if pushed.read() == 0 {
+            let cursor: Obj = msg_send![class!(NSCursor), closedHandCursor];
+            let _: () = msg_send![cursor, push];
+            pushed.write(1);
+        }
+    }
+}
+
+/// Window ordering does not detach its content view. Explicitly release the
+/// cursor on hide/drop as well as on NSView removal and recognizer cancellation.
+unsafe fn release_tab_cursor_in_view(view: Obj) {
+    unsafe {
+        if view.is_null() {
+            return;
+        }
+        let button: bool = msg_send![view, isKindOfClass:tab_button_class()];
+        if button {
+            let gestures: Obj = msg_send![view, gestureRecognizers];
+            let gesture: Obj = msg_send![gestures, firstObject];
+            release_tab_pan_cursor(gesture);
+            return;
+        }
+        let children: Obj = msg_send![view, subviews];
+        let count: usize = msg_send![children, count];
+        for index in 0..count {
+            let child: Obj = msg_send![children, objectAtIndex:index];
+            release_tab_cursor_in_view(child);
+        }
+    }
+}
+
+unsafe fn snapshot_tab_modifiers(gesture: Obj, event: Obj) {
+    unsafe {
+        let flags: usize = msg_send![event, modifierFlags];
+        (*gesture)
+            .class()
+            .instance_variable(c"dragModifiers")
+            .unwrap()
+            .load_ptr::<usize>(&*gesture)
+            .write(flags);
     }
 }
 
@@ -5602,6 +5911,14 @@ fn tab_button_class() -> &'static AnyClass {
         builder.add_method(
             sel!(rightMouseDown:),
             tab_button_right_down as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(resetCursorRects),
+            tab_button_reset_cursor_rects as extern "C-unwind" fn(Obj, Sel),
+        );
+        builder.add_method(
+            sel!(viewWillMoveToWindow:),
+            tab_button_will_move_to_window as extern "C-unwind" fn(Obj, Sel, Obj),
         );
         builder.register()
     });
@@ -5662,6 +5979,8 @@ fn tab_pan_class() -> &'static AnyClass {
             ClassBuilder::new(c"AMSpaceTabPan", class!(NSPanGestureRecognizer)).unwrap();
         builder.add_ivar::<NSPoint>(c"pressOrigin");
         builder.add_ivar::<u8>(c"recognizedPan");
+        builder.add_ivar::<u8>(c"cursorPushed");
+        builder.add_ivar::<usize>(c"dragModifiers");
         builder.add_method(
             sel!(mouseDown:),
             tab_pan_down as extern "C-unwind" fn(Obj, Sel, Obj),
@@ -5670,12 +5989,39 @@ fn tab_pan_class() -> &'static AnyClass {
             sel!(mouseDragged:),
             tab_pan_moved as extern "C-unwind" fn(Obj, Sel, Obj),
         );
+        builder.add_method(
+            sel!(mouseUp:),
+            tab_pan_up as extern "C-unwind" fn(Obj, Sel, Obj),
+        );
+        builder.add_method(
+            sel!(dragModifierFlags),
+            tab_pan_modifiers as extern "C-unwind" fn(Obj, Sel) -> usize,
+        );
+        builder.add_method(sel!(reset), tab_pan_reset as extern "C-unwind" fn(Obj, Sel));
+        builder.add_method(
+            sel!(setEnabled:),
+            tab_pan_set_enabled as extern "C-unwind" fn(Obj, Sel, objc2::runtime::Bool),
+        );
         builder.register()
     });
     *CLASS
 }
+
+extern "C-unwind" fn tab_pan_modifiers(gesture: Obj, _: Sel) -> usize {
+    unsafe {
+        (*gesture)
+            .class()
+            .instance_variable(c"dragModifiers")
+            .unwrap()
+            .load_ptr::<usize>(&*gesture)
+            .read()
+    }
+}
+
 extern "C-unwind" fn tab_pan_down(gesture: Obj, _: Sel, event: Obj) {
     unsafe {
+        release_tab_pan_cursor(gesture);
+        snapshot_tab_modifiers(gesture, event);
         let origin: NSPoint = msg_send![event, locationInWindow];
         let ivar = (*gesture)
             .class()
@@ -5690,8 +6036,12 @@ extern "C-unwind" fn tab_pan_down(gesture: Obj, _: Sel, event: Obj) {
         let _: () = msg_send![super(gesture, class!(NSPanGestureRecognizer)),mouseDown:event];
     }
 }
+
 extern "C-unwind" fn tab_pan_moved(gesture: Obj, _: Sel, event: Obj) {
     unsafe {
+        // AppKit may synchronously call the target from super. Capture this
+        // event's flags before that callback, not after an eventual AX reentry.
+        snapshot_tab_modifiers(gesture, event);
         let state: isize = msg_send![gesture, state];
         if state == 0 {
             let ivar = (*gesture)
@@ -5702,8 +6052,7 @@ extern "C-unwind" fn tab_pan_moved(gesture: Obj, _: Sel, event: Obj) {
             let point: NSPoint = msg_send![event, locationInWindow];
             let dx = point.x - origin.x;
             let dy = point.y - origin.y;
-            // NSPan recognizes a one-point movement on macOS. Keep small hand
-            // jitter as a normal button click rather than detaching a window.
+            // Preserve clicks and small hand jitter below six points.
             if dx * dx + dy * dy < 36. {
                 return;
             }
@@ -5712,8 +6061,39 @@ extern "C-unwind" fn tab_pan_moved(gesture: Obj, _: Sel, event: Obj) {
                 .instance_variable(c"recognizedPan")
                 .unwrap();
             recognized.load_ptr::<u8>(&*gesture).write(1);
+            push_tab_pan_cursor(gesture);
         }
         let _: () = msg_send![super(gesture, class!(NSPanGestureRecognizer)),mouseDragged:event];
+        let state: isize = msg_send![gesture, state];
+        if matches!(state, 3..=5) {
+            release_tab_pan_cursor(gesture);
+        }
+    }
+}
+
+extern "C-unwind" fn tab_pan_up(gesture: Obj, _: Sel, event: Obj) {
+    unsafe {
+        snapshot_tab_modifiers(gesture, event);
+        let _: () = msg_send![super(gesture, class!(NSPanGestureRecognizer)),mouseUp:event];
+        release_tab_pan_cursor(gesture);
+    }
+}
+
+extern "C-unwind" fn tab_pan_reset(gesture: Obj, _: Sel) {
+    unsafe {
+        release_tab_pan_cursor(gesture);
+        // recognizedPan intentionally survives reset: cancellation can replay
+        // a delayed mouseDown into the NSButton, which must not become a click.
+        let _: () = msg_send![super(gesture, class!(NSPanGestureRecognizer)), reset];
+    }
+}
+
+extern "C-unwind" fn tab_pan_set_enabled(gesture: Obj, _: Sel, enabled: objc2::runtime::Bool) {
+    unsafe {
+        if !enabled.as_bool() {
+            release_tab_pan_cursor(gesture);
+        }
+        let _: () = msg_send![super(gesture, class!(NSPanGestureRecognizer)), setEnabled:enabled];
     }
 }
 
@@ -5734,6 +6114,9 @@ unsafe fn strip_content(
         let parent = Retained::as_ptr(&root) as Obj;
         let mut x = 4.;
         let mut selected = NSRect::ZERO;
+        let drag_help = NSString::from_str(crate::i18n::tr(
+            "Arrastra para reordenar o colocar; mantén ⌥ para no apilar.",
+        ));
         for (index, ((name, icon), id)) in tabs.iter().zip(members).enumerate() {
             let width = tab_width(name);
             let plate = rect(x, 0., width, TAB_BAR_HEIGHT);
@@ -5759,7 +6142,9 @@ unsafe fn strip_content(
                 );
                 ptr::null_mut()
             };
-            let inner = x + 6.;
+            let grip = caption(parent, rect(x + 6., 4., 8., 14.), "⠿", false);
+            let _: () = msg_send![grip, setAccessibilityElement:false];
+            let inner = x + 6. + TAB_GRIP_WIDTH;
             let mut text_x = inner;
             if let Some(icon) = icon {
                 // A neutral compact backing keeps monochrome app icons legible
@@ -5795,6 +6180,7 @@ unsafe fn strip_content(
             let _: () = msg_send![&button,setTransparent:true];
             let _: () = msg_send![&button,setTitle:&*NSString::from_str(name)];
             let _: () = msg_send![&button,setToolTip:&*NSString::from_str(name)];
+            let _: () = msg_send![&button,setAccessibilityHelp:&*drag_help];
             let _: () = msg_send![&button,setTag:*id as isize];
             let _: () = msg_send![&button,setTarget:target];
             let _: () = msg_send![&button,setAction:sel!(selectTileTab:)];
@@ -6066,9 +6452,14 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 crate::i18n::tr("Colocar aquí")
             };
             let font = if width >= 240. { 18. } else { 12. };
-            let title_height = 24f64.min(height);
-            let status_height = if !hint.available[index] && height >= 100. {
-                18.
+            let reason = hint.reasons[index];
+            let title_height = if reason.is_some() && height < 80. {
+                0.
+            } else {
+                24f64.min(height)
+            };
+            let status_height = if reason.is_some() {
+                (height - title_height - 8.).clamp(0., 60.)
             } else {
                 0.
             };
@@ -6112,12 +6503,15 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 let label = crate::native::label(
                     plate,
                     rect(4., bottom, (width - 8.).max(0.), status_height),
-                    crate::i18n::tr("No disponible"),
-                    12.,
+                    reason.unwrap_or_default(),
+                    if width >= 240. { 12. } else { 10. },
                     0.,
                     false,
                 );
                 let _: () = msg_send![label, setAlignment:1isize];
+                let _: () = msg_send![label, setUsesSingleLineMode:false];
+                let _: () = msg_send![label, setLineBreakMode:0isize];
+                let _: () = msg_send![label, setMaximumNumberOfLines:0isize];
                 let _: () = msg_send![label, setTextColor:tint];
             }
             if icon_size > 0. {
@@ -6189,8 +6583,11 @@ fn tab_reorder_target(
     Some((index, marker))
 }
 
+const TAB_GRIP_WIDTH: f64 = 12.;
+
 fn tab_width(name: &str) -> f64 {
-    (name.chars().count() as f64 * 6.4 + 56.).clamp(52., 242.)
+    (name.chars().count() as f64 * 6.4 + 56. + TAB_GRIP_WIDTH)
+        .clamp(52. + TAB_GRIP_WIDTH, 242. + TAB_GRIP_WIDTH)
 }
 
 fn strip_width(widths: impl Iterator<Item = f64>) -> f64 {
@@ -10085,6 +10482,113 @@ mod tests {
         );
         assert_eq!(current.tab_strip(2), proposed.tab_strip(2));
         assert_eq!(current.order, proposed.order);
+    }
+
+    /// The shared `Colocar en…` inventory: one row per final independent slot
+    /// of the virtual layout, a stable index for the native tag, and a concrete
+    /// reason instead of a dropped row when the real minima tighten.
+    #[test]
+    fn placement_targets_cover_every_final_slot_and_name_a_tightened_limit() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let desktop = contract_desktop(area)
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let mut manager = Manager {
+            active_areas: vec![((1, 7), area)],
+            ..Manager::default()
+        };
+        manager.desktops.insert((1, 7), desktop.clone());
+        let context = TabContext {
+            id: 2,
+            pid: 42,
+            workspace: (1, 7),
+            baseline: desktop.clone(),
+            area,
+        };
+        let (_, targets) = tab_drag_layout(&desktop, 2, area);
+        let open = manager.tab_placement_targets(&context);
+        assert_eq!(open.len(), targets.len());
+        for (position, entry) in open.iter().enumerate() {
+            assert_eq!(entry.index, position);
+            assert!(entry.unavailable.is_none());
+            assert!(entry.title.contains(&(position + 1).to_string()));
+        }
+        // A second open is the same inventory, so every native menu tag still
+        // maps to its own final slot.
+        let again = manager.tab_placement_targets(&context);
+        assert_eq!(again.len(), open.len());
+        for (first, second) in open.iter().zip(&again) {
+            assert_eq!(first.index, second.index);
+            assert_eq!(first.unavailable, second.unavailable);
+        }
+        let model = manager.desktops[&(1, 7)].clone();
+        // One learned app minimum disables every row with the same concrete
+        // reason, without dropping rows or rewriting the tree.
+        manager.minimum_sizes.insert(
+            2,
+            objc2_foundation::NSSize::new(area.size.width + 100., area.size.height + 100.),
+        );
+        let tight = manager.tab_placement_targets(&context);
+        assert_eq!(
+            tight.len(),
+            open.len(),
+            "a tightened minimum must keep every row"
+        );
+        assert!(
+            tight
+                .iter()
+                .all(|entry| entry.unavailable == Some(MINIMUM_CAPACITY))
+        );
+        assert!(
+            manager.desktops[&(1, 7)] == model,
+            "listing must not write the model"
+        );
+    }
+
+    /// A menu opened before a model/area change must produce no rows at all,
+    /// so `Place(index)` can never target a slot of another distribution.
+    #[test]
+    fn stale_placement_context_offers_no_slot_and_writes_nothing() {
+        let area = rect(-900., 40., 1800., 1200.);
+        let desktop = contract_desktop(area)
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let mut manager = Manager {
+            active_areas: vec![((1, 7), area)],
+            ..Manager::default()
+        };
+        manager.desktops.insert((1, 7), desktop.clone());
+        let context = TabContext {
+            id: 2,
+            pid: 42,
+            workspace: (1, 7),
+            baseline: desktop.clone(),
+            area,
+        };
+        assert!(!manager.tab_placement_targets(&context).is_empty());
+        let model = manager.desktops[&(1, 7)].clone();
+        manager.desktops.insert(
+            (1, 7),
+            desktop
+                .proposed_drop(
+                    desktop.order[0],
+                    DropIntent::Window(desktop.order[1], Zone::Center),
+                    area,
+                    10.,
+                )
+                .unwrap(),
+        );
+        assert!(
+            manager.tab_placement_targets(&context).is_empty(),
+            "a changed tree must invalidate every captured index"
+        );
+        manager.desktops.insert((1, 7), model.clone());
+        manager.active_areas[0].1.size.width -= 20.;
+        assert!(
+            manager.tab_placement_targets(&context).is_empty(),
+            "a changed area must invalidate every captured index"
+        );
+        assert!(manager.desktops[&(1, 7)] == model);
     }
 
     #[test]

@@ -52,7 +52,7 @@ extern "C-unwind" fn command(_: Obj, _: Sel, value: Obj) {
 
 pub fn run_fixture() {
     std::thread::spawn(|| {
-        std::thread::sleep(Duration::from_secs(90));
+        std::thread::sleep(Duration::from_secs(180));
         unsafe { libc::_exit(0) }
     });
     unsafe {

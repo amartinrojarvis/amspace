@@ -64,13 +64,8 @@ fn api() -> Option<&'static Api> {
 pub fn available() -> bool {
     api().is_some()
 }
-pub fn activation_needed(
-    front_pid: i32,
-    applied: Option<(i32, u32)>,
-    pid: i32,
-    window: u32,
-) -> bool {
-    front_pid != pid || applied != Some((pid, window))
+pub fn activation_needed(front_pid: i32, focused: Option<u32>, pid: i32, window: u32) -> bool {
+    front_pid != pid || focused != Some(window)
 }
 pub fn in_visible_space(window_space: Option<u64>, visible: &[u64]) -> bool {
     !visible.is_empty() && window_space.is_none_or(|space| visible.contains(&space))
@@ -120,13 +115,13 @@ fn activation(process: &Process, window: u32, active: bool) -> bool {
 /// Deactivate the previous sibling before a delayed activation. AppKit needs a
 /// separate run-loop turn (40 ms for some apps) to process the two transitions.
 pub fn deactivate(pid: i32, previous: u32) -> bool {
-    if secure_input() || crate::desktop_mode::active() {
+    if !crate::accessibility::trusted() || secure_input() || crate::desktop_mode::active() {
         return false;
     }
     process(pid).is_some_and(|p| activation(&p, previous, false))
 }
 pub fn activate(pid: i32, window: u32, sibling: bool) -> bool {
-    if secure_input() || crate::desktop_mode::active() {
+    if !crate::accessibility::trusted() || secure_input() || crate::desktop_mode::active() {
         return false;
     }
     let (Some(api), Some(process)) = (api(), process(pid)) else {
@@ -229,9 +224,9 @@ mod tests {
     }
     #[test]
     fn same_application_is_not_evidence_that_the_requested_window_has_focus() {
-        assert!(!super::activation_needed(7, Some((7, 20)), 7, 20));
-        assert!(super::activation_needed(7, Some((7, 20)), 7, 21));
-        assert!(super::activation_needed(7, Some((7, 20)), 8, 20));
+        assert!(!super::activation_needed(7, Some(20), 7, 20));
+        assert!(super::activation_needed(7, Some(20), 7, 21));
+        assert!(super::activation_needed(7, Some(20), 8, 20));
         assert!(super::activation_needed(7, None, 7, 20));
     }
 }

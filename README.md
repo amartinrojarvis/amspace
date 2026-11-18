@@ -55,6 +55,8 @@ Abre el **DMG**, arrastra AMSpace a **Aplicaciones** y lee **Léeme primero.rtf*
 
 **El indicador de escritorios funciona sin Accesibilidad; cambiar de escritorio con un clic requiere ese permiso.** No se necesita Grabación de pantalla ni Monitorización de entrada. Accesibilidad se usa para consultar ventanas, recibir cambios de foco, activar ventanas y enviar el cambio nativo al escritorio solicitado.
 
+Si Borde, Foco o Mosaico ya estaban habilitados, conceder Accesibilidad reactiva esas funciones sin tener que mover, abrir o cerrar otra ventana. No se activan funciones que hayas dejado deshabilitadas o pausadas.
+
 ## Actualizar desde AMSpace
 
 En ajustes → **General**, pulsa **Buscar ahora**, revisa las novedades y elige **Instalar actualización**. AMSpace descarga, comprueba la firma, sustituye su paquete y se reinicia conservando tus preferencias. Si no hay novedades, lo indica. Puedes activar **Buscar actualizaciones automáticamente** para recibir avisos diarios; no se instala sin tu intervención.
@@ -118,11 +120,11 @@ Las colocaciones del mosaico se interpolan con una curva suave (160 ms, una escr
 
 ### Pestañas y ayudas
 
-- **Clic derecho o Control-clic en una pestaña:** separar del grupo, hacer flotante, mover a otro grupo del mismo escritorio y pantalla, o cerrar la ventana. El cierre respeta las confirmaciones de guardar de la aplicación; no fuerza su terminación.
+- **Clic derecho o Control-clic en una pestaña:** **Colocar en…** permite elegir su posición independiente; también puedes separar del grupo, hacer flotante, mover a otro grupo del mismo escritorio y pantalla, o cerrar la ventana. El cierre respeta las confirmaciones de guardar de la aplicación; no fuerza su terminación.
 - **Atajos configurables en Ajustes → Atajos:** pestaña anterior, siguiente y separar la activa. Inicialmente desactivados; sus combinaciones propuestas son `⌃⌥←`, `⌃⌥→` y `⌃⌥D`. La edición rechaza conflictos internos sin perder la configuración anterior.
 - **Pausar Mosaico:** botón siempre visible en la barra lateral de Ajustes y acción en el menú de pestañas. Conserva la distribución, cancela las colocaciones pendientes y detiene su temporizador y monitor de arrastre. Mientras está pausado no se reorganizan ni trasladan ventanas desde AMSpace. Borde, foco y navegación de escritorios siguen siendo independientes. La pausa dura hasta reanudar o cerrar la app; no cambia la preferencia de activación.
 - **Ayuda inicial desactivable:** instalación, permisos, privacidad y gestos en una ventana nativa. Se puede volver a abrir desde General → Instalación y ayuda. La casilla «Mostrar ayudas en los primeros usos» controla las ayudas iniciales, no los avisos de error.
-- **Motivos concretos:** los destinos incompatibles explican capacidad o tamaños mínimos; las operaciones rechazadas muestran un aviso temporal incluso con Ajustes cerrado. No hay sondeo nuevo para la guía, los menús o los avisos.
+- **Motivos concretos:** durante el arrastre, un destino incompatible explica su límite de pestañas o tamaño mínimo sin resaltarse como válido. Las operaciones rechazadas muestran un aviso temporal incluso con Ajustes cerrado. No hay sondeo nuevo para la guía, los menús o los avisos.
 - **Color integrado:** la pestaña activa utiliza el color elegido para el borde, oscurecido solo cuando hace falta para mantener el contraste del título y del cierre. El icono conserva sus colores originales sobre una base neutra. El color se calcula al cambiar la preferencia y se aplica a los controles existentes, sin sondeo ni consultas adicionales de títulos.
 
 La agrupación conserva el límite configurable de **5 pestañas** por defecto (2–20), la barra exterior y la separación por arrastre. Reducir el máximo no disuelve grupos existentes.
@@ -200,6 +202,10 @@ Al arrastrar entre huecos del mismo mosaico, el destino muestra **las dos zonas 
 Desde la versión 0.9.8 las pestañas se sitúan en una barra oscura translúcida de **22 puntos**, **por encima del borde superior de la ventana**, con 4 puntos de separación. El mosaico reserva ese espacio dentro del hueco: no tapa los controles de la aplicación, las ventanas vecinas ni el menú. La pestaña activa queda resaltada; los grupos de una sola ventana recuperan todo el alto.
 
 Haz clic en una pestaña para activar y elevar esa ventana. **Arrástrala dentro de la barra para reordenarla**: una marca indica la posición de inserción, sin cambiar la ventana activa ni su tamaño. **Fuera de la barra, elige cualquiera de los huecos finales de la plantilla**: la previsualización sigue el puntero y soltar confirma esa posición, también con una pestaña inactiva. El tercio superior de otro hueco permite apilarla allí si **Agrupar como pestañas** está activo; la parte inferior permite colocarla como ventana independiente. Ya no hay un único destino fijo de separación. Solo se resaltan propuestas que respetan los mínimos de las aplicaciones y el límite del grupo. Volver a la barra antes de soltar sigue siendo reordenar; salir del área de origen cancela. Un movimiento menor de 6 puntos sigue siendo un clic. Si no cabe otra ventana independiente, sigue siendo posible reordenar, apilar en un grupo compatible o hacer flotante. Si no caben todos los títulos, desplaza horizontalmente la tira; durante el arrastre, mover el puntero junto a sus extremos desplaza el contenido. Las agrupaciones y su orden duran la sesión, no se guardan como parte de las plantillas.
+
+El **asa de la pestaña** y el cursor de mano indican dónde agarrarla; también puedes arrastrar desde su título. Mantén **⌥** fuera de la barra para colocarla como ventana independiente incluso en el tercio superior; al soltar ⌥ vuelve la agrupación normal. Se respeta el modificador del evento de soltado, no el del último hover. La zona flotante y la reordenación siguen funcionando igual.
+
+Como alternativa al arrastre, **Colocar en…** ofrece todas las posiciones finales de la plantilla. Las que no caben muestran el motivo y están deshabilitadas. Si la distribución o el área cambian mientras está abierto el menú, la selección antigua se rechaza en vez de colocar la ventana en otra posición.
 
 También puedes llevar la pestaña hasta **Hacer flotante**, en el centro superior de la pantalla de su pila, y soltar: sale del grupo con el tamaño y centrado de una flotante. Funciona aunque no quepa otro hueco tiled. Volver a la barra antes de soltar sigue siendo reordenar. El ajuste **Zona superior: flotante / mosaico** desactiva ese destino; el arrastre de pestañas no traslada por sí solo ventanas a otros monitores. Para ese traslado, arrastra la ventana por su barra de título o usa las acciones de envío.
 

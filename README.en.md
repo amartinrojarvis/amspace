@@ -55,6 +55,8 @@ Open the **DMG**, drag AMSpace to **Applications** and read **Léeme primero.rtf
 
 **The desktop indicator works without Accessibility; switching desktops with a click requires that permission.** Screen Recording and Input Monitoring are not needed. Accessibility is used to query windows, receive focus changes, activate windows and send the native switch to the requested desktop.
 
+If Border, Focus or Tiling was already enabled, granting Accessibility reactivates those features without moving, opening or closing another window. Disabled or paused features remain off.
+
 ## Update from AMSpace
 
 In settings → **General**, press **Check now**, review the news and choose **Install update**. AMSpace downloads, verifies the signature, replaces its package and restarts keeping your preferences. If there is nothing new, it says so. You can enable **Check for updates automatically** to receive daily notices; nothing is installed without your intervention.
@@ -118,11 +120,11 @@ The mosaic placements are interpolated with a smooth curve (160 ms, one write pe
 
 ### Tabs and helpers
 
-- **Right-click or Control-click on a tab:** detach from the group, make floating, move to another group of the same desktop and screen, or close the window. Closing respects the applications' save confirmations; it does not force their termination.
+- **Right-click or Control-click on a tab:** **Place in…** chooses its independent position; you can also detach from the group, make floating, move to another group of the same desktop and screen, or close the window. Closing respects the applications' save confirmations; it does not force their termination.
 - **Configurable shortcuts in Settings → Shortcuts:** previous tab, next tab and detach the active one. Initially off; their proposed combinations are `⌃⌥←`, `⌃⌥→` and `⌃⌥D`. Editing rejects internal conflicts without losing the previous configuration.
 - **Pause Tiling:** button always visible in the Settings sidebar and an action in the tabs menu. It keeps the layout, cancels pending placements and stops its timer and drag monitor. While paused, windows are not reorganized or moved from AMSpace. Border, focus and desktop navigation remain independent. The pause lasts until resuming or closing the app; it does not change the activation preference.
 - **Disablable initial help:** installation, permissions, privacy and gestures in a native window. It can be reopened from General → Installation and help. The "Show help on first uses" checkbox controls the initial help, not the error notices.
-- **Concrete reasons:** incompatible destinations explain capacity or minimum sizes; rejected operations show a temporary notice even with Settings closed. There is no new polling for the guide, the menus or the notices.
+- **Concrete reasons:** during a drag, an incompatible destination explains its tab limit or minimum size without being highlighted as valid. Rejected operations show a temporary notice even with Settings closed. There is no new polling for the guide, the menus or the notices.
 - **Integrated color:** the active tab uses the color chosen for the border, darkened only when needed to keep the contrast of the title and the close. The icon keeps its original colors on a neutral base. The color is computed when the preference changes and applied to the existing controls, without polling nor additional title queries.
 
 Grouping keeps the configurable limit of **5 tabs** by default (2–20), the outer bar and the separation by dragging. Reducing the maximum does not dissolve existing groups.
@@ -200,6 +202,10 @@ When dragging between slots in the same layout, the destination shows **both dro
 From version 0.9.8 the tabs sit in a translucent dark bar of **22 points**, **above the window's top edge**, with 4 points of separation. The mosaic reserves that space inside the slot: it does not cover the application's controls, the neighboring windows nor the menu. The active tab is highlighted; single-window groups recover the full height.
 
 Click a tab to activate and raise its window. **Drag within the strip to reorder it**: an insertion marker shows the destination without changing the active window or its size. **Outside the strip, choose any final slot in the template**: the preview follows the pointer and releasing confirms that position, including an inactive tab. The top third of another slot groups it there when **Group as tabs** is enabled; the lower part places it as an independent window. Detachment no longer has one fixed destination. Only proposals respecting application minimum sizes and group capacity are highlighted. Returning to the strip still reorders; leaving the source area cancels. Movements below 6 points remain clicks. When another independent window cannot fit, reordering, joining a compatible group or making floating remain available. Scroll horizontally when titles do not fit; while dragging, moving the pointer near either end scrolls the content. Groups and tab order last for the session and are not saved in templates.
+
+The **tab grip** and hand cursor show where to grab it; dragging the title also works. Hold **⌥** outside the strip to place it independently even in the top third; releasing ⌥ restores normal grouping. The release event's modifier decides, not the last hover. The floating zone and reordering keep their existing behavior.
+
+As an alternative to dragging, **Place in…** offers every final position in the template. Positions that cannot fit display their reason and are disabled. If the layout or usable area changes while the menu is open, the stale choice is rejected rather than placing the window somewhere else.
 
 You can also drag a tab onto **Make floating**, at the top center of its group's display, and release: it leaves the group using the floating size and centering. This works even when another tiled slot would not fit. Returning to the strip before releasing still reorders. **Top zone: floating / tiling** disables that destination; dragging a tab does not itself transfer windows to other displays. For that transfer, drag the window by its title bar or use the transfer actions.
 

@@ -8,7 +8,11 @@ const MAX_AGE: Duration = Duration::from_millis(350);
 pub(super) enum Action {
     Select,
     Close,
-    Drag { state: isize, location: NSPoint },
+    Drag {
+        state: isize,
+        location: NSPoint,
+        independent: bool,
+    },
 }
 struct Delivery {
     button: Retained<AnyObject>,
@@ -176,31 +180,32 @@ pub(super) fn pending_count() -> usize {
 mod tests {
     use super::*;
 
-    fn pan(button: &Retained<AnyObject>, state: isize, x: f64) -> Delivery {
+    fn pan(button: &Retained<AnyObject>, state: isize, x: f64, independent: bool) -> Delivery {
         Delivery {
             button: button.clone(),
             action: Action::Drag {
                 state,
                 location: NSPoint::new(x, 20.),
+                independent,
             },
             queued: Instant::now(),
         }
     }
 
     #[test]
-    fn motion_burst_preserves_original_press_and_final_release_points() {
+    fn motion_burst_preserves_press_release_and_latest_modifiers() {
         let button: Retained<AnyObject> = unsafe { msg_send![class!(NSObject), new] };
         let mut pending = Deliveries::new();
-        pending.push(pan(&button, 1, 10.));
+        pending.push(pan(&button, 1, 10., false));
         for x in 0..10_000 {
-            pending.push(pan(&button, 2, x as f64));
+            pending.push(pan(&button, 2, x as f64, x % 2 == 1));
         }
-        pending.push(pan(&button, 3, 12_000.));
-        for (phase, x) in [(1, 10.), (2, 9_999.), (3, 12_000.)] {
+        pending.push(pan(&button, 3, 12_000., false));
+        for (phase, x, independent) in [(1, 10., false), (2, 9_999., true), (3, 12_000., false)] {
             let event = pending.pop().unwrap();
             assert!(Retained::as_ptr(&event.button) == Retained::as_ptr(&button));
             assert!(
-                matches!(event.action, Action::Drag { state, location } if state == phase && location.x == x)
+                matches!(event.action, Action::Drag { state, location, independent: actual } if state == phase && location.x == x && actual == independent)
             );
         }
         assert!(pending.pop().is_none());
@@ -211,11 +216,11 @@ mod tests {
     fn an_expired_pan_discards_its_release_and_requests_cancellation() {
         let button: Retained<AnyObject> = unsafe { msg_send![class!(NSObject), new] };
         let mut pending = Deliveries::new();
-        let mut began = pan(&button, 1, 10.);
+        let mut began = pan(&button, 1, 10., false);
         began.queued -= MAX_AGE;
         pending.push(began);
-        pending.push(pan(&button, 2, 50.));
-        pending.push(pan(&button, 3, 80.));
+        pending.push(pan(&button, 2, 50., true));
+        pending.push(pan(&button, 3, 80., false));
         pending.expire();
         assert!(pending.cancel_drag);
         assert!(pending.pop().is_none());
@@ -226,12 +231,12 @@ mod tests {
         let button: Retained<AnyObject> = unsafe { msg_send![class!(NSObject), new] };
         let mut pending = Deliveries::new();
         for _ in 0..CAPACITY {
-            pending.push(pan(&button, 1, 10.));
+            pending.push(pan(&button, 1, 10., false));
         }
-        pending.push(pan(&button, 3, 80.));
+        pending.push(pan(&button, 3, 80., false));
         assert!(pending.cancel_drag);
         assert!(pending.pop().is_none());
-        pending.push(pan(&button, 1, 100.));
+        pending.push(pan(&button, 1, 100., false));
         assert!(matches!(
             pending.pop().unwrap().action,
             Action::Drag { state: 1, .. }

@@ -412,8 +412,8 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
         let result = (|| -> Result<(), String> {
             APP.with(|cell| {
                 let _borrowed = cell.borrow_mut();
-                mouse_delivery::enqueue(target_ptr, true, NSPoint::new(100., 42.));
-                mouse_delivery::enqueue(target_ptr, false, NSPoint::new(800., 42.));
+                mouse_delivery::enqueue(target_ptr, true, NSPoint::new(100., 42.), None);
+                mouse_delivery::enqueue(target_ptr, false, NSPoint::new(800., 42.), None);
                 pump(0.025);
                 if mouse_delivery::pending_count() != 2 {
                     return Err("Native mouse boundaries were lost during AX reentry.".to_owned());
@@ -427,6 +427,8 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             println!(
                 "Mouse delivery: native press/release retained through nested AppKit delivery and drained in order."
             );
+            check_permission_recovery(target_ptr, &defaults)?;
+            check_power_reentry(target_ptr, &defaults)?;
             APP.with(|cell| {
                 let mut borrowed = cell.borrow_mut();
                 borrowed.as_mut().unwrap().sleeping = false;
@@ -553,6 +555,11 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
         crate::desktop_mode::update(crate::desktop_mode::Mode::Normal);
         mouse_delivery::clear(target_ptr);
         if let Some(mut app) = APP.with(|cell| cell.borrow_mut().take()) {
+            app.stop_permission_watch();
+            if let Some(timer) = app.tile_timer.take() {
+                let _: () = msg_send![&timer, invalidate];
+            }
+            app.tile_mouse = None;
             app.hide_flash();
             if let Some(timer) = app.presentation_timer.take() {
                 let _: () = msg_send![&timer, invalidate];
@@ -563,6 +570,173 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
         let _: () = msg_send![&*defaults, removePersistentDomainForName:&*suite];
         result
     }
+}
+
+fn check_permission_recovery(target: Obj, defaults: &AnyObject) -> Result<(), String> {
+    if !ax::trusted() {
+        println!(
+            "SKIP permission recovery: this diagnostic process has no Accessibility grant; TCC was not changed."
+        );
+        return Ok(());
+    }
+    unsafe {
+        let _: () = msg_send![defaults, setBool:true, forKey:ns_string!("tile.enabled")];
+        APP.with(|cell| -> Result<(), String> {
+            let mut borrowed = cell.borrow_mut();
+            let app = borrowed.as_mut().unwrap();
+            app.sleeping = false;
+            app.hover_enabled = false;
+            app.permission_trusted = false;
+            app.permission_deadline = Some(Instant::now() + Duration::from_secs(300));
+            if !app.refresh_permission()
+                || !app.permission_trusted
+                || app.permission_deadline.is_some()
+                || app.tile_timer.is_none()
+                || app.tile_mouse.is_none()
+            {
+                return Err(
+                    "Conceder AX no arrancó el motor/monitor sin actividad de ventanas.".into(),
+                );
+            }
+            // Never run global reconciliation: cancel both the first-cycle
+            // selector and clock before yielding this borrowed main-thread turn.
+            app.tiling_paused = true;
+            app.configure_tiling();
+            if app.tile_timer.is_some() || app.tile_mouse.is_some() {
+                return Err("Pausar tras conceder AX dejó el motor activo.".into());
+            }
+            app.permission_trusted = false;
+            app.permission_deadline = Some(Instant::now() + Duration::from_secs(300));
+            permission_changed(target, sel!(permissionChanged:), ptr::null_mut());
+            pump(0.025);
+            if app.permission_trusted {
+                return Err("El callback de permisos atravesó un préstamo de APP.".into());
+            }
+            Ok(())
+        })?;
+        pump(0.035);
+        APP.with(|cell| -> Result<(), String> {
+            let mut borrowed = cell.borrow_mut();
+            let app = borrowed.as_mut().unwrap();
+            if !app.permission_trusted
+                || app.permission_deadline.is_some()
+                || app.tile_timer.is_some()
+                || app.tile_mouse.is_some()
+            {
+                return Err("La entrega AX reentrante se perdió o ignoró la pausa.".into());
+            }
+            let _: () = msg_send![defaults, setBool:false, forKey:ns_string!("tile.enabled")];
+            app.tiling_paused = false;
+            app.permission_trusted = false;
+            app.refresh_permission();
+            if app.tile_timer.is_some() || app.tile_mouse.is_some() {
+                return Err("Conceder AX activó Mosaico con su preferencia apagada.".into());
+            }
+            app.permission_deadline = Some(Instant::now() - Duration::from_secs(1));
+            Ok(())
+        })?;
+        permission_tick(target, sel!(permissionTick:), ptr::null_mut());
+        if APP.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .unwrap()
+                .permission_deadline
+                .is_some()
+        }) {
+            return Err("El seguimiento temporal de permisos sobrevivió a su plazo.".into());
+        }
+        APP.with(|cell| {
+            cell.borrow_mut().as_mut().unwrap().permission_deadline =
+                Some(Instant::now() + Duration::from_secs(300));
+        });
+        sleep(target, sel!(sleep:), ptr::null_mut());
+        if APP.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .unwrap()
+                .permission_deadline
+                .is_some()
+        }) {
+            return Err("Dormir dejó pendiente el seguimiento de permisos.".into());
+        }
+    }
+    println!(
+        "Permission recovery: real AX authority with stale unauthorized cache starts clock/monitor without window activity; deferred delivery, pause/off, expiry and sleep checked. No TCC reset and no global placement tick executed."
+    );
+    Ok(())
+}
+
+fn check_power_reentry(target: Obj, defaults: &AnyObject) -> Result<(), String> {
+    unsafe {
+        let _: () = msg_send![defaults, setBool:false, forKey:ns_string!("tile.enabled")];
+    }
+    let switch = if ax::trusted() {
+        match spaces::visible_desktops().first() {
+            Some((_, space)) => Some(space_switch::Switch::start(*space).map_err(str::to_owned)?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let had_switch = switch.is_some();
+    APP.with(|cell| -> Result<(), String> {
+        let mut borrowed = cell.borrow_mut();
+        let app = borrowed.as_mut().unwrap();
+        app.sleeping = false;
+        app.hover_enabled = false;
+        app.switching = switch;
+        sleep(target, sel!(sleep:), ptr::null_mut());
+        pump(0.025);
+        if app.sleeping {
+            return Err("Dormir atravesó el préstamo de APP durante reentrada AX.".into());
+        }
+        Ok(())
+    })?;
+    pump(0.035);
+    APP.with(|cell| -> Result<(), String> {
+        let mut borrowed = cell.borrow_mut();
+        let app = borrowed.as_mut().unwrap();
+        if !app.sleeping
+            || app.switching.is_some()
+            || app.pending_focus.is_some()
+            || app.tile_timer.is_some()
+            || app.hover_timer.is_some()
+        {
+            return Err("Dormir se perdió o dejó acciones/relojes anteriores activos.".into());
+        }
+        wake(target, sel!(wake:), ptr::null_mut());
+        pump(0.025);
+        if !app.sleeping {
+            return Err("Despertar atravesó el préstamo de APP durante reentrada AX.".into());
+        }
+        Ok(())
+    })?;
+    pump(0.035);
+    APP.with(|cell| -> Result<(), String> {
+        let borrowed = cell.borrow();
+        let app = borrowed.as_ref().unwrap();
+        if app.sleeping
+            || app.switching.is_some()
+            || app.pending_focus.is_some()
+            || app.tile_timer.is_some()
+            || app.hover_timer.is_some()
+        {
+            return Err(
+                "Despertar se perdió, reanudó una acción vieja o activó funciones deshabilitadas."
+                    .into(),
+            );
+        }
+        Ok(())
+    })?;
+    println!(
+        "Power callbacks: local sleep/wake survive AX reentry; old navigation cancelled={had_switch}; disabled tiling/hover stay off. No physical sleep, Space switch or global input."
+    );
+    if !had_switch {
+        println!(
+            "SKIP in-flight Space cancellation: no Accessibility grant or normal native desktop available."
+        );
+    }
+    Ok(())
 }
 
 /// Exercise the production × callback against a disposable foreign window.
@@ -658,6 +832,7 @@ pub(crate) enum TabPanDelivery {
     ExpiredEnd,
     Paused,
     Cancelled,
+    Modifiers { hover: bool, release: bool },
 }
 
 /// Drive the real pan recognizer and production controller, including nested AX
@@ -701,22 +876,37 @@ pub(crate) fn check_tab_pan(
         let end: NSPoint = msg_send![panel, convertPointFromScreen:NSPoint::new(destination.x, primary - destination.y)];
         let release: NSPoint = msg_send![panel, convertPointFromScreen:NSPoint::new(release_at.x, primary - release_at.y)];
         let native_app: Obj = msg_send![class!(NSApplication), sharedApplication];
-        let queue = |kind: usize, point: NSPoint| -> Result<(), String> {
+        let native_event = |kind: usize,
+                            point: NSPoint,
+                            independent: bool|
+         -> Result<Retained<AnyObject>, String> {
             let process: Obj = msg_send![class!(NSProcessInfo), processInfo];
             let uptime: f64 = msg_send![process, systemUptime];
             let event: Option<Retained<AnyObject>> = msg_send![class!(NSEvent),
-                mouseEventWithType:kind, location:point, modifierFlags:0usize,
+                mouseEventWithType:kind, location:point, modifierFlags:if independent { 1usize << 19 } else { 0 },
                 timestamp:uptime, windowNumber:number, context:ptr::null::<AnyObject>(),
                 eventNumber:0isize, clickCount:1isize, pressure:if kind == 2 { 0f32 } else { 1f32 }];
-            let event = event.ok_or("No se pudo crear el evento local de arrastre")?;
+            event.ok_or_else(|| "No se pudo crear el evento local de arrastre".into())
+        };
+        let queue = |kind: usize, point: NSPoint, independent: bool| -> Result<(), String> {
+            let event = native_event(kind, point, independent)?;
             let _: () = msg_send![native_app, postEvent:&*event, atStart:false];
             Ok(())
         };
         let result = (|| -> Result<(), String> {
-            let reentrant = matches!(delivery, TabPanDelivery::Reentrant | TabPanDelivery::Burst);
-            queue(1, start)?;
-            queue(6, NSPoint::new(start.x + 10., start.y - 8.))?;
-            queue(6, end)?;
+            let reentrant = matches!(
+                delivery,
+                TabPanDelivery::Reentrant
+                    | TabPanDelivery::Burst
+                    | TabPanDelivery::Modifiers { .. }
+            );
+            let (hover, release_option) = match delivery {
+                TabPanDelivery::Modifiers { hover, release } => (hover, release),
+                _ => (false, false),
+            };
+            queue(1, start, false)?;
+            queue(6, NSPoint::new(start.x + 10., start.y - 8.), hover)?;
+            queue(6, end, hover)?;
             if matches!(delivery, TabPanDelivery::Immediate) {
                 pump(0.035);
             } else {
@@ -755,7 +945,7 @@ pub(crate) fn check_tab_pan(
                 pump(0.035);
             }
             APP.with(|cell| inspect_preview(&cell.borrow().as_ref().unwrap().tile_manager))?;
-            queue(2, release)?;
+            queue(2, release, release_option)?;
             if reentrant || matches!(delivery, TabPanDelivery::ExpiredEnd) {
                 APP.with(|cell| -> Result<(), String> {
                     let _borrowed = cell.borrow_mut();
@@ -766,6 +956,19 @@ pub(crate) fn check_tab_pan(
                     });
                     if tab_delivery::pending_count() == 0 {
                         return Err("El fin del pan se perdió durante reentrada AX.".into());
+                    }
+                    if matches!(delivery, TabPanDelivery::Modifiers { .. }) {
+                        // Advance the native recognizer to a subsequent press,
+                        // without dispatching a second button click. Ended is
+                        // still queued behind the borrowed App.
+                        let subsequent = native_event(1, start, !release_option)?;
+                        let _: () = msg_send![gesture, mouseDown:&*subsequent];
+                        let live: usize = msg_send![gesture, dragModifierFlags];
+                        if (live & (1 << 19) != 0) == release_option {
+                            return Err(
+                                "La prueba no modificó el reconocedor después de Ended.".into()
+                            );
+                        }
                     }
                     Ok(())
                 })?;
@@ -779,7 +982,7 @@ pub(crate) fn check_tab_pan(
         // Also release AppKit tracking on an assertion/error, never inject input
         // globally or leave a recognizer holding the next test's mouse sequence.
         let _: () = msg_send![gesture, setEnabled:false];
-        let _ = queue(2, release);
+        let _ = queue(2, release, false);
         pump(0.02);
         let _: () = msg_send![gesture, setEnabled:true];
         let _: () = msg_send![gesture, setTarget:previous_target.as_deref().map_or(ptr::null_mut(), |target| target as *const AnyObject as Obj)];
