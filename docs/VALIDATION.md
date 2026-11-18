@@ -2,6 +2,8 @@
 
 - `--check-tab-close`: una ventana AX desechable salió del mosaico al soltarla en la zona superior. En el arrastre de vuelta se entregó, después del primer movimiento, un `CGEvent` con ID de destinatario y sin PID. La prueba falló en 0.9.28 al recuperar otra ventana y pasó con la consulta del propietario por ID, con y sin animación. También se rechazó un ID desaparecido. Pasaron los 246 escenarios del diagnóstico, sin entrada global ni ventanas ajenas. El fallo manual observado en Finder no se ha verificado con este bundle.
 - `./scripts/check.sh`: 288 correctas, ocho ignoradas, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado y firmado ad hoc; diagnóstico nativo en arm64.
+- Publicación estable [v0.9.29](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.29) desde `225cd4f`; [CI](https://github.com/amartinrojarvis/amspace/actions/runs/44338966231) correcta. Los cinco archivos de la release descargados sin autenticación coinciden con los firmados localmente. ZIP inmutable de `updates/0.9.29/` (`45c9503`), también descargado e idéntico: SHA-256 `d4e12855af7dd494f2fedb1bb8edbdd90510cca87ba22c17fe98de1313809212`.
+- DMG público montado en solo lectura: firma ad hoc válida, ejecutable idéntico, guía, disposición, fondo y enlace a `/Applications`. El catálogo anunciado en `322db7e` devolvió los bytes firmados y pasó la verificación de firma en ambas variantes HTTP: sin compresión y con las cabeceras de Sparkle. No se sustituyó la app instalada ni se probó la actualización desde su cliente.
 
 ## 0.9.28/build 83 — retorno de una flotante
 
