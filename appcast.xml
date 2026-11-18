@@ -1,29 +1,33 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.25</title><pubDate>Wed, 18 Nov 2026 06:50:47 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.25 — Arrastre de ventanas y destinos de pestañas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.26</title><pubDate>Wed, 18 Nov 2026 09:42:25 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.26 — Inicio, foco y arrastre de ventanas.
 
-- Una pestaña activa u oculta puede ocupar cualquier posición final de la plantilla. La preview sigue el hueco elegido; el tercio superior de otro hueco permite apilar si los grupos están habilitados.
-- El arrastre de ventanas conserva PID, ID y bounds al pulsar, antes de una entrega diferida. Esperar el punto nativo de soltado ya no depende de activar «Hacer flotante»; la reconciliación completa usa el reloj existente, no el drenaje de cada evento.
-- Un nuevo arrastre de pestaña sustituye los gestos y soltados anteriores pendientes sin ocultar su barra de origen ni bloquear el primer intento.
-- Los destinos se validan con los tamaños mínimos y límites de grupo reales. Volver a la barra reordena; salir del área de origen o cancelar no modifica el mosaico.
-- «Hacer flotante» conserva su destino explícito. No se cambia de escritorio ni pantalla de forma incidental.
-- Verificación: 284 pruebas correctas, bundle universal y 178 escenarios de arrastre con ventanas desechables; preferencias persistentes idénticas. No acredita arrastre físico en otras aplicaciones ni hardware Intel.
-- Evidencia ejecutada y límites físicos en el registro de validación enlazado al final.
+- Conceder Accesibilidad reactiva las funciones habilitadas y programa Mosaico sin esperar a mover, abrir o cerrar una ventana. Se conservan la pausa y las preferencias de activación.
+- El arrastre de ventanas conserva el destinatario del evento nativo incluso si AppKit entrega su copia cuando la ventana ya se ha movido. No se confunde con otra ventana situada en el punto antiguo.
+- El foco bajo el cursor acepta ventanas normales corroboradas por WindowServer aunque su aplicación omita el subrol AX estándar. Consulta el foco AX real, no una selección anterior, y conserva los reintentos ante respuestas transitorias.
+- Desactivar el foco cancela su activación pendiente. La suspensión no pierde su notificación durante reentrada AX y cancela cambios de escritorio y traslados pendientes; al despertar se reconcilia el estado nativo.
+- La navegación desde el indicador y el selector de plantillas respetan los traslados en curso. Los cambios de Mosaico rechazados durante un traslado restauran el valor visible del control. Las animaciones comprueban la presentación antes de cada escritura AX.
+- Los destinos incompatibles explican durante el arrastre su límite de pestañas o tamaño mínimo, sin resaltarse como válidos.
+- «Colocar en…», en el menú de cada pestaña, permite elegir cualquier posición independiente final. Las posiciones incompatibles están deshabilitadas con su motivo; un menú obsoleto no aplica otro destino.
+- El asa visible y los cursores de mano abierta/cerrada hacen reconocible el arrastre sin invadir el botón de cierre.
+- Mantener ⌥ durante el arrastre de una pestaña fuerza colocación independiente incluso en el tercio superior. Soltar ⌥ restaura la agrupación; decide el modificador del evento final. La reordenación y «Hacer flotante» mantienen sus reglas.
 
 English
 
-- Active and inactive tabs can occupy any final template slot. The preview follows the chosen slot; the top third of another slot allows stacking when groups are enabled.
-- Window drags retain PID, ID and bounds at mouse-down, before deferred delivery. Waiting for the native release point no longer depends on enabling “Make floating”; full reconciliation uses the existing timer rather than draining each input event.
-- A new tab drag supersedes earlier pending gestures and releases without hiding its source strip or blocking the first attempt.
-- Destinations are validated against actual minimum sizes and group limits. Returning to the strip reorders; leaving the source area or cancelling does not change the layout.
-- “Make floating” retains its explicit destination. No incidental Space or display switch is introduced.
-- Executed evidence and physical limits are recorded in the validation log linked below.
-- Verification: 284 passing tests, universal bundle and 178 drag scenarios using disposable windows; persistent preferences unchanged. This does not establish physical dragging in other applications or Intel hardware coverage.
+- Granting Accessibility reactivates enabled features and schedules Tiling without moving, opening or closing another window. Pause and activation preferences are preserved.
+- Window drags retain the native event recipient even when AppKit delivers its copy after the window has moved. Another window at the old point is not mistaken for the source.
+- Pointer focus accepts normal windows corroborated by WindowServer even when an application omits the standard AX subrole. It checks actual AX focus rather than a previous selection and retains retries after transient replies.
+- Disabling pointer focus cancels pending activation. Sleep notifications survive AX reentry and cancel pending desktop switches and transfers; wake reconciles native state.
+- Indicator navigation and the layout picker respect transfers in progress. Tiling edits rejected during a transfer restore the control's visible value. Animations check presentation before each AX write.
+- Incompatible drop destinations explain their tab limit or minimum size during the drag, without highlighting them as valid.
+- “Place in…” in each tab's menu chooses any final independent position. Incompatible positions are disabled with their reason; a stale menu does not apply another destination.
+- A visible grip and open/closed hand cursors make dragging discoverable without encroaching on the close button.
+- Holding ⌥ while dragging a tab forces independent placement even in the top third. Releasing ⌥ restores grouping; the final event's modifier decides. Reordering and “Make floating” retain their rules.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.25/AMSpace-universal.zip" length="3072478" type="application/octet-stream" sparkle:version="80" sparkle:shortVersionString="0.9.25" sparkle:edSignature="QfdZM4xs2tX6G8nNG5ehn05Oqbz5WI8S4BSzK/TOHbdyQ/YWC6FuI4LBmoCxjVpVDfpCiJKT4QK3pTBJYia4Dw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: FgtBX5USCnKz+imaPP/xwo9ez3ERMD64/pmC3UyjlMszvNXOwR2ahGVS11Gnm7woooYEBkq3QwHvksZh4SqfAA==
-length: 3777
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.26/AMSpace-universal.zip" length="3149535" type="application/octet-stream" sparkle:version="81" sparkle:shortVersionString="0.9.26" sparkle:edSignature="GRxMcPmbE5ySUygnqEfqF3RdutJWoCSpca+FzoH7sDg0FPkNnPCWnJPNOWUXHZAkvheLCiU7Fwxo4RYxzKphBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: tIzNqg7c1JZHkTi0qmONzArYCQSI5aajHstxmTuJ2IndWatnhzrdhyrQkcPCaKJp2wiQ35NXn/1ZIF2ynu37AA==
+length: 4830
 -->
