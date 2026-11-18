@@ -8,6 +8,7 @@ const MAX_AGE: Duration = Duration::from_millis(350);
 struct Boundary {
     down: bool,
     point: NSPoint,
+    grab: Option<crate::tile_mouse::Grab>,
     queued: Instant,
 }
 
@@ -63,11 +64,14 @@ pub(super) fn clear(target: Obj) {
 }
 
 pub(super) fn enqueue(target: Obj, down: bool, point: NSPoint) {
+    let queued = Instant::now();
+    let grab = down.then(|| crate::tile_mouse::Grab::at(point)).flatten();
     PENDING.with(|pending| {
         pending.borrow_mut().push(Boundary {
             down,
             point,
-            queued: Instant::now(),
+            grab,
+            queued,
         })
     });
     autoreleasepool(|_| drain(target, sel!(tileMouseEvent:), ptr::null_mut()));
@@ -104,6 +108,7 @@ pub(super) extern "C-unwind" fn drain(target: Obj, _: Sel, _: Obj) {
                     Retained::as_ptr(&app.defaults) as Obj,
                     event.down,
                     event.point,
+                    event.grab,
                 );
                 if let Some(error) = app.tile_manager.interaction_error.take() {
                     app.show_notice(&error);
@@ -140,6 +145,7 @@ mod tests {
             down,
             point: NSPoint::new(x, 42.),
             queued,
+            grab: None,
         }
     }
     #[test]

@@ -288,6 +288,8 @@ struct Drag {
     baseline: Desktop,
     area: NSRect,
     previews: DropPreviewCache,
+    /// Native release ownership is independent of the floating-zone preference.
+    native_captured: bool,
     /// Only a native mouse-down can opt this drag into the top drop zone.
     float_drop_enabled: bool,
     float_target: Option<(Workspace, NSRect)>,
@@ -301,6 +303,10 @@ struct TabDrag {
     panel_number: isize,
     baseline: Desktop,
     released_at: Option<Instant>,
+    destination: Option<Desktop>,
+    targets: Vec<(u32, NSRect)>,
+    intent: Option<DropIntent>,
+    grouped: bool,
     proposed: Option<Desktop>,
     reorder: Option<usize>,
     float_drop_enabled: bool,
@@ -322,6 +328,44 @@ impl TabDrag {
         self.float_hover = contains(frame, point);
         Some((frame, self.float_hover))
     }
+
+    fn update_destination(
+        &mut self,
+        point: NSPoint,
+        minimums: &HashMap<u32, objc2_foundation::NSSize>,
+        final_sample: bool,
+    ) -> bool {
+        let intent = (self.reorder.is_none() && !self.float_hover && contains(self.area, point))
+            .then(|| crate::tiling::slot_drop_intent(&self.targets, point, self.grouped))
+            .flatten()
+            .map(|intent| match intent {
+                DropIntent::Group(id) if id == self.id && self.destination.is_some() => {
+                    DropIntent::Window(id, Zone::Center)
+                }
+                _ => intent,
+            });
+        if intent == self.intent && !final_sample {
+            return false;
+        }
+        self.intent = intent;
+        self.proposed = intent.and_then(|intent| {
+            let (desktop, intent) = match intent {
+                DropIntent::Group(target) => {
+                    // The provisional independent tile does not exist yet.
+                    // Join against the original model; existing source members
+                    // preserve their order and are not subject to admission.
+                    let target = self
+                        .baseline
+                        .tab_strip(target)
+                        .map_or(target, |(members, active)| members[active]);
+                    (&self.baseline, DropIntent::Group(target))
+                }
+                _ => (self.destination.as_ref()?, intent),
+            };
+            arrival_proposal(desktop, self.id, Some(intent), self.area, Some(minimums))
+        });
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,8 +373,24 @@ pub enum TabDragOutcome {
     Rejected,
     Tracking,
     Reordered,
-    Detached,
+    Placed,
     Floated,
+}
+
+fn tab_drag_layout(
+    desktop: &Desktop,
+    id: u32,
+    area: NSRect,
+) -> (Option<Desktop>, Vec<(u32, NSRect)>) {
+    // Virtual hit boxes cover every final template position. Do not let an
+    // app minimum in the initial right-hand slot hide another slot that fits;
+    // each highlighted/committed proposal restores and validates real minima.
+    let mut virtual_layout = desktop.clone();
+    let minimums = HashMap::new();
+    virtual_layout.set_minimum_sizes(&minimums);
+    let destination = tab_detach_proposal(&virtual_layout, id, area, &minimums);
+    let targets = destination.as_ref().unwrap_or(desktop).frames(area, 10.);
+    (destination, targets)
 }
 
 fn tab_detach_proposal(
@@ -1218,6 +1278,7 @@ impl Manager {
         state: isize,
         location: NSPoint,
         float_enabled: bool,
+        grouped: bool,
     ) -> TabDragOutcome {
         use TabDragOutcome::*;
         if matches!(state, 4 | 5)
@@ -1256,10 +1317,16 @@ impl Manager {
         match state {
             1 => {
                 self.cancel_tab_drag();
-                self.pressed = true;
+                // A recognizer's Began is a new left-button gesture. A delayed
+                // native release must not veto it or later commit an old drop.
                 if self.drag.is_some() || self.pending_drop.is_some() {
-                    return Rejected;
+                    self.invalidate();
                 }
+                self.drag = None;
+                self.pending_drop = None;
+                self.gesture_candidates.clear();
+                self.mouse_release_pending = None;
+                self.pressed = true;
                 let Some(window) = self.windows.get(&id) else {
                     return Rejected;
                 };
@@ -1287,8 +1354,7 @@ impl Manager {
                 {
                     return Rejected;
                 }
-                // A strip may be reorderable even when no independent tile fits.
-                let proposed = tab_detach_proposal(desktop, id, *area, &self.minimum_sizes);
+                let (destination, targets) = tab_drag_layout(desktop, id, *area);
                 self.tab_drag = Some(TabDrag {
                     id,
                     pid: window.pid,
@@ -1297,7 +1363,11 @@ impl Manager {
                     panel_number,
                     released_at: None,
                     baseline: desktop.clone(),
-                    proposed,
+                    destination,
+                    targets,
+                    intent: None,
+                    grouped,
+                    proposed: None,
                     reorder: members.iter().position(|member| *member == id),
                     float_drop_enabled: float_enabled,
                     float_hover: false,
@@ -1314,6 +1384,7 @@ impl Manager {
                     self.cancel_tab_drag();
                     return Rejected;
                 }
+                self.tab_drag.as_mut().unwrap().grouped = grouped;
                 self.preview_tab_drag(location, state == 2, float_enabled);
                 if state == 2 {
                     return Tracking;
@@ -1321,6 +1392,7 @@ impl Manager {
                 let drag = self.tab_drag.take().unwrap();
                 self.hide_preview_panels();
                 self.hide_float_overlay();
+                self.hide_badges();
                 for strip in &mut self.strips {
                     strip.clear_marker();
                 }
@@ -1367,14 +1439,25 @@ impl Manager {
                     };
                 }
                 if drag.proposed.is_none() {
-                    self.interaction_error = Some(crate::i18n::tr(DETACH_CAPACITY).to_string());
+                    if drag.intent.is_some() {
+                        self.interaction_error = Some(
+                            drop_rejection(
+                                &drag.baseline,
+                                &self.minimum_sizes,
+                                id,
+                                drag.intent,
+                                drag.area,
+                            )
+                            .to_string(),
+                        );
+                    }
                     return Rejected;
                 }
                 if !ax::focus(window.element.0, window.pid) {
                     return Rejected;
                 }
                 self.commit_tab_detach(drag);
-                Detached
+                Placed
             }
             _ => Rejected,
         }
@@ -1400,8 +1483,10 @@ impl Manager {
         let old_reorder = drag.reorder;
         drag.reorder = reorder;
         let hint = drag.update_float_zone(point, float_enabled);
-        let changed = reorder != old_reorder || old_hover != drag.float_hover;
-        let frame = if changed && reorder.is_none() && !drag.float_hover {
+        let changed = drag.update_destination(point, &self.minimum_sizes, !scroll)
+            || reorder != old_reorder
+            || old_hover != drag.float_hover;
+        let frame = if changed {
             drag.proposed.as_ref().and_then(|desktop| {
                 desktop
                     .window_frames(drag.area, 10.)
@@ -1412,6 +1497,7 @@ impl Manager {
             None
         };
         let hovering = drag.float_hover;
+        let intent = drag.intent;
         if let Some((frame, highlighted)) = hint {
             self.show_float_overlay(frame, false, highlighted);
         } else {
@@ -1419,8 +1505,12 @@ impl Manager {
         }
         if let Some(frame) = frame {
             self.show_preview(frame);
+            if let Some(intent) = intent {
+                self.show_badge(DropHint::single(intent, frame), primary_height());
+            }
         } else if hovering || changed {
             self.hide_preview_panels();
+            self.hide_badges();
         }
     }
 
@@ -1481,6 +1571,7 @@ impl Manager {
         if self.tab_drag.take().is_some() {
             self.hide_float_overlay();
             self.hide_preview_panels();
+            self.hide_badges();
             for strip in &mut self.strips {
                 strip.clear_marker();
             }
@@ -2442,6 +2533,10 @@ impl Manager {
                 }
             }
         }
+        self.hide_badges();
+    }
+
+    fn hide_badges(&self) {
         for badge in &self.badges {
             unsafe {
                 let visible: bool = msg_send![&*badge.panel, isVisible];
@@ -3830,22 +3925,19 @@ impl Manager {
     fn defer_native_release(&mut self, input: Option<bool>, down: bool, now: Instant) -> bool {
         const DELIVERY_WINDOW: Duration = Duration::from_millis(350);
         if input == Some(true) {
-            // Polling can win the race to mouse-down, but only the native
-            // boundary carries the actual grab point and opts into floating.
+            // A queued boundary restores its original window and bounds below,
+            // even when a timer sampled the already-moving window first.
             self.drag = None;
             self.gesture_candidates.clear();
             self.mouse_release_pending = None;
             self.pressed = false;
             return false;
         }
-        let captured = self
-            .drag
-            .as_ref()
-            .is_some_and(|drag| drag.float_drop_enabled)
+        let captured = self.drag.as_ref().is_some_and(|drag| drag.native_captured)
             || self
                 .gesture_candidates
                 .iter()
-                .any(|drag| drag.float_drop_enabled);
+                .any(|drag| drag.native_captured);
         if !captured {
             self.mouse_release_pending = None;
             return false;
@@ -3872,17 +3964,23 @@ impl Manager {
         true
     }
 
-    pub fn mouse_event(&mut self, defaults: Obj, down: bool, point: NSPoint) {
+    pub(crate) fn mouse_event(
+        &mut self,
+        defaults: Obj,
+        down: bool,
+        point: NSPoint,
+        grab: Option<crate::tile_mouse::Grab>,
+    ) {
         if self.presentation_blocks_input() || !ax::trusted() {
             return;
         }
-        self.tick_mode_input(defaults, true, Some((down, point)));
+        self.tick_mode_input(defaults, true, Some((down, point, grab)));
     }
     fn tick_mode_input(
         &mut self,
         defaults: Obj,
         place_windows: bool,
-        input: Option<(bool, NSPoint)>,
+        input: Option<(bool, NSPoint, Option<crate::tile_mouse::Grab>)>,
     ) {
         if crate::desktop_mode::active() || self.presentation != crate::desktop_mode::Mode::Normal {
             return;
@@ -3895,7 +3993,7 @@ impl Manager {
         }
         let down: usize = input.map_or_else(
             || unsafe { msg_send![class!(NSEvent), pressedMouseButtons] },
-            |(down, _)| usize::from(down),
+            |(down, _, _)| usize::from(down),
         );
         let scan_interval = if self.settling_space() { 100 } else { 500 };
         if down & 1 != 0
@@ -3997,11 +4095,13 @@ impl Manager {
         // Preserve the persisted switch, including an explicit user opt-out.
         let float_enabled = (down || self.drag.is_some() || !self.gesture_candidates.is_empty())
             && pref_or(defaults, "tile.shake", 1) != 0;
-        if self.defer_native_release(input.map(|(down, _)| down), down, Instant::now()) {
+        if self.defer_native_release(input.map(|(down, _, _)| down), down, Instant::now()) {
             return;
         }
-        let capture_float = float_enabled && input.is_some_and(|(down, _)| down);
-        let Some(p) = input.map(|(_, p)| p).or_else(pointer) else {
+        let native_captured = input.is_some_and(|(down, _, _)| down);
+        let capture_float = float_enabled && native_captured;
+        let grab = input.and_then(|(_, _, grab)| grab);
+        let Some(p) = input.map(|(_, p, _)| p).or_else(pointer) else {
             self.cancel_drag();
             return;
         };
@@ -4041,15 +4141,22 @@ impl Manager {
         });
         if down && !self.pressed {
             self.pending_drop = None;
+            // Hit-test only once, at the native boundary when available. By
+            // delivery time this point may belong to an entirely other window.
+            let hit = if native_captured {
+                grab.map(|grab| (grab.pid, grab.id))
+            } else {
+                ws::window_at(p)
+            };
             // A grouped sibling may have been raised outside AMSpace since the
             // last scan. Adopt that real hit before deciding if it owns a slot.
-            if let Some((pid, id)) = ws::window_at(p)
+            if let Some((pid, id)) = hit
                 && self.windows.get(&id).is_some_and(|w| w.pid == pid)
             {
                 self.select_tab_model(id);
             }
             // A click inside content is not a drag until native window geometry moves.
-            self.drag = ws::window_at(p)
+            self.drag = hit
                 .or_else(|| {
                     // Native resize handles extend a few points outside AX bounds.
                     self.windows
@@ -4083,7 +4190,10 @@ impl Manager {
                         {
                             return None;
                         }
-                        let frame = ws::bounds(id)?;
+                        let frame = grab
+                            .filter(|grab| grab.id == id && grab.pid == pid)
+                            .map(|grab| grab.frame)
+                            .or_else(|| ws::bounds(id))?;
                         let edge = (p.x - frame.origin.x)
                             .abs()
                             .min((p.x - frame.origin.x - frame.size.width).abs())
@@ -4105,6 +4215,7 @@ impl Manager {
                             baseline: self.desktops.get(&w.space)?.clone(),
                             area: active.iter().find(|(s, _)| *s == w.space)?.1,
                             previews: DropPreviewCache::default(),
+                            native_captured,
                             float_drop_enabled: capture_float,
                             float_target: None,
                             float_hover: false,
@@ -4157,6 +4268,7 @@ impl Manager {
                         baseline: self.desktops.get(&w.space)?.clone(),
                         area,
                         previews: DropPreviewCache::default(),
+                        native_captured,
                         float_drop_enabled: capture_float,
                         float_target: None,
                         float_hover: false,
@@ -4199,7 +4311,7 @@ impl Manager {
                     self.pressed = true; // Wait for release; never recapture halfway through a gesture.
                     return;
                 }
-                if drag.float_drop_enabled {
+                if drag.native_captured {
                     let valid =
                         self.windows.get(&drag.id).is_some_and(|window| {
                             window.pid == drag.pid && window.space == drag.space
@@ -4366,7 +4478,7 @@ impl Manager {
             }
             self.hide_preview();
             if drag.float_hover {
-                if drag.float_released(input.is_some_and(|(down, _)| !down)) && float_enabled {
+                if drag.float_released(input.is_some_and(|(down, _, _)| !down)) && float_enabled {
                     if let Err(error) = self.commit_float_drop(&drag) {
                         self.interaction_error = Some(error.into());
                     }
@@ -4475,6 +4587,12 @@ impl Manager {
         // Never snap the dragged window back while macOS is publishing its new Space.
         // The bounded pending handoff keeps the fast timer alive without AX polling.
         if self.pending_drop.is_some() {
+            return;
+        }
+        // Native boundaries capture/finalize input only. Reconcile and place on
+        // the existing timer after the complete queued gesture has drained;
+        // nested AX enumeration here can otherwise delay the next boundary.
+        if input.is_some() {
             return;
         }
         if self.space_reentry.is_some() {
@@ -6515,6 +6633,7 @@ mod tests {
             baseline: desktop.clone(),
             area,
             previews: Default::default(),
+            native_captured: false,
             float_drop_enabled: false,
             float_target: None,
             float_hover: false,
@@ -8438,11 +8557,66 @@ mod tests {
             baseline,
             area,
             previews: DropPreviewCache::default(),
+            native_captured: false,
             float_drop_enabled: false,
             float_target: None,
             float_hover: false,
         }
     }
+    #[test]
+    fn native_release_point_is_preserved_when_floating_is_disabled() {
+        let now = Instant::now();
+        for candidate_only in [false, true] {
+            let mut drag = test_drag();
+            drag.native_captured = true;
+            drag.moved = true;
+            let baseline = drag.baseline.clone();
+            let space = drag.space;
+            let mut manager = Manager::default();
+            manager.desktops.insert(space, baseline.clone());
+            if candidate_only {
+                manager.gesture_candidates.push(drag);
+            } else {
+                manager.drag = Some(drag);
+            }
+            assert!(
+                manager.defer_native_release(None, false, now),
+                "polling must not finalize an old hover before native mouse-up"
+            );
+            assert_eq!(manager.mouse_release_pending, Some(now));
+            assert!(!manager.defer_native_release(
+                Some(false),
+                false,
+                now + Duration::from_millis(20)
+            ));
+            assert!(manager.drag.is_some() || !manager.gesture_candidates.is_empty());
+            assert!(manager.desktops[&space] == baseline);
+        }
+    }
+
+    #[test]
+    fn missing_native_release_cancels_even_when_floating_is_disabled() {
+        let now = Instant::now();
+        let mut drag = test_drag();
+        drag.native_captured = true;
+        drag.moved = true;
+        drag.drop = Some((drag.space, DropIntent::Group(2)));
+        let baseline = drag.baseline.clone();
+        let space = drag.space;
+        let mut manager = Manager {
+            drag: Some(drag),
+            ..Default::default()
+        };
+        manager.desktops.insert(space, baseline.clone());
+        assert!(manager.defer_native_release(None, false, now));
+        assert!(manager.defer_native_release(None, false, now + Duration::from_millis(350)));
+        assert!(manager.drag.is_none());
+        assert!(manager.gesture_candidates.is_empty());
+        assert!(manager.pending_drop.is_none());
+        assert!(manager.mouse_release_pending.is_none());
+        assert!(manager.desktops[&space] == baseline);
+    }
+
     #[test]
     fn move_preview_is_not_owned_by_the_disabled_resize_path() {
         let mut drag = test_drag();
@@ -9564,6 +9738,7 @@ mod tests {
             .proposed_drop(4, DropIntent::Group(3), area, 10.)
             .unwrap();
         let proposed = tab_detach_proposal(&desktop, id, area, &HashMap::new()).unwrap();
+        let (destination, targets) = tab_drag_layout(&desktop, id, area);
         let mut manager = Manager {
             active_areas: vec![(space, area)],
             pressed: true,
@@ -9593,6 +9768,10 @@ mod tests {
             area,
             panel_number: 10,
             baseline: desktop,
+            destination,
+            targets,
+            intent: None,
+            grouped: true,
             proposed: Some(proposed),
             reorder: None,
             released_at: None,
@@ -9955,5 +10134,173 @@ fn restoration_rejects_reused_or_transferred_windows_and_missing_native_evidence
             window.restoration_target(9, ids, space, ax_id, current),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod tab_destination_tests {
+    use super::*;
+
+    fn gesture(baseline: Desktop, id: u32, area: NSRect) -> TabDrag {
+        let (destination, targets) = tab_drag_layout(&baseline, id, area);
+        TabDrag {
+            id,
+            pid: 1,
+            space: (1, 7),
+            area,
+            panel_number: 1,
+            baseline,
+            released_at: None,
+            destination,
+            targets,
+            intent: None,
+            grouped: true,
+            proposed: None,
+            reorder: None,
+            float_drop_enabled: true,
+            float_hover: false,
+        }
+    }
+
+    #[test]
+    fn active_and_hidden_tabs_can_occupy_every_final_template_slot() {
+        for layout in Layout::ALL {
+            for area in [
+                rect(10., 40., 1800., 1200.),
+                rect(-950., -500., 1200., 1800.),
+            ] {
+                let mut baseline = Desktop::configured(layout, None);
+                baseline.reconcile(&[1, 2, 3, 4, 5, 6, 7], area, 10.);
+                baseline = baseline
+                    .proposed_drop(2, DropIntent::Group(1), area, 10.)
+                    .unwrap();
+                baseline = baseline
+                    .proposed_drop(3, DropIntent::Group(2), area, 10.)
+                    .unwrap();
+                for id in [1, 3] {
+                    let mut drag = gesture(baseline.clone(), id, area);
+                    let targets = drag.targets.clone();
+                    for (target, frame) in targets {
+                        let point = NSPoint::new(
+                            frame.origin.x + frame.size.width / 2.,
+                            frame.origin.y + frame.size.height * 0.7,
+                        );
+                        drag.update_destination(point, &HashMap::new(), true);
+                        assert_eq!(drag.intent, Some(DropIntent::Window(target, Zone::Center)));
+                        let proposed = drag.proposed.as_ref().unwrap();
+                        let actual = proposed
+                            .window_frames(area, 10.)
+                            .into_iter()
+                            .find(|(member, _)| *member == id)
+                            .unwrap()
+                            .1;
+                        assert!(
+                            near(actual, proposed.window_frame(id, frame)),
+                            "{layout:?}, member {id}, target {target}: {actual:?} != {frame:?}"
+                        );
+                        assert!(proposed.tab_role(id).is_none());
+                        assert!(drag.baseline == baseline);
+                    }
+                    drag.update_destination(
+                        NSPoint::new(area.origin.x - 20., area.origin.y + 100.),
+                        &HashMap::new(),
+                        true,
+                    );
+                    assert!(drag.intent.is_none() && drag.proposed.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_rejected_default_detach_does_not_hide_a_main_slot_that_fits() {
+        let area = rect(10., 40., 1600., 900.);
+        let mut baseline = Desktop::configured(Layout::Master, None);
+        baseline.reconcile(&[1, 2, 3, 4], area, 10.);
+        baseline = baseline
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        let minimums = HashMap::from([(1, objc2_foundation::NSSize::new(120., 820.))]);
+        baseline.set_minimum_sizes(&minimums);
+        baseline.fit(area, 10.);
+        let default = tab_detach_proposal(&baseline, 1, area, &minimums);
+        assert!(
+            default.is_none(),
+            "unexpected default: {:?}",
+            default.map(|desktop| (desktop.order.clone(), desktop.frames(area, 10.)))
+        );
+        let mut drag = gesture(baseline.clone(), 1, area);
+        let targets = drag.targets.clone();
+        for (target, frame) in targets {
+            drag.update_destination(
+                NSPoint::new(
+                    frame.origin.x + frame.size.width / 2.,
+                    frame.origin.y + frame.size.height * 0.7,
+                ),
+                &minimums,
+                true,
+            );
+            if frame.size.height >= 820. {
+                let proposed = drag
+                    .proposed
+                    .as_ref()
+                    .expect("main slot must remain reachable");
+                assert_eq!(proposed.order.first(), Some(&1));
+                assert!(
+                    proposed
+                        .window_frames(area, 10.)
+                        .iter()
+                        .any(|(id, actual)| *id == 1 && actual.size.height >= 820.)
+                );
+            } else {
+                assert!(
+                    drag.proposed.is_none(),
+                    "side slot {target} violates the real minimum"
+                );
+            }
+        }
+        assert!(drag.baseline == baseline);
+    }
+
+    #[test]
+    fn grouping_from_a_tab_preserves_admission_and_source_membership_rules() {
+        let area = rect(10., 40., 1800., 1200.);
+        let mut baseline = Desktop::configured(Layout::Grid, None);
+        baseline.reconcile(&[1, 2, 3, 4, 5], area, 10.);
+        baseline = baseline
+            .proposed_drop(2, DropIntent::Group(1), area, 10.)
+            .unwrap();
+        baseline = baseline
+            .proposed_drop(3, DropIntent::Group(2), area, 10.)
+            .unwrap();
+        baseline = baseline
+            .proposed_drop(5, DropIntent::Group(4), area, 10.)
+            .unwrap();
+        baseline.max_group_tabs = 2;
+        let mut drag = gesture(baseline.clone(), 1, area);
+        let targets = drag.targets.clone();
+        for (target, frame) in targets {
+            let point = NSPoint::new(
+                frame.origin.x + frame.size.width / 2.,
+                frame.origin.y + frame.size.height * 0.15,
+            );
+            drag.update_destination(point, &HashMap::new(), true);
+            if target == 3 {
+                let proposed = drag.proposed.as_ref().unwrap();
+                assert_eq!(proposed.tab_strip(1), Some((&[1, 2, 3][..], 0)));
+            } else if target == 5 {
+                assert_eq!(drag.intent, Some(DropIntent::Group(5)));
+                assert!(
+                    drag.proposed.is_none(),
+                    "full destination must not admit a member"
+                );
+                drag.grouped = false;
+                drag.update_destination(point, &HashMap::new(), true);
+                assert_eq!(drag.intent, Some(DropIntent::Window(5, Zone::Center)));
+                assert!(drag.proposed.as_ref().unwrap().tab_role(1).is_none());
+                drag.grouped = true;
+            }
+        }
+        assert!(drag.baseline == baseline);
     }
 }

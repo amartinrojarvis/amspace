@@ -5268,7 +5268,7 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
                 a.hover_resume = Instant::now() + Duration::from_millis(600);
                 a.update_tile_timer();
                 a.settle_focus();
-                a.show_tip(4, crate::i18n::tr("Arrastra en la barra para reordenar; fuera para separar, o hasta Hacer flotante. Clic derecho: acciones; ×: cierre normal."));
+                a.show_tip(4, crate::i18n::tr("Arrastra en la barra para reordenar; fuera elige un hueco, apila o haz flotante. Clic derecho: acciones; ×: cierre normal."));
             }
         }
         tab_delivery::Action::Close => {
@@ -5294,7 +5294,7 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
         }
     }
 }
-/// Native pan coordinates choose reordering in the strip or detachment outside.
+/// Native pan coordinates choose reordering, floating or a tile destination.
 extern "C-unwind" fn drag_tile_tab(target: Obj, _: Sel, sender: Obj) {
     // A recognizer is mutable: snapshot its phase and point before deferring.
     let state: isize = unsafe { msg_send![sender, state] };
@@ -5311,14 +5311,18 @@ extern "C-unwind" fn drag_tile_tab(target: Obj, _: Sel, sender: Obj) {
     }
 }
 fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint) {
-    let enabled =
-        crate::tile_manager::pref_or(Retained::as_ptr(&a.defaults) as Obj, "tile.shake", 1) != 0;
-    match a.tile_manager.tab_drag(view, state, location, enabled) {
+    let defaults = Retained::as_ptr(&a.defaults) as Obj;
+    let enabled = crate::tile_manager::pref_or(defaults, "tile.shake", 1) != 0;
+    let grouped = crate::tile_manager::pref_or(defaults, "tile.groups", 1) != 0;
+    match a
+        .tile_manager
+        .tab_drag(view, state, location, enabled, grouped)
+    {
         crate::tile_manager::TabDragOutcome::Rejected => a.tile_manager.cancel_tab_drag(),
         outcome => {
             a.hover_resume = Instant::now() + Duration::from_millis(600);
             a.update_tile_timer();
-            if outcome == crate::tile_manager::TabDragOutcome::Detached {
+            if outcome == crate::tile_manager::TabDragOutcome::Placed {
                 a.settle_focus();
             }
         }

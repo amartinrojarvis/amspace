@@ -1,6 +1,8 @@
 //! End-to-end pan workflows using only the elevated, disposable close fixture.
 use super::*;
 use crate::ui::diagnostics::{TabPanDelivery, check_tab_pan};
+use objc2::rc::Allocated;
+use objc2_foundation::{NSString, ns_string};
 
 fn geometry(manager: &Manager, id: u32) -> Result<NSRect, String> {
     let (p, s) = ax::geometry(manager.windows[&id].element.0)
@@ -22,15 +24,16 @@ fn finish_placements(manager: &mut Manager, expected: &[(u32, NSRect)]) -> Resul
         manager.verify_placements(&active, &candidates, false, &mut spaces);
         if manager.transitions.is_empty()
             && manager.verifications.is_empty()
-            && expected
-                .iter()
-                .all(|(id, frame)| geometry(manager, *id).is_ok_and(|actual| near(actual, *frame)))
+            && expected.iter().all(|(id, frame)| {
+                geometry(manager, *id).is_ok_and(|actual| near(actual, *frame))
+                    && ws::bounds(*id).is_some_and(|native| near(native, *frame))
+            })
         {
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "La colocación AX no llegó al destino: {expected:?}"
+                "La colocación AX/WindowServer no llegó al destino: {expected:?}"
             ));
         }
         super::diagnostics::pump(0.012);
@@ -55,11 +58,6 @@ fn prepare(
     layout: Layout,
     animated: bool,
 ) -> Result<(), String> {
-    manager.cancel_drag();
-    manager.floating.clear();
-    manager.inactive_tabs.clear();
-    manager.minimum_sizes.clear();
-    manager.animated = Some(animated);
     let mut desktop = Desktop::configured(layout, None);
     desktop.reconcile_at(ids, area, 10., None);
     for (target, id) in ids.iter().zip(&ids[1..]) {
@@ -67,6 +65,21 @@ fn prepare(
             .proposed_drop(*id, DropIntent::Group(*target), area, 10.)
             .ok_or("No se pudo preparar la pila E2E")?;
     }
+    prepare_model(manager, space, area, desktop, animated)
+}
+
+fn prepare_model(
+    manager: &mut Manager,
+    space: Workspace,
+    area: NSRect,
+    desktop: Desktop,
+    animated: bool,
+) -> Result<(), String> {
+    manager.cancel_drag();
+    manager.floating.clear();
+    manager.inactive_tabs.clear();
+    manager.minimum_sizes.clear();
+    manager.animated = Some(animated);
     manager.desktops.insert(space, desktop.clone());
     place_layout(manager, space, area)?;
     let frames = desktop.window_frames(area, 10.);
@@ -106,6 +119,7 @@ fn assert_finished(manager: &Manager) -> Result<(), String> {
     let visible = |panel: &AnyObject| -> bool { unsafe { msg_send![panel, isVisible] } };
     if manager.tab_drag.is_some()
         || manager.preview.iter().any(|panel| visible(panel))
+        || manager.badges.iter().any(|badge| visible(&badge.panel))
         || manager
             .float_overlay
             .as_ref()
@@ -132,7 +146,7 @@ pub(super) fn check(
         area.origin.x + area.size.width * 0.75,
         area.origin.y + area.size.height * 0.6,
     );
-    let mut cases = 0;
+    let mut cases = check_native_boundaries(manager, ids, space, area)?;
     for (index, layout) in Layout::ALL.into_iter().enumerate() {
         // Both transition paths are exercised on real AX windows.
         let animated = index % 2 == 0;
@@ -318,7 +332,7 @@ pub(super) fn check(
             |_| Ok(()),
         )?;
         if manager.floating.contains(&ids[0]) != expect_float
-            || manager.desktops[&space].tab_role(ids[0]).is_some()
+            || (enabled && manager.desktops[&space].tab_role(ids[0]).is_some())
         {
             return Err("El pan ignoró el punto final o la desactivación del gesto".into());
         }
@@ -426,9 +440,374 @@ pub(super) fn check(
     manager.trim_overlays(0, 0);
     cases += 1;
 
+    cases += check_destinations(manager, ids, space, area)?;
+
     prepare(manager, ids, space, area, Layout::Spiral, false)?;
     println!(
-        "PASS E2E: {cases} escenarios de pan/retorno sobre ventanas AX reales; cancelación, caducidad, pausa, punto final y zona desactivada; ninguna entrada global ni ventana ajena."
+        "PASS E2E: {cases} escenarios de arrastre/retorno (pan y fronteras nativas) sobre ventanas AX reales; cancelación, caducidad, pausa, punto final y zona desactivada; ninguna entrada global ni ventana ajena."
     );
     Ok(())
+}
+
+fn check_destinations(
+    manager: &mut Manager,
+    ids: &[u32],
+    space: Workspace,
+    area: NSRect,
+) -> Result<usize, String> {
+    let mut cases = 0;
+    let point = |frame: NSRect, fraction: f64| {
+        // Off-center x avoids the floating card on a full-width top row.
+        NSPoint::new(
+            frame.origin.x + frame.size.width * 0.25,
+            frame.origin.y + frame.size.height * fraction,
+        )
+    };
+    for (index, layout) in Layout::ALL.into_iter().enumerate() {
+        let mut baseline = Desktop::configured(layout, None);
+        baseline.reconcile_at(ids, area, 10., None);
+        let baseline = baseline
+            .proposed_drop(ids[1], DropIntent::Group(ids[0]), area, 10.)
+            .ok_or("No se pudo preparar el origen con pestañas y otro hueco")?;
+        let animated = index % 2 == 0;
+        for id in [ids[0], ids[1]] {
+            let (virtual_layout, targets) = tab_drag_layout(&baseline, id, area);
+            let virtual_layout = virtual_layout.ok_or("Sin distribución virtual E2E")?;
+            for (target, frame) in &targets {
+                prepare_model(manager, space, area, baseline.clone(), animated)?;
+                let dragged = button(manager, id)?;
+                let expected = virtual_layout
+                    .proposed_drop(id, DropIntent::Window(*target, Zone::Center), area, 10.)
+                    .ok_or("El destino virtual E2E no admite el miembro")?;
+                let destination = point(*frame, 0.7);
+                check_tab_pan(
+                    manager,
+                    &dragged,
+                    destination,
+                    destination,
+                    TabPanDelivery::Reentrant,
+                    true,
+                    |pending| {
+                        let drag = pending
+                            .tab_drag
+                            .as_ref()
+                            .ok_or("El pan no se activó al primer intento")?;
+                        if drag.proposed.as_ref() != Some(&expected)
+                            || pending.desktops[&space] != baseline
+                        {
+                            return Err(
+                                "La preview perdió el destino elegido o confirmó antes de soltar"
+                                    .into(),
+                            );
+                        }
+                        if index == 0 && id == ids[0] && *target == targets[0].0 {
+                            let panel = pending
+                                .preview
+                                .first()
+                                .ok_or("Sin preview nativa de posición")?;
+                            let badge = pending
+                                .badges
+                                .first()
+                                .ok_or("Sin indicador nativo del destino")?;
+                            for (panel, path) in [
+                                (panel, ".cache/e2e-tab-target-preview.png"),
+                                (&badge.panel, ".cache/e2e-tab-target-hint.png"),
+                            ] {
+                                let number: isize = unsafe { msg_send![&**panel, windowNumber] };
+                                let status = std::process::Command::new("/usr/sbin/screencapture")
+                                    .args(["-x", "-l", &number.to_string(), path])
+                                    .status()
+                                    .map_err(|error| error.to_string())?;
+                                if !status.success() {
+                                    return Err("No se pudo capturar el destino nativo".into());
+                                }
+                            }
+                        }
+                        Ok(())
+                    },
+                )?;
+                if manager.desktops[&space] != expected || manager.floating.contains(&id) {
+                    return Err(format!(
+                        "El destino {target} no recibió la pestaña {id} en {layout:?}"
+                    ));
+                }
+                place_layout(manager, space, area)?;
+                assert_finished(manager)?;
+                cases += 1;
+            }
+
+            // A tab can join the independent destination without an intermediate
+            // detach/float, and the original source must retain its other member.
+            prepare_model(manager, space, area, baseline.clone(), animated)?;
+            let dragged = button(manager, id)?;
+            let frame = targets
+                .iter()
+                .find(|(target, _)| *target == ids[2])
+                .ok_or("Sin destino independiente E2E")?
+                .1;
+            let expected = baseline
+                .proposed_drop(id, DropIntent::Group(ids[2]), area, 10.)
+                .ok_or("El grupo de destino E2E no admite el miembro")?;
+            check_tab_pan(
+                manager,
+                &dragged,
+                point(frame, 0.15),
+                point(frame, 0.15),
+                TabPanDelivery::Reentrant,
+                true,
+                |pending| {
+                    if pending
+                        .tab_drag
+                        .as_ref()
+                        .and_then(|drag| drag.proposed.as_ref())
+                        != Some(&expected)
+                        || pending.desktops[&space] != baseline
+                    {
+                        return Err("Apilar desde pestaña no mostró su propuesta sin mutar".into());
+                    }
+                    Ok(())
+                },
+            )?;
+            if manager.desktops[&space] != expected {
+                return Err("La pestaña no se apiló en el grupo elegido".into());
+            }
+            place_layout(manager, space, area)?;
+            assert_finished(manager)?;
+            cases += 1;
+
+            // Ended must choose the last tile, not the tile highlighted in hover.
+            prepare_model(manager, space, area, baseline.clone(), animated)?;
+            let dragged = button(manager, id)?;
+            let first = targets.first().unwrap();
+            let last = targets.last().unwrap();
+            let expected = virtual_layout
+                .proposed_drop(id, DropIntent::Window(last.0, Zone::Center), area, 10.)
+                .ok_or("Sin destino final E2E")?;
+            check_tab_pan(
+                manager,
+                &dragged,
+                point(first.1, 0.7),
+                point(last.1, 0.7),
+                TabPanDelivery::Immediate,
+                true,
+                |_| Ok(()),
+            )?;
+            if manager.desktops[&space] != expected {
+                return Err("Ended confirmó el hueco previo en vez del punto final".into());
+            }
+            place_layout(manager, space, area)?;
+            assert_finished(manager)?;
+            cases += 1;
+        }
+
+        prepare_model(manager, space, area, baseline.clone(), animated)?;
+        let dragged = button(manager, ids[0])?;
+        let (_, targets) = tab_drag_layout(&baseline, ids[0], area);
+        let destination = point(targets.last().unwrap().1, 0.7);
+        let outside = NSPoint::new(area.origin.x + area.size.width + 30., destination.y);
+        check_tab_pan(
+            manager,
+            &dragged,
+            destination,
+            outside,
+            TabPanDelivery::Reentrant,
+            true,
+            |_| Ok(()),
+        )?;
+        if manager.desktops[&space] != baseline || !manager.floating.is_empty() {
+            return Err("Soltar fuera de la pantalla de origen confirmó un tile".into());
+        }
+        assert_finished(manager)?;
+        cases += 1;
+
+        for pending_drop in [false, true] {
+            prepare_model(manager, space, area, baseline.clone(), animated)?;
+            if pending_drop {
+                manager.pending_drop = Some(PendingDrop {
+                    id: ids[2],
+                    source: space,
+                    destination: space,
+                    intent: Some(DropIntent::Group(ids[1])),
+                    expires: Instant::now() + Duration::from_millis(700),
+                });
+            } else {
+                let frame = baseline
+                    .frames(area, 10.)
+                    .into_iter()
+                    .find_map(|(id, frame)| (id == ids[2]).then_some(frame))
+                    .unwrap();
+                manager.drag = Some(Drag {
+                    id: ids[2],
+                    pid: manager.windows[&ids[2]].pid,
+                    was_floating: false,
+                    space,
+                    start: frame,
+                    point: NSPoint::new(frame.origin.x + 20., frame.origin.y + 20.),
+                    drop: None,
+                    candidate: None,
+                    candidate_since: Instant::now(),
+                    moved: false,
+                    resized: false,
+                    resize_gesture: false,
+                    baseline: baseline.clone(),
+                    area,
+                    previews: DropPreviewCache::default(),
+                    native_captured: true,
+                    float_drop_enabled: true,
+                    float_target: None,
+                    float_hover: false,
+                });
+                manager.mouse_release_pending = Some(Instant::now());
+            }
+            let dragged = button(manager, ids[0])?;
+            check_tab_pan(
+                manager,
+                &dragged,
+                destination,
+                destination,
+                TabPanDelivery::Reentrant,
+                true,
+                |pending| {
+                    if pending.pending_drop.is_some()
+                        || pending.drag.is_some()
+                        || pending.mouse_release_pending.is_some()
+                        || pending.tab_drag.is_none()
+                    {
+                        return Err(
+                            "Un gesto nativo anterior bloqueó el primer pan de pestaña".into()
+                        );
+                    }
+                    Ok(())
+                },
+            )?;
+            if manager.desktops[&space].tab_role(ids[0]).is_some() || manager.pending_drop.is_some()
+            {
+                return Err("El gesto pendiente sustituyó el nuevo destino de la pestaña".into());
+            }
+            place_layout(manager, space, area)?;
+            assert_finished(manager)?;
+            cases += 1;
+        }
+        println!(
+            "PASS E2E: {layout:?}, todos los huecos finales, activa/oculta, apilar, punto final, salida y gesto anterior"
+        );
+    }
+    Ok(cases)
+}
+
+fn check_native_boundaries(
+    manager: &mut Manager,
+    ids: &[u32],
+    space: Workspace,
+    area: NSRect,
+) -> Result<usize, String> {
+    let suite = NSString::from_str(&format!(".amspace.native.grab.{}", std::process::id()));
+    let defaults: Allocated<AnyObject> = unsafe { msg_send![class!(NSUserDefaults), alloc] };
+    let defaults: Retained<AnyObject> = unsafe { msg_send![defaults, initWithSuiteName:&*suite] };
+    unsafe {
+        let _: () = msg_send![&*defaults, setBool:false, forKey:ns_string!("tile.shake")];
+        let _: () = msg_send![&*defaults, setBool:false, forKey:ns_string!("tile.animate")];
+    }
+    let result = (|| {
+        let defaults = Retained::as_ptr(&defaults) as Obj;
+        let mut cases = 0;
+        for layout in Layout::ALL {
+            for grouped in [false, true] {
+                let mut baseline = Desktop::configured(layout, None);
+                baseline.reconcile_at(ids, area, 10., None);
+                prepare_model(manager, space, area, baseline, false)?;
+                let id = ids[0];
+                let frame = ws::bounds(id).ok_or("Sin bounds nativos del fixture")?;
+                if !near(frame, geometry(manager, id)?) {
+                    return Err("El grab no partió de geometría nativa confirmada".into());
+                }
+                let grab = crate::tile_mouse::Grab {
+                    id,
+                    pid: manager.windows[&id].pid,
+                    frame,
+                };
+                let down = NSPoint::new(
+                    frame.origin.x + frame.size.width * 0.4,
+                    frame.origin.y + 40.,
+                );
+                let target = manager.desktops[&space]
+                    .frames(area, 10.)
+                    .into_iter()
+                    .find_map(|(other, frame)| (other == ids[2]).then_some(frame))
+                    .unwrap();
+                let release = NSPoint::new(
+                    target.origin.x + target.size.width / 2.,
+                    target.origin.y + target.size.height * if grouped { 0.15 } else { 0.7 },
+                );
+                let mut moved = frame;
+                moved.origin.x = (frame.origin.x + release.x - down.x).clamp(
+                    area.origin.x,
+                    area.origin.x + area.size.width - frame.size.width,
+                );
+                moved.origin.y = (frame.origin.y + release.y - down.y).clamp(
+                    area.origin.y,
+                    area.origin.y + area.size.height - frame.size.height,
+                );
+                if !ax::set_frame(manager.windows[&id].element.0, moved) {
+                    return Err("AX rechazó el movimiento desechable anterior a la entrega".into());
+                }
+                finish_placements(manager, &[(id, moved)])?;
+                // The boundary arrived while APP was borrowed. Deliver it only
+                // after the native window has moved away from its grab point.
+                manager.last_area_update = Some(Instant::now());
+                manager.mouse_event(defaults, true, down, Some(grab));
+                let captured = manager
+                    .drag
+                    .as_ref()
+                    .ok_or("El primer down diferido perdió la ventana que ya se había movido")?;
+                if captured.id != id
+                    || captured.start != frame
+                    || !captured.native_captured
+                    || captured.float_drop_enabled
+                {
+                    return Err(
+                        "El down usó identidad/bounds tardíos o ignoró la zona desactivada".into(),
+                    );
+                }
+                let native_frame = ws::bounds(id);
+                let classification = (captured.moved, captured.resized, captured.resize_gesture);
+                let intent = if grouped {
+                    DropIntent::Group(ids[2])
+                } else {
+                    DropIntent::Window(ids[2], Zone::Center)
+                };
+                let mut expected = manager.desktops[&space]
+                    .proposed_drop(id, intent, area, 10.)
+                    .ok_or("No se pudo calcular el intercambio/apilado nativo esperado")?;
+                expected.fit(area, 10.);
+                if !manager.defer_native_release(None, false, Instant::now()) {
+                    return Err("El reloj consumió el arrastre antes del soltado nativo".into());
+                }
+                manager.mouse_event(defaults, false, release, None);
+                if manager.desktops[&space] != expected
+                    || manager.drag.is_some()
+                    || manager.pending_drop.is_some()
+                {
+                    return Err(format!(
+                        "{layout:?}: primer soltado no confirmó {intent:?}; inicio={frame:?}, solicitado={moved:?}, nativo={native_frame:?}, clasificación={classification:?}, display={:?}, actual={:?}, esperado={:?}, error={:?}",
+                        point_display(release),
+                        manager.desktops[&space].frames(area, 10.),
+                        expected.frames(area, 10.),
+                        manager.interaction_error,
+                    ));
+                }
+                place_layout(manager, space, area)?;
+                assert_finished(manager)?;
+                cases += 1;
+            }
+            println!(
+                "PASS E2E: {layout:?}, intercambio y apilado al primer down/up diferido; flotante desactivado"
+            );
+        }
+        Ok(cases)
+    })();
+    unsafe {
+        let _: () = msg_send![&*defaults, removePersistentDomainForName:&*suite];
+    }
+    result
 }

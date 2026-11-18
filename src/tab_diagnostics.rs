@@ -39,8 +39,13 @@ extern "C-unwind" fn drag(_: Obj, _: Sel, recognizer: Obj) {
             if let Some(manager) = state.borrow_mut().as_mut() {
                 if let Some(button) = button {
                     let id: isize = msg_send![&button, tag];
-                    if manager.tab_drag(Retained::as_ptr(&button) as Obj, phase, location, true)
-                        == TabDragOutcome::Detached
+                    if manager.tab_drag(
+                        Retained::as_ptr(&button) as Obj,
+                        phase,
+                        location,
+                        true,
+                        true,
+                    ) == TabDragOutcome::Placed
                     {
                         DETACHED.with(|detached| *detached.borrow_mut() = u32::try_from(id).ok());
                     }

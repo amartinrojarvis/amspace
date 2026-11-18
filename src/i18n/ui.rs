@@ -334,8 +334,8 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Agrupa soltando una ventana en la parte superior de otra. Arrastra una pestaña para separarla; clic derecho para ver sus acciones." => {
             "Group by dropping a window on top of another. Drag a tab to detach it; right-click to see its actions."
         }
-        "Arrastra en la barra para reordenar; fuera para separar, o hasta Hacer flotante. Clic derecho: acciones; ×: cierre normal." => {
-            "Drag within the bar to reorder; outside to detach, or onto Make floating. Right-click: actions; ×: normal close."
+        "Arrastra en la barra para reordenar; fuera elige un hueco, apila o haz flotante. Clic derecho: acciones; ×: cierre normal." => {
+            "Drag within the bar to reorder; outside choose a slot, group or make floating. Right-click: actions; ×: normal close."
         }
         // Tab context menu and main menu.
         "Separar del grupo" => "Detach from group",

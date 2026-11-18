@@ -21,6 +21,7 @@ fn gesture(now: Instant) -> Drag {
         baseline,
         area,
         previews: Default::default(),
+        native_captured: true,
         float_drop_enabled: true,
         float_target: None,
         float_hover: false,

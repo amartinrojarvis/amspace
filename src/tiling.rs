@@ -185,14 +185,7 @@ pub fn drop_intent(
     // A managed window moves between the template's virtual slots. The native
     // window is under the pointer while dragging, so hit-test the model instead.
     if frames.iter().any(|(id, _)| *id == dragged) {
-        let (id, slot) = frames
-            .iter()
-            .min_by(|(_, a), (_, b)| distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p)))?;
-        return Some(if grouped && in_top_third(*slot, p) {
-            DropIntent::Group(*id)
-        } else {
-            DropIntent::Window(*id, Zone::Center)
-        });
+        return slot_drop_intent(frames, p, grouped);
     }
     if smart {
         let band = (area.size.width.min(area.size.height) * 0.08).clamp(28., 80.);
@@ -219,6 +212,18 @@ pub fn drop_intent(
         DropIntent::Group(target.0)
     } else {
         DropIntent::Window(target.0, zone(target.1, p))
+    })
+}
+
+/// Choose among the template's virtual slots, including a newly detached tab.
+pub fn slot_drop_intent(frames: &[(u32, NSRect)], p: NSPoint, grouped: bool) -> Option<DropIntent> {
+    let (id, slot) = frames
+        .iter()
+        .min_by(|(_, a), (_, b)| distance_to_rect(*a, p).total_cmp(&distance_to_rect(*b, p)))?;
+    Some(if grouped && in_top_third(*slot, p) {
+        DropIntent::Group(*id)
+    } else {
+        DropIntent::Window(*id, Zone::Center)
     })
 }
 /// The top third of a slot groups; the lower two thirds take its place.
