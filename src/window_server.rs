@@ -298,6 +298,15 @@ pub fn bounds(id: u32) -> Option<NSRect> {
     (unsafe { (api.bounds)((api.connection)(), id, &mut frame) } == 0 && valid(frame))
         .then_some(frame)
 }
+
+/// Read the owner of one exact native window, without hit-testing its old position.
+pub(crate) fn owner_pid(id: u32) -> Option<i32> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 << 3, id) })?;
+    let info = array(list.0)
+        .find(|info| number(get(*info, ns_string!("kCGWindowNumber"))) == Some(i64::from(id)))?;
+    let pid = i32::try_from(number(get(info, ns_string!("kCGWindowOwnerPID")))?).ok()?;
+    (pid > 0).then_some(pid)
+}
 /// Ordered-in is distinct from onscreen: a window on another Space remains
 /// ordered-in, while an application's orderOut really withdraws its window.
 pub fn ordered_in(id: u32) -> Option<bool> {

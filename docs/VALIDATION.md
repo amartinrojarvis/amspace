@@ -1,3 +1,8 @@
+## 0.9.29/build 84 — retorno con destinatario nativo sin PID
+
+- `--check-tab-close`: una ventana AX desechable salió del mosaico al soltarla en la zona superior. En el arrastre de vuelta se entregó, después del primer movimiento, un `CGEvent` con ID de destinatario y sin PID. La prueba falló en 0.9.28 al recuperar otra ventana y pasó con la consulta del propietario por ID, con y sin animación. También se rechazó un ID desaparecido. Pasaron los 246 escenarios del diagnóstico, sin entrada global ni ventanas ajenas. El fallo manual observado en Finder no se ha verificado con este bundle.
+- `./scripts/check.sh`: 288 correctas, ocho ignoradas, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado y firmado ad hoc; diagnóstico nativo en arm64.
+
 ## 0.9.28/build 83 — retorno de una flotante
 
 - `--check-tab-close`: una ventana AX desechable pasó a flotante y volvió al mosaico en el primer soltado en la zona superior, con y sin animación. El `CGEvent` se entregó después del movimiento, sin permitir una reconciliación completa entre la colocación flotante y el gesto. Pasaron los 246 escenarios de arrastre/retorno del diagnóstico, sin entrada global ni cambios de preferencias.

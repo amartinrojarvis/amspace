@@ -30,11 +30,13 @@ impl Grab {
             } else {
                 unsafe { CGEventGetIntegerValueField(event, 91) }
             };
-            let pid = unsafe { CGEventGetIntegerValueField(event, 40) };
-            if let (Ok(id), Ok(pid)) = (u32::try_from(id), i32::try_from(pid))
+            if let Ok(id) = u32::try_from(id)
                 && id != 0
-                && pid > 0
             {
+                let pid = i32::try_from(unsafe { CGEventGetIntegerValueField(event, 40) })
+                    .ok()
+                    .filter(|pid| *pid > 0)
+                    .or_else(|| crate::window_server::owner_pid(id))?;
                 // A vanished recipient must not become a different window
                 // merely because that window now occupies the old point.
                 let frame = crate::window_server::bounds(id)?;

@@ -757,7 +757,8 @@ fn check_native_boundaries(
                 }
                 finish_placements(manager, &[(id, moved)])?;
                 let grab = if layout == Layout::Spiral {
-                    let late = check_event_recipient(id, manager.windows[&id].pid, down, moved)?;
+                    let late =
+                        check_event_recipient(id, manager.windows[&id].pid, down, moved, true)?;
                     cases += 2;
                     late
                 } else {
@@ -819,13 +820,41 @@ fn check_native_boundaries(
             let _: () = msg_send![&*defaults, setBool:true, forKey:ns_string!("tile.shake")];
         }
         for animated in [false, true] {
+            unsafe {
+                let _: () =
+                    msg_send![defaults, setBool:animated, forKey:ns_string!("tile.animate")];
+            }
             let mut baseline = Desktop::configured(Layout::Grid, None);
             baseline.reconcile_at(ids, area, 10., None);
             prepare_model(manager, space, area, baseline, animated)?;
             let id = ids[0];
             let from = geometry(manager, id)?;
             let target = crate::tiling::floating_frame(from, area).ok_or("Sin marco flotante")?;
-            manager.toggle_float_window(id, from, area)?;
+            let card = float_drop::frame(area).ok_or("Sin zona para devolver al mosaico")?;
+            let release = NSPoint::new(
+                card.origin.x + card.size.width * 0.5,
+                card.origin.y + card.size.height * 0.5,
+            );
+            let tiled_down =
+                NSPoint::new(from.origin.x + from.size.width * 0.4, from.origin.y + 32.);
+            let mut moved_tile = from;
+            moved_tile.origin.y += 20.;
+            let grab = crate::tile_mouse::Grab {
+                id,
+                pid: manager.windows[&id].pid,
+                frame: from,
+            };
+            // Exercise the actual zone commit, not the shortcut's toggle.
+            manager.last_area_update = Some(Instant::now());
+            manager.mouse_event(defaults, true, tiled_down, Some(grab));
+            if !ax::set_frame(manager.windows[&id].element.0, moved_tile) {
+                return Err("AX rechazó el movimiento previo a soltar en Hacer flotante".into());
+            }
+            finish_placements(manager, &[(id, moved_tile)])?;
+            manager.mouse_event(defaults, false, release, None);
+            if !manager.floating.contains(&id) {
+                return Err("Soltar en Hacer flotante no sacó la ventana del mosaico".into());
+            }
             // Only service animation/verification, not an idle model scan.
             finish_placements(manager, &[(id, target)])?;
             let start = ws::bounds(id).ok_or("Sin marco nativo flotante")?;
@@ -834,12 +863,16 @@ fn check_native_boundaries(
                 start.origin.y + 32.,
             );
             let mut moved = start;
-            moved.origin.x += 30.;
+            moved.origin.x += if start.origin.x > area.origin.x + 60. {
+                -60.
+            } else {
+                60.
+            };
             if !ax::set_frame(manager.windows[&id].element.0, moved) {
                 return Err("AX rechazó el arrastre de la ventana recién flotante".into());
             }
             finish_placements(manager, &[(id, moved)])?;
-            let grab = check_event_recipient(id, manager.windows[&id].pid, down, moved)?;
+            let grab = check_event_recipient(id, manager.windows[&id].pid, down, moved, false)?;
             manager.last_area_update = Some(Instant::now());
             manager.mouse_event(defaults, true, down, Some(grab));
             if !manager
@@ -851,11 +884,6 @@ fn check_native_boundaries(
                     "El primer arrastre flotante perdió su geometría anterior al down".into(),
                 );
             }
-            let card = float_drop::frame(area).ok_or("Sin zona para devolver al mosaico")?;
-            let release = NSPoint::new(
-                card.origin.x + card.size.width * 0.5,
-                card.origin.y + card.size.height * 0.5,
-            );
             manager.mouse_event(defaults, false, release, None);
             if manager.floating.contains(&id) || !manager.desktops[&space].order.contains(&id) {
                 return Err("El primer soltado no devolvió la ventana flotante al mosaico".into());
@@ -879,6 +907,7 @@ fn check_event_recipient(
     pid: i32,
     point: NSPoint,
     moved: NSRect,
+    carries_pid: bool,
 ) -> Result<crate::tile_mouse::Grab, String> {
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
@@ -894,7 +923,7 @@ fn check_event_recipient(
         let event = ax::Owned::new(CGEventCreateMouseEvent(ptr::null(), 1, point, 0))
             .ok_or("No se pudo crear el CGEvent desechable")?;
         CGEventSetIntegerValueField(event.0, 92, i64::from(id));
-        CGEventSetIntegerValueField(event.0, 40, i64::from(pid));
+        CGEventSetIntegerValueField(event.0, 40, if carries_pid { i64::from(pid) } else { 0 });
         let captured = crate::tile_mouse::Grab::from_event(event.0, point)
             .ok_or("El evento tardío perdió el destinatario nativo")?;
         if captured.id != id || captured.pid != pid || !near(captured.frame, moved) {
