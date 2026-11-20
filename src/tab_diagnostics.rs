@@ -299,6 +299,8 @@ pub fn check_controls() -> Result<(), String> {
         desktop.select_tab(2);
         let mut manager = Manager {
             pressed: true,
+            desktops: HashMap::from([((0, 0), desktop)]),
+            active_areas: vec![((0, 0), slot)],
             strips: vec![TabStrip {
                 panel: panel.clone(),
                 space: (0, 0),
@@ -306,6 +308,7 @@ pub fn check_controls() -> Result<(), String> {
                 binding: StripSpaceBinding::Fallback,
                 marker: None,
                 signature: names.to_vec(),
+                icon_sources: vec![],
                 members: vec![1, 2, 3],
                 active: 1,
                 built: frame,
@@ -314,7 +317,7 @@ pub fn check_controls() -> Result<(), String> {
             ..Manager::default()
         };
         for window in [rect(324., 342., 620., 400.), slot] {
-            manager.draw_strips((0, 0), &desktop, &[(2, window)], primary_height(), 0, false);
+            manager.draw_strips((0, 0), &[(2, window)], primary_height(), 0, false);
             let root: Obj = msg_send![&panel, contentView];
             let actual: NSRect = msg_send![&panel, frame];
             let expected = appkit(tab_bar_frame(window, total, false), primary_height());
@@ -334,7 +337,7 @@ pub fn check_controls() -> Result<(), String> {
         pump(0.04);
         let _: () = msg_send![gesture, setEnabled:true];
         CONTROL_EVENTS.with(|events| events.borrow_mut().clear());
-        let used = manager.draw_strips((0, 0), &desktop, &[(2, slot)], primary_height(), 0, false);
+        let used = manager.draw_strips((0, 0), &[(2, slot)], primary_height(), 0, false);
         manager.trim_overlays(used, 0);
         // trim_overlays removed the previous panel. Inspect the replacement,
         // not the retired controls deliberately retained by this fixture.
@@ -598,12 +601,12 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
         active_areas: vec![(space, area)],
         ..Manager::default()
     };
-    manager.desktops.insert(space, desktop.clone());
-    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    manager.desktops.insert(space, desktop);
+    manager.draw_strips(space, &frames, primary_height(), 0, false);
     // Like the production tick, wait for WindowServer's first membership
     // publication without sleeping/blocking the production main thread.
     pump(0.15);
-    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    manager.draw_strips(space, &frames, primary_height(), 0, false);
     let strip = &manager.strips[0];
     if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
         return Err("AppKit no asignó la tira a su Space nativo".into());
@@ -623,7 +626,7 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
             return Err("La transición retiró o desancló la tira retenida".into());
         }
         manager.active_areas.push((space, area));
-        manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+        manager.draw_strips(space, &frames, primary_height(), 0, false);
         let current: Obj = unsafe { msg_send![&*manager.strips[0].panel, contentView] };
         if !ptr::eq(current, Retained::as_ptr(&root))
             || !ptr::eq(
@@ -1116,8 +1119,8 @@ pub fn check() -> Result<(), String> {
     for (id, frame) in hidden_tab_frames(&desktop, &frames) {
         manager.place_hidden_tab(id, frame);
     }
-    manager.desktops.insert(space, desktop.clone());
-    manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    manager.desktops.insert(space, desktop);
+    manager.draw_strips(space, &frames, primary_height(), 0, false);
     STATE.with(|state| *state.borrow_mut() = Some(manager));
     let _panels = Panels;
     pump(0.2);
@@ -1169,9 +1172,8 @@ pub fn check() -> Result<(), String> {
             STATE.with(|state| {
                 let mut state = state.borrow_mut();
                 let manager = state.as_mut().unwrap();
-                let desktop = manager.desktops[&space].clone();
-                let frames = desktop.window_frames(area, 10.);
-                manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+                let frames = manager.desktops[&space].window_frames(area, 10.);
+                manager.draw_strips(space, &frames, primary_height(), 0, false);
             })
         });
     }
@@ -1250,8 +1252,8 @@ pub fn check() -> Result<(), String> {
                 return Err("No se pudo restaurar la geometría agrupada".into());
             }
         }
-        manager.desktops.insert(space, desktop.clone());
-        let count = manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+        manager.desktops.insert(space, desktop);
+        let count = manager.draw_strips(space, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         Ok(logical_slot)
     })?;
@@ -1296,15 +1298,14 @@ pub fn check() -> Result<(), String> {
         if manager.windows.contains_key(&closing) {
             return Err("La reconciliación conservó una pestaña nativa ya cerrada".into());
         }
-        let desktop = manager.desktops[&space].clone();
-        let frames = desktop.window_frames(area, 10.);
+        let frames = manager.desktops[&space].window_frames(area, 10.);
         if !frames
             .iter()
             .any(|(id, frame)| *id == ids[0] && near(*frame, logical_slot))
         {
             return Err("Cerrar la activa no conservó el hueco de su hermana".into());
         }
-        let count = manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+        let count = manager.draw_strips(space, &frames, primary_height(), 0, false);
         manager.trim_overlays(count, 0);
         if manager
             .strips

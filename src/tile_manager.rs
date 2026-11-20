@@ -949,6 +949,7 @@ struct TabStrip {
     binding: StripSpaceBinding,
     marker: Option<Retained<AnyObject>>,
     signature: Vec<(String, Option<Retained<AnyObject>>)>,
+    icon_sources: Vec<Option<Retained<AnyObject>>>,
     members: Vec<u32>,
     active: usize,
     built: NSRect,
@@ -2785,12 +2786,14 @@ impl Manager {
     fn draw_strips(
         &mut self,
         space: Workspace,
-        desktop: &Desktop,
         frames: &[(u32, NSRect)],
         primary: f64,
         start: usize,
         centered: bool,
     ) -> usize {
+        let Some(desktop) = self.desktops.get(&space) else {
+            return start;
+        };
         let mut used = start;
         let workspace_area = self
             .active_areas
@@ -2840,13 +2843,19 @@ impl Manager {
             }
             let mut tabs: Vec<(String, Option<Retained<AnyObject>>)> =
                 Vec::with_capacity(group.members.len());
-            for id in &group.members {
+            let mut new_sources = Vec::new();
+            let sources = match existing {
+                Some(_) => &mut self.strips[used].icon_sources,
+                None => &mut new_sources,
+            };
+            sources.resize_with(group.members.len(), || None);
+            for (id, source) in group.members.iter().zip(sources) {
                 let (pid, element) = self
                     .windows
                     .get(id)
                     .map(|w| (w.pid, w.element.0))
                     .unwrap_or((0, ptr::null()));
-                tabs.push((window_label(element as Obj, pid), app_icon(pid)));
+                tabs.push((window_label(element as Obj, pid), app_icon(pid, source)));
             }
             let total = strip_width(tabs.iter().map(|(name, _)| tab_width(name)));
             let panel = tab_bar_frame(*slot, total, centered);
@@ -2931,6 +2940,7 @@ impl Manager {
                             binding,
                             marker: None,
                             signature: tabs,
+                            icon_sources: new_sources,
                             members: group.members.clone(),
                             active: group.active,
                             built: panel,
@@ -4708,11 +4718,9 @@ impl Manager {
                         .desktops
                         .get(&key)
                         .filter(|desktop| !desktop.groups().is_empty())
-                        .cloned()
                     {
                         let frames = desktop.window_frames(area, 10.);
-                        strips =
-                            self.draw_strips(key, &desktop, &frames, primary, strips, centered);
+                        strips = self.draw_strips(key, &frames, primary, strips, centered);
                     }
                 }
                 if let Some(frames) = resize_preview {
@@ -5303,9 +5311,7 @@ impl Manager {
             }
             let hidden = hidden_tab_frames(d, &frames);
             if !d.groups().is_empty() {
-                let snapshot = d.clone();
-                strips_drawn =
-                    self.draw_strips(space, &snapshot, &frames, primary, strips_drawn, centered);
+                strips_drawn = self.draw_strips(space, &frames, primary, strips_drawn, centered);
             }
             for (id, frame) in frames {
                 if crate::desktop_mode::active() {
@@ -6706,15 +6712,28 @@ fn app_name(pid: i32) -> Option<String> {
     }
 }
 
-fn app_icon(pid: i32) -> Option<Retained<AnyObject>> {
+fn app_icon(pid: i32, source: &mut Option<Retained<AnyObject>>) -> Option<Retained<AnyObject>> {
+    if pid <= 0 {
+        *source = None;
+        return None;
+    }
     unsafe {
-        let app: *mut AnyObject =
-            msg_send![class!(NSRunningApplication),runningApplicationWithProcessIdentifier:pid];
-        if app.is_null() {
+        let current: Option<Retained<AnyObject>> =
+            msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier:pid];
+        let Some(current) = current else {
+            *source = None;
             return None;
+        };
+        // Different wrappers for the same process can vend different NSImages,
+        // even across two run-loop turns. Keep the live source, not the pixels.
+        // NSRunningApplication equality identifies a launch, unlike its PID.
+        if source.as_ref().is_none_or(|old| {
+            let same: bool = msg_send![old, isEqual:&*current];
+            !same
+        }) {
+            *source = Some(current);
         }
-        // `icon` is a +0 getter. objc2 retains an optional owned return; adopting
-        // its raw pointer with from_raw would release somebody else's reference.
+        let app = source.as_deref()?;
         msg_send![app, icon]
     }
 }

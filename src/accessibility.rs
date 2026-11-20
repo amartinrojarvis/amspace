@@ -32,6 +32,12 @@ unsafe extern "C" {
     fn AXUIElementCreateSystemWide() -> Cf;
     fn AXUIElementCopyElementAtPosition(element: Cf, x: f32, y: f32, result: *mut Cf) -> i32;
     fn AXUIElementCopyAttributeValue(element: Cf, name: Cf, result: *mut Cf) -> i32;
+    fn AXUIElementCopyMultipleAttributeValues(
+        element: Cf,
+        attributes: Cf,
+        options: u32,
+        result: *mut Cf,
+    ) -> i32;
     fn AXUIElementGetPid(element: Cf, pid: *mut i32) -> i32;
     fn AXUIElementSetMessagingTimeout(element: Cf, seconds: f32) -> i32;
     fn AXUIElementSetAttributeValue(element: Cf, name: Cf, value: Cf) -> i32;
@@ -326,19 +332,76 @@ pub fn boolean(value: Cf) -> Option<bool> {
     (!value.is_null() && unsafe { CFGetTypeID(value) == CFBooleanGetTypeID() })
         .then(|| unsafe { CFBooleanGetValue(value) })
 }
+thread_local! {
+    static GEOMETRY_KEYS: objc2::rc::Retained<objc2::runtime::AnyObject> = {
+        let keys = [
+            cf(ns_string!("AXMinimized")),
+            cf(ns_string!("AXFullScreen")),
+            cf(ns_string!("AXPosition")),
+            cf(ns_string!("AXSize")),
+        ];
+        unsafe { objc2::msg_send![objc2::class!(NSArray), arrayWithObjects:keys.as_ptr(), count:keys.len()] }
+    };
+}
+
+/// Read a fresh snapshot; only the attribute names survive between calls.
 pub fn geometry(window: Cf) -> Option<(NSPoint, NSSize)> {
+    if window.is_null() {
+        return None;
+    }
+    let mut values = ptr::null();
+    let status = GEOMETRY_KEYS.with(|keys| unsafe {
+        AXUIElementCopyMultipleAttributeValues(
+            window,
+            objc2::rc::Retained::as_ptr(keys).cast(),
+            0,
+            &mut values,
+        )
+    });
+    if status == 0
+        && let Some(values) = Owned::new(values)
+    {
+        let mut entries = array(values.0);
+        if entries.len() == 4 {
+            let minimized = boolean(entries.next()?);
+            let fullscreen = boolean(entries.next()?);
+            if minimized == Some(true) || fullscreen == Some(true) {
+                return None;
+            }
+            // Some providers expose these optional flags only individually.
+            if (minimized.is_none() && flag(window, "AXMinimized"))
+                || (fullscreen.is_none() && flag(window, "AXFullScreen"))
+            {
+                return None;
+            }
+            if let Some(frame) = decode_geometry(entries.next()?, entries.next()?) {
+                return Some(frame);
+            }
+        }
+    }
+    // Preserve individual reads for providers that cannot return a full batch.
+    geometry_individual(window)
+}
+
+fn geometry_individual(window: Cf) -> Option<(NSPoint, NSSize)> {
     if flag(window, "AXMinimized") || flag(window, "AXFullScreen") {
         return None;
     }
     let p = attr(window, "AXPosition")?;
     let s = attr(window, "AXSize")?;
+    decode_geometry(p.0, s.0)
+}
+
+fn decode_geometry(p: Cf, s: Cf) -> Option<(NSPoint, NSSize)> {
     let mut point = NSPoint::new(0., 0.);
     let mut size = NSSize::new(0., 0.);
     let valid = unsafe {
-        CFGetTypeID(p.0) == AXValueGetTypeID()
-            && CFGetTypeID(s.0) == AXValueGetTypeID()
-            && AXValueGetValue(p.0, 1, (&mut point as *mut NSPoint).cast())
-            && AXValueGetValue(s.0, 2, (&mut size as *mut NSSize).cast())
+        !p.is_null()
+            && !s.is_null()
+            && CFGetTypeID(p) == AXValueGetTypeID()
+            && CFGetTypeID(s) == AXValueGetTypeID()
+            && AXValueGetValue(p, 1, (&mut point as *mut NSPoint).cast())
+            && AXValueGetValue(s, 2, (&mut size as *mut NSSize).cast())
     };
     (valid
         && point.x.is_finite()
@@ -913,6 +976,37 @@ mod placement_tests {
                 }
             }
         });
+    }
+    #[test]
+    #[ignore = "read-only AX benchmark; set AMSPACE_BENCH_PID to a process with a stable window"]
+    fn benchmark_window_geometry() {
+        use std::time::Instant;
+        let pid = std::env::var("AMSPACE_BENCH_PID").unwrap().parse().unwrap();
+        let windows = application_windows(pid).unwrap();
+        let (&id, window) = windows
+            .iter()
+            .filter(|(_, w)| geometry_individual(w.0).is_some())
+            .min_by_key(|(id, _)| **id)
+            .expect("benchmark needs a non-minimized, non-fullscreen window");
+        let expected = geometry_individual(window.0).unwrap();
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..10 {
+            for variant in [round % 2, 1 - round % 2] {
+                let read = [geometry_individual, geometry][variant];
+                let start = Instant::now();
+                for _ in 0..64 {
+                    assert_eq!(read(window.0), Some(expected));
+                }
+                samples[variant].push(start.elapsed().as_secs_f64() * 1e6 / 64.);
+            }
+        }
+        for (label, mut times) in ["individual", "batch"].into_iter().zip(samples) {
+            times.sort_by(f64::total_cmp);
+            println!(
+                "window={id} {label}: {:.1} µs/read (median of 10 rounds)",
+                (times[4] + times[5]) / 2.
+            );
+        }
     }
     #[test]
     fn array_traversal_retains_source_and_checks_types() {

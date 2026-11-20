@@ -447,52 +447,69 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<(NSRect, Vec<N
     if crate::desktop_mode::active() {
         return None;
     }
-    let mut occluders = Vec::new();
     let visible_spaces: Vec<_> = crate::spaces::visible_desktops()
         .into_iter()
         .map(|(_, space)| space)
         .collect();
-    for info in array(list.0) {
-        let Some(id) = number(get(info, ns_string!("kCGWindowNumber"))).map(|id| id as u32) else {
-            continue;
-        };
-        if id == border {
-            continue;
-        }
-        if id != target
-            && !number(get(info, ns_string!("kCGWindowLayer")))
-                .is_some_and(|layer| (0..=3).contains(&layer))
-        {
-            continue;
-        }
-        if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
-            .is_some_and(|alpha| alpha <= 0.)
-        {
-            continue;
-        }
-        let mut frame = NSRect::ZERO;
-        if !unsafe {
-            CGRectMakeWithDictionaryRepresentation(
-                get(info, ns_string!("kCGWindowBounds")),
-                &mut frame,
-            )
-        } {
-            continue;
-        }
-        if !visible_spaces.is_empty()
-            && !crate::focus::in_visible_space(crate::spaces::window_space(id), &visible_spaces)
-        {
-            continue;
-        }
-        if id == target {
-            return valid(frame)
-                .then(|| (frame, crate::border::visible_regions(frame, &occluders)));
-        }
-        if frame.size.width > 0. && frame.size.height > 0. {
-            occluders.push(frame);
-        }
+    regions_from_list(
+        list.0,
+        target,
+        border,
+        &visible_spaces,
+        crate::spaces::window_space,
+    )
+}
+
+// WindowServer orders this immutable list front to back. Locate the target
+// first so disjoint windows never require a synchronous Space lookup.
+fn regions_from_list(
+    list: Cf,
+    target: u32,
+    border: u32,
+    visible: &[u64],
+    mut space: impl FnMut(u32) -> Option<u64>,
+) -> Option<(NSRect, Vec<NSRect>)> {
+    if target == border {
+        return None;
     }
-    None
+    let (at, info) = array(list)
+        .enumerate()
+        .find(|(_, info)| window_id(*info) == Some(target))?;
+    let frame = visible_window_frame(info)?;
+    let mut on_screen =
+        |id| visible.is_empty() || crate::focus::in_visible_space(space(id), visible);
+    if !valid(frame) || !on_screen(target) {
+        return None;
+    }
+    let occluders = array(list).take(at).filter_map(|info| {
+        let id = window_id(info)?;
+        if id == border || !(0..=3).contains(&number(get(info, ns_string!("kCGWindowLayer")))?) {
+            return None;
+        }
+        let candidate = visible_window_frame(info)?;
+        (candidate.size.width > 0.
+            && candidate.size.height > 0.
+            && crate::border::intersection(frame, candidate).is_some()
+            && on_screen(id))
+        .then_some(candidate)
+    });
+    Some((frame, crate::border::visible_regions(frame, occluders)))
+}
+
+fn window_id(info: Cf) -> Option<u32> {
+    number(get(info, ns_string!("kCGWindowNumber"))).map(|id| id as u32)
+}
+fn visible_window_frame(info: Cf) -> Option<NSRect> {
+    if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
+        .is_some_and(|alpha| alpha <= 0.)
+    {
+        return None;
+    }
+    let mut frame = NSRect::ZERO;
+    unsafe {
+        CGRectMakeWithDictionaryRepresentation(get(info, ns_string!("kCGWindowBounds")), &mut frame)
+    }
+    .then_some(frame)
 }
 extern "C" fn deliver(_: *mut c_void) {
     let flags = PENDING.swap(0, Ordering::AcqRel);
@@ -865,5 +882,51 @@ mod tests {
         assert_eq!(classify_event(808, Some(10), 20, 0), 8);
         assert_eq!(classify_event(808, Some(99), 20, 0), 8);
         assert_eq!(classify_event(806, None, 20, 0), 8);
+    }
+    #[test]
+    fn border_clipping_queries_only_overlapping_windows_above_the_target() {
+        use super::*;
+        use crate::native::{Obj, rect};
+        objc2::rc::autoreleasepool(|_| unsafe {
+            let json = ns_string!(
+                r#"[
+                {"kCGWindowNumber":30,"kCGWindowLayer":0,"kCGWindowBounds":{"X":100,"Y":0,"Width":20,"Height":80}},
+                {"kCGWindowNumber":31,"kCGWindowLayer":5,"kCGWindowBounds":{"X":0,"Y":0,"Width":100,"Height":80}},
+                {"kCGWindowNumber":40,"kCGWindowLayer":0,"kCGWindowBounds":{"X":0,"Y":0,"Width":100,"Height":80}},
+                {"kCGWindowNumber":34,"kCGWindowLayer":0,"kCGWindowAlpha":0,"kCGWindowBounds":{"X":0,"Y":0,"Width":100,"Height":80}},
+                {"kCGWindowNumber":32,"kCGWindowLayer":3,"kCGWindowBounds":{"X":50,"Y":0,"Width":70,"Height":80}},
+                {"kCGWindowNumber":20,"kCGWindowLayer":0,"kCGWindowBounds":{"X":0,"Y":0,"Width":100,"Height":80}},
+                {"kCGWindowNumber":33,"kCGWindowLayer":0,"kCGWindowBounds":{"X":0,"Y":0,"Width":100,"Height":80}}]"#
+            );
+            let data: Obj = msg_send![json, dataUsingEncoding:4usize];
+            let objects: Retained<AnyObject> = msg_send![class!(NSJSONSerialization), JSONObjectWithData:data, options:0usize, error:ptr::null_mut::<Obj>()];
+            let list = Retained::as_ptr(&objects).cast();
+            let target = rect(0., 0., 100., 80.);
+            let clipped = Some((target, vec![rect(0., 0., 50., 80.)]));
+            let mut queried = Vec::new();
+            assert_eq!(
+                regions_from_list(list, 20, 40, &[7], |id| {
+                    queried.push(id);
+                    None // Unknown membership does not override the on-screen list.
+                }),
+                clipped
+            );
+            assert_eq!(queried, [20, 32]);
+            assert_eq!(
+                regions_from_list(list, 20, 40, &[], |_| unreachable!()),
+                clipped
+            );
+            assert_eq!(
+                regions_from_list(list, 20, 40, &[7], |id| Some(if id == 32 { 8 } else { 7 })),
+                Some((target, vec![target]))
+            );
+            assert_eq!(regions_from_list(list, 20, 40, &[7], |_| Some(8)), None);
+            for id in [34, 40, 99] {
+                assert_eq!(
+                    regions_from_list(list, id, 40, &[7], |_| unreachable!()),
+                    None
+                );
+            }
+        });
     }
 }

@@ -1,10 +1,12 @@
-AMSpace 0.9.30 — Recuperación del arrastre de ventanas flotantes.
+AMSpace 0.9.31 — Borde, pestañas e indicador más ligeros.
 
-- Si el clic inicial no identifica la ventana, AMSpace también comprueba cuál de las flotantes se ha movido. Así puede mostrar «Volver al mosaico» mientras mantienes pulsado el ratón. La ventana sigue flotante hasta que la sueltas dentro del recuadro.
+- El borde evita consultas al sistema para ventanas que no pueden taparlo. El mosaico reutiliza los botones de pestaña cuando no cambian y evita copiar la distribución. El indicador deja de preparar el texto de Ajustes antes de abrir esta vista.
+- Las lecturas de posición y tamaño de las ventanas se agrupan para reducir las llamadas de Accesibilidad. Se conserva la frecuencia de actualización y el gesto de retorno de flotantes al mosaico.
 
 English
 
-- If the initial click does not identify the window, AMSpace now checks floating windows for movement too. It can show “Return to tiling” while the mouse button is still down. The window stays floating until you release it inside the drop zone.
+- The active border skips system queries for windows that cannot cover it. Tiling reuses unchanged tab controls without copying the layout. The menu bar indicator skips preparing Settings text until the view is opened.
+- Window position and size reads are batched to reduce Accessibility calls. Update frequency and the gesture for returning floating windows to tiling are unchanged.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

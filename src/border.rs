@@ -38,7 +38,7 @@ impl Flash {
     }
 }
 
-fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
+pub(super) fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
     let x = a.origin.x.max(b.origin.x);
     let y = a.origin.y.max(b.origin.y);
     let right = (a.origin.x + a.size.width).min(b.origin.x + b.size.width);
@@ -48,14 +48,14 @@ fn intersection(a: NSRect, b: NSRect) -> Option<NSRect> {
 
 /// Disjoint pieces of the target that are not covered by a window above it.
 /// Sequential subtraction handles overlapping occluders without even/odd holes.
-pub fn visible_regions(target: NSRect, occluders: &[NSRect]) -> Vec<NSRect> {
+pub fn visible_regions(target: NSRect, occluders: impl IntoIterator<Item = NSRect>) -> Vec<NSRect> {
     let mut regions = vec![target];
     for occluder in occluders {
         // Only original pieces need cutting. Appended pieces and the entry
         // moved by swap_remove are already outside this occluder.
         for i in (0..regions.len()).rev() {
             let region = regions[i];
-            let Some(cut) = intersection(region, *occluder) else {
+            let Some(cut) = intersection(region, occluder) else {
                 continue;
             };
             regions.swap_remove(i);
@@ -140,7 +140,7 @@ mod tests {
             rect(-600., -250., 450., 400.),
             rect(-300., -400., 450., 400.),
         ];
-        let visible = visible_regions(target, &covers);
+        let visible = visible_regions(target, covers);
         for x in 0..80 {
             for y in 0..60 {
                 let point = NSPoint::new(
@@ -158,14 +158,14 @@ mod tests {
     #[test]
     fn empty_covered_and_nonoverlapping_windows_have_exact_masks() {
         let target = rect(10., 41., 825., 947.);
-        assert_eq!(visible_regions(target, &[]), vec![target]);
+        assert_eq!(visible_regions(target, []), vec![target]);
         assert_eq!(
-            visible_regions(target, &[rect(845., 41., 825., 947.)]),
+            visible_regions(target, [rect(845., 41., 825., 947.)]),
             vec![target]
         );
-        assert!(visible_regions(target, &[target]).is_empty());
+        assert!(visible_regions(target, [target]).is_empty());
         assert_eq!(
-            visible_regions(target, &[rect(10., 41., 400., 947.)]),
+            visible_regions(target, [rect(10., 41., 400., 947.)]),
             vec![rect(410., 41., 425., 947.)]
         );
     }

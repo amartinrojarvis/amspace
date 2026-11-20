@@ -134,6 +134,9 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | `dist/AMSpace.app/Contents/MacOS/amspace -app.language en --check-localizations` | Renderiza las cinco páginas de Ajustes, tres de ayuda, feedback y Acerca de; captura solo ventanas propias en `.cache/locale-en-*.png`. Comprueba idioma nativo/Sparkle y selección diferida en suite aislada. Con `es` recorre español. No registra atajos ni mueve ventanas ajenas; puede llevar sus paneles al frente |
 | `target/debug/amspace --render-desktop-previews` | Lee geometría/iconos y escribe `.cache/desktop-preview-<SpaceID>.png`. Crea `.cache/` antes; no captura contenido de las ventanas |
 | `python3 scripts/benchmark.py <PID> --seconds 20` | Mide CPU y RSS del proceso; ajustes cerrados y ratón en reposo para una muestra comparable |
+| `AMSPACE_BENCH_PID=$(pgrep -x Finder) cargo test --release benchmark_window_geometry -- --ignored --nocapture` | Compara lecturas AX individuales y agrupadas sobre la misma ventana, sin moverla ni activarla. Requiere permiso AX y una ventana estable que no esté minimizada ni a pantalla completa. Informa latencia por lectura, no CPU o RSS del proceso. |
+
+`--check-tab-close` también comprueba la continuidad de los controles: doce reconciliaciones de tres ventanas sin cambios deben conservar el botón que recibe el siguiente gesto. Tras cambiar el título de una de las ventanas del fixture, el botón debe mostrar el título nuevo.
 
 `--space-transfer-fixture` y `--tab-group-fixture` son entradas internas de diagnósticos, no segundas apps de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.
 

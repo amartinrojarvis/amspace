@@ -109,15 +109,15 @@ mod tests {
         // Secondary portrait (id 2) keeps its own Spaces next to the main one.
         let two = [(Some(1), Some(10u64)), (Some(2), Some(20u64))];
         // Pointer on the portrait screen: its Space, not the main one.
-        assert_eq!(chosen_display(&two, Some(2), 10), 1);
+        assert_eq!(chosen_display(&two, Some(2), || unreachable!()), 1);
         // Pointer on the main screen.
-        assert_eq!(chosen_display(&two, Some(1), 20), 0);
+        assert_eq!(chosen_display(&two, Some(1), || unreachable!()), 0);
         // No pointer match: the screen owning the WindowServer active Space.
-        assert_eq!(chosen_display(&two, Some(9), 20), 1);
+        assert_eq!(chosen_display(&two, Some(9), || 20), 1);
         // Neither source resolves: deterministic first entry.
-        assert_eq!(chosen_display(&two, None, 0), 0);
+        assert_eq!(chosen_display(&two, None, || 0), 0);
         // A display without a resolved number still participates by position.
-        assert_eq!(chosen_display(&[(None, Some(5))], Some(1), 5), 0);
+        assert_eq!(chosen_display(&[(None, Some(5))], Some(1), || 5), 0);
     }
     fn fixture(json: &str) -> Owned {
         unsafe {
@@ -151,6 +151,27 @@ mod tests {
             );
             // A disconnected display must not silently select another monitor.
             assert_eq!(desktops_from_snapshot(displays.0, 9, resolve).next(), None);
+        });
+    }
+    #[test]
+    fn sticky_or_malformed_membership_is_not_a_single_desktop() {
+        objc2::rc::autoreleasepool(|_| {
+            assert_eq!(single_window_space(fixture("[42]").0), Some(42));
+            for data in ["[]", "[42,43]", "[42,null]", "[\"42\"]", "{}"] {
+                assert_eq!(single_window_space(fixture(data).0), None);
+            }
+        });
+    }
+    #[test]
+    fn settings_rows_keep_first_membership_and_local_desktop_numbers() {
+        objc2::rc::autoreleasepool(|_| {
+            let displays = fixture(
+                r#"[{"Spaces":[{"type":4,"ManagedSpaceID":7},{"type":0,"ManagedSpaceID":8}]},
+                    {"Spaces":[{"type":0,"ManagedSpaceID":8},{"type":0,"ManagedSpaceID":9}]}]"#,
+            );
+            let rows = settings_rows(displays.0);
+            let labels: Vec<_> = rows.iter().map(|r| (r.id, r.number, r.display)).collect();
+            assert_eq!(labels, [(8, 1, Some(1)), (9, 2, Some(2))]);
         });
     }
     #[test]
@@ -229,10 +250,8 @@ pub fn snapshot() -> Snapshot {
 }
 fn read() -> Option<Snapshot> {
     let api = api()?;
-    let (displays, active) = unsafe {
-        let cid = (api.connection)();
-        (Owned::new((api.displays)(cid))?, (api.active)(cid))
-    };
+    let cid = unsafe { (api.connection)() };
+    let displays = Owned::new(unsafe { (api.displays)(cid) })?;
     let entries: Vec<_> = array(displays.0)
         .map(|entry| {
             (
@@ -251,7 +270,7 @@ fn read() -> Option<Snapshot> {
     // Every physical screen keeps its own Spaces, so the indicator follows the
     // screen holding the pointer; `SLSGetActiveSpace` only names the main one.
     let pointer = crate::tile_manager::pointer_display();
-    let index = chosen_display(&entries, pointer, active);
+    let index = chosen_display(&entries, pointer, || unsafe { (api.active)(cid) });
     let display = array(displays.0).nth(index)?;
     let desktops: Vec<_> = array(get(display, ns_string!("Spaces")))
         .filter(|space| number(get(*space, ns_string!("type"))) == Some(0))
@@ -297,11 +316,12 @@ fn read() -> Option<Snapshot> {
 fn chosen_display(
     entries: &[(Option<u32>, Option<u64>)],
     pointer: Option<u32>,
-    active: u64,
+    active: impl FnOnce() -> u64,
 ) -> usize {
     pointer
         .and_then(|target| entries.iter().position(|(id, _)| *id == Some(target)))
         .or_else(|| {
+            let active = active();
             entries
                 .iter()
                 .position(|(_, current)| *current == Some(active))
@@ -311,14 +331,23 @@ fn chosen_display(
 
 /// Fail closed for sticky/all-desktop windows and unavailable private API.
 pub fn window_space(id: u32) -> Option<u64> {
-    let spaces = window_spaces(id)?;
-    match spaces.as_slice() {
-        [id] => Some(*id),
-        _ => None,
+    single_window_space(copy_window_spaces(id)?.0)
+}
+fn single_window_space(values: Cf) -> Option<u64> {
+    let mut memberships = array(values);
+    if memberships.len() != 1 {
+        return None;
     }
+    number(memberships.next()?).map(|id| id as u64)
 }
 /// Read all memberships for previews, including windows pinned to several Spaces.
 pub fn window_spaces(id: u32) -> Option<Vec<u64>> {
+    let values = copy_window_spaces(id)?;
+    array(values.0)
+        .map(|value| number(value).map(|id| id as u64))
+        .collect()
+}
+fn copy_window_spaces(id: u32) -> Option<Owned> {
     type CopySpaces = unsafe extern "C" fn(i32, u32, Cf) -> Cf;
     static COPY: OnceLock<Option<CopySpaces>> = OnceLock::new();
     let api = api()?;
@@ -337,14 +366,11 @@ pub fn window_spaces(id: u32) -> Option<Vec<u64>> {
             msg_send![class!(NSNumber),numberWithUnsignedInt:id];
         let ids: objc2::rc::Retained<objc2::runtime::AnyObject> =
             msg_send![class!(NSArray),arrayWithObject:&*number];
-        let values = Owned::new(copy(
+        Owned::new(copy(
             (api.connection)(),
             7,
             objc2::rc::Retained::as_ptr(&ids).cast(),
-        ))?;
-        array(values.0)
-            .map(|value| crate::accessibility::number(value).map(|n| n as u64))
-            .collect()
+        ))
     }
 }
 /// Each display's currently visible, non-fullscreen Space.
@@ -387,46 +413,58 @@ pub fn visible_desktops() -> Vec<(u32, u64)> {
     visible
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct SettingsDesktop {
+    pub id: u64,
+    number: usize,
+    display: Option<usize>,
+}
+impl SettingsDesktop {
+    pub fn title(&self) -> String {
+        if let Some(display) = self.display {
+            crate::tr_format!(
+                "Escritorio {} · Pantalla {}",
+                "Desktop {} · Display {}",
+                self.number,
+                display
+            )
+        } else {
+            crate::tr_format!("Escritorio {}", "Desktop {}", self.number)
+        }
+    }
+}
+
 /// Every real normal desktop, including displays other than the active one.
-pub fn settings_desktops() -> Vec<(u64, String)> {
+pub fn settings_desktops() -> Vec<SettingsDesktop> {
     let Some(api) = api() else {
         return vec![];
     };
     let Some(displays) = Owned::new(unsafe { (api.displays)((api.connection)()) }) else {
         return vec![];
     };
-    let groups: Vec<Vec<u64>> = array(displays.0)
-        .map(|display| {
-            array(get(display, ns_string!("Spaces")))
-                .filter(|s| number(get(*s, ns_string!("type"))) == Some(0))
-                .filter_map(|s| number(get(s, ns_string!("ManagedSpaceID"))).map(|id| id as u64))
-                .collect()
-        })
-        .collect();
-    let multiple = groups.len() > 1;
+    settings_rows(displays.0)
+}
+fn settings_rows(displays: Cf) -> Vec<SettingsDesktop> {
+    let displays = array(displays);
+    let multiple = displays.len() > 1;
+    let mut rows = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    groups
-        .into_iter()
-        .enumerate()
-        .flat_map(|(display, ids)| {
-            ids.into_iter().enumerate().map(move |(i, id)| {
-                (
+    for (display, entry) in displays.enumerate() {
+        let ids = array(get(entry, ns_string!("Spaces")))
+            .filter(|s| number(get(*s, ns_string!("type"))) == Some(0))
+            .filter_map(|s| number(get(s, ns_string!("ManagedSpaceID"))));
+        for (index, id) in ids.enumerate() {
+            let id = id as u64;
+            if seen.insert(id) {
+                rows.push(SettingsDesktop {
                     id,
-                    if multiple {
-                        crate::tr_format!(
-                            "Escritorio {} · Pantalla {}",
-                            "Desktop {} · Display {}",
-                            i + 1,
-                            display + 1
-                        )
-                    } else {
-                        crate::tr_format!("Escritorio {}", "Desktop {}", i + 1)
-                    },
-                )
-            })
-        })
-        .filter(|(id, _)| seen.insert(*id))
-        .collect()
+                    number: index + 1,
+                    display: multiple.then_some(display + 1),
+                });
+            }
+        }
+    }
+    rows
 }
 
 /// Desktop numbering follows Mission Control on the requested physical screen.

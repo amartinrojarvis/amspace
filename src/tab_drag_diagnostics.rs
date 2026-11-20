@@ -82,10 +82,10 @@ fn prepare_model(
     manager.inactive_tabs.clear();
     manager.minimum_sizes.clear();
     manager.animated = Some(animated);
-    manager.desktops.insert(space, desktop.clone());
-    place_layout(manager, space, area)?;
     let frames = desktop.window_frames(area, 10.);
-    let used = manager.draw_strips(space, &desktop, &frames, primary_height(), 0, false);
+    manager.desktops.insert(space, desktop);
+    place_layout(manager, space, area)?;
+    let used = manager.draw_strips(space, &frames, primary_height(), 0, false);
     manager.trim_overlays(used, 0);
     super::diagnostics::pump(0.03);
     Ok(())
@@ -159,6 +159,19 @@ pub(super) fn check(
             .map(|id| Ok((*id, geometry(manager, *id)?)))
             .collect::<Result<_, String>>()?;
         let dragged = button(manager, ids[0])?;
+        if index == 0 {
+            let frames = manager.desktops[&space].window_frames(area, 10.);
+            let primary = primary_height();
+            for _ in 0..12 {
+                manager.draw_strips(space, &frames, primary, 0, false);
+                if !std::ptr::eq(&*dragged, &*button(manager, ids[0])?) {
+                    return Err("Reconciliar una pestaña sin cambios sustituyó su control.".into());
+                }
+            }
+            println!(
+                "PASS: 12 reconciliaciones de tres ventanas conservaron el botón de arrastre."
+            );
+        }
         let last_button = button(manager, ids[2])?;
         let last = end_of_tab(&last_button);
         check_tab_pan(

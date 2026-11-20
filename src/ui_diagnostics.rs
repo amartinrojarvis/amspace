@@ -77,7 +77,7 @@ unsafe fn check_settings_layout(
                         let document: Obj = msg_send![scroll, documentView];
                         let extent: NSRect = msg_send![document, frame];
                         let content_height = match page {
-                            1 => app.space_ids.len() as f64 * 52.,
+                            1 => app.space_rows.len() as f64 * 52.,
                             2 => settings_tile_height(extent.size.width),
                             3 => SETTINGS_SHORTCUTS_HEIGHT,
                             _ => SETTINGS_GENERAL_HEIGHT,
@@ -179,7 +179,11 @@ pub(crate) fn check_localizations() -> Result<(), String> {
         let mut app = App::build(target.clone(), defaults.clone());
         app.border_enabled = false;
         app.sleeping = true;
+        // Match launch followed by the first opening of Settings: the compact
+        // preview has no view during the first refresh and must paint on opening.
+        app.refresh_spaces();
         app.build_settings();
+        app.refresh_spaces();
         // A non-normal layer keeps the installed tiler from treating this
         // diagnostic window as a user's resizable document.
         let panel = app.settings.as_ref().unwrap().clone();
@@ -985,11 +989,13 @@ pub(crate) fn check_tab_pan(
                         return Err("El fin del pan se perdió durante reentrada AX.".into());
                     }
                     if matches!(delivery, TabPanDelivery::Modifiers { .. }) {
-                        // Advance the native recognizer to a subsequent press,
-                        // without dispatching a second button click. Ended is
-                        // still queued behind the borrowed App.
+                        // Deliver a complete subsequent click to the recognizer
+                        // alone. Leaving a synthetic press unmatched makes AppKit
+                        // replay it into NSButton tracking on control reuse.
                         let subsequent = native_event(1, start, !release_option)?;
                         let _: () = msg_send![gesture, mouseDown:&*subsequent];
+                        let subsequent_up = native_event(2, start, !release_option)?;
+                        let _: () = msg_send![gesture, mouseUp:&*subsequent_up];
                         let live: usize = msg_send![gesture, dragModifierFlags];
                         if (live & (1 << 19) != 0) == release_option {
                             return Err(

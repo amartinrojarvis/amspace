@@ -195,7 +195,7 @@ struct App {
     bar_colors: Vec<Obj>,
     space_page: Obj,
     space_scroll: Obj,
-    space_ids: Vec<u64>,
+    space_rows: Vec<spaces::SettingsDesktop>,
     space_controls: Vec<Obj>,
     border_enabled: bool,
     flash_enabled: bool,
@@ -472,7 +472,7 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
                     crate::i18n::tr(SETTINGS_SECTIONS[row as usize].0),
                 );
                 if row == 1 {
-                    a.rebuild_space_rows();
+                    a.refresh_space_rows(true);
                 }
             });
         }
@@ -702,7 +702,7 @@ impl App {
                 bar_colors: vec![],
                 space_page: ptr::null_mut(),
                 space_scroll: ptr::null_mut(),
-                space_ids: vec![],
+                space_rows: vec![],
                 space_controls: vec![],
                 width,
                 rgb,
@@ -794,42 +794,33 @@ impl App {
         unsafe {
             let s = spaces::snapshot();
             let b: Obj = msg_send![&self.status, button];
-            let title = space_style::render(&s, Retained::as_ptr(&self.defaults) as Obj);
-            self.refresh_status_buttons(&s);
-            self.last_title = s.title;
-            if self.status_detail != s.detail {
-                let detail = NSString::from_str(&s.detail);
-                let tip: Obj = if value(
-                    Retained::as_ptr(&self.defaults) as Obj,
-                    "desktopPreview.disabled",
-                ) {
-                    (&*detail as *const NSString).cast_mut().cast()
-                } else {
-                    ptr::null_mut()
-                };
-                let _: () = msg_send![b, setToolTip:tip];
-                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("{} · clic derecho para ajustes", "{} · right-click for settings", s.detail))];
-                self.status_detail = s.detail;
-            }
             if !self.preview.is_null() {
+                let title = space_style::render(&s, Retained::as_ptr(&self.defaults) as Obj);
                 let current: Obj = msg_send![self.preview, attributedStringValue];
                 let equal: bool = msg_send![current, isEqualToAttributedString:&*title];
                 if !equal {
                     let _: () = msg_send![self.preview, setAttributedStringValue:&*title];
                 }
             }
-            if !self.space_scroll.is_null()
-                && self.space_ids
-                    != spaces::settings_desktops()
-                        .iter()
-                        .map(|(id, _)| *id)
-                        .collect::<Vec<_>>()
-            {
-                self.rebuild_space_rows();
+            let show_tooltips = value(
+                Retained::as_ptr(&self.defaults) as Obj,
+                "desktopPreview.disabled",
+            );
+            self.refresh_status_buttons(&s, show_tooltips);
+            self.last_title = s.title;
+            if self.status_detail != s.detail {
+                if show_tooltips {
+                    let _: () = msg_send![b, setToolTip:&*NSString::from_str(&s.detail)];
+                } else {
+                    let _: () = msg_send![b, setToolTip:ptr::null::<AnyObject>()];
+                }
+                let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("{} · clic derecho para ajustes", "{} · right-click for settings", s.detail))];
+                self.status_detail = s.detail;
             }
+            self.refresh_space_rows(false);
         }
     }
-    fn refresh_status_buttons(&mut self, snapshot: &spaces::Snapshot) {
+    fn refresh_status_buttons(&mut self, snapshot: &spaces::Snapshot, show_tooltips: bool) {
         unsafe {
             let parent: Obj = msg_send![&self.status, button];
             let compact = snapshot.desktops.len() > 9 || snapshot.desktops.is_empty();
@@ -896,19 +887,15 @@ impl App {
                     )
                 };
                 let _: () = msg_send![button, setAccessibilityLabel:&*NSString::from_str(&label)];
-                let tip = NSString::from_str(&crate::tr_format!(
-                    "{label} · clic derecho para ajustes",
-                    "{label} · right-click for settings"
-                ));
-                let tip: Obj = if value(
-                    Retained::as_ptr(&self.defaults) as Obj,
-                    "desktopPreview.disabled",
-                ) {
-                    (&*tip as *const NSString).cast_mut().cast()
+                if show_tooltips {
+                    let tip = NSString::from_str(&crate::tr_format!(
+                        "{label} · clic derecho para ajustes",
+                        "{label} · right-click for settings"
+                    ));
+                    let _: () = msg_send![button, setToolTip:&*tip];
                 } else {
-                    ptr::null_mut()
-                };
-                let _: () = msg_send![button, setToolTip:tip];
+                    let _: () = msg_send![button, setToolTip:ptr::null::<AnyObject>()];
+                }
             }
         }
     }
@@ -3715,21 +3702,24 @@ impl App {
                 64,
                 self.flash_enabled,
             );
-            self.rebuild_space_rows();
+            self.refresh_space_rows(true);
         }
     }
-    fn rebuild_space_rows(&mut self) {
+    fn refresh_space_rows(&mut self, force: bool) {
         if self.space_scroll.is_null() {
             return;
         }
         unsafe {
             let desktops = spaces::settings_desktops();
-            self.space_ids = desktops.iter().map(|(id, _)| *id).collect();
+            if !force && self.space_rows == desktops {
+                return;
+            }
+            self.space_rows = desktops;
             self.space_controls.clear();
             let clip: Obj = msg_send![self.space_scroll, contentView];
             let viewport: NSRect = msg_send![clip, bounds];
             let width = viewport.size.width - 16.;
-            let height = (desktops.len() as f64 * 52.).max(viewport.size.height);
+            let height = (self.space_rows.len() as f64 * 52.).max(viewport.size.height);
             let document = alloc_view(class!(NSView), rect(0., 0., width, height));
             let root = Retained::as_ptr(&document) as Obj;
             let target = Retained::as_ptr(&self.target) as Obj;
@@ -3738,12 +3728,13 @@ impl App {
                 .iter()
                 .map(|(name, _)| crate::i18n::tr(name))
                 .collect();
-            for (index, (id, title)) in desktops.iter().enumerate() {
+            let icons_enabled = space_style::mode(defaults) == 2;
+            for (index, desktop) in self.space_rows.iter().enumerate() {
                 let y = height - (index + 1) as f64 * 52.;
                 label(
                     root,
                     rect(18., y + 18., width - 232., 22.),
-                    title,
+                    &desktop.title(),
                     13.,
                     0.,
                     false,
@@ -3755,7 +3746,7 @@ impl App {
                     target,
                     1000 + index as isize,
                 );
-                let _: () = msg_send![menu, selectItemAtIndex:space_style::icon(defaults, *id, index) as isize];
+                let _: () = msg_send![menu, selectItemAtIndex:space_style::icon(defaults, desktop.id, index) as isize];
                 for (i, (name, symbol)) in space_style::ICONS.iter().enumerate().skip(1) {
                     let item: Obj = msg_send![menu, itemAtIndex:i as isize];
                     let image: Obj = msg_send![class!(NSImage), imageWithSystemSymbolName:&*NSString::from_str(symbol), accessibilityDescription:&*NSString::from_str(crate::i18n::tr(name))];
@@ -3763,10 +3754,10 @@ impl App {
                         let _: () = msg_send![item, setImage:image];
                     }
                 }
-                let _: () = msg_send![menu, setEnabled:space_style::mode(defaults) == 2];
+                let _: () = msg_send![menu, setEnabled:icons_enabled];
                 self.space_controls.push(menu);
             }
-            if desktops.is_empty() {
+            if self.space_rows.is_empty() {
                 label(
                     root,
                     rect(18., height - 48., width - 36., 24.),
@@ -4619,7 +4610,8 @@ impl App {
                     }
                 }
                 1000..=1999 => {
-                    if let Some(id) = self.space_ids.get((tag - 1000) as usize) {
+                    if let Some(desktop) = self.space_rows.get((tag - 1000) as usize) {
+                        let id = desktop.id;
                         let selected: isize = msg_send![sender, indexOfSelectedItem];
                         let _: () = msg_send![&self.defaults, setInteger:space_style::normalize_icon(selected) as isize, forKey:&*NSString::from_str(&format!("spaceIcon.{id}"))];
                         self.refresh_spaces();

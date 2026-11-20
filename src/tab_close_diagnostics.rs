@@ -8,6 +8,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+const UPDATED_TITLE: &str = "AMSpace · nuevo título del fixture";
+
 thread_local! {
     static WINDOWS: RefCell<Vec<Retained<AnyObject>>> = const { RefCell::new(Vec::new()) };
     static ALLOW_CLOSE: Cell<bool> = const { Cell::new(false) };
@@ -28,6 +30,9 @@ extern "C-unwind" fn command(_: Obj, _: Sel, value: Obj) {
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
         match command.as_str() {
             "allow" => ALLOW_CLOSE.set(true),
+            "rename" => {
+                let _: () = msg_send![&*windows[0], setTitle:&*NSString::from_str(UPDATED_TITLE)];
+            }
             "minimize" => {
                 let _: () = msg_send![&*windows[0], miniaturize:ptr::null::<AnyObject>()];
             }
@@ -195,6 +200,19 @@ pub fn check() -> Result<(), String> {
         pump(0.12);
         Ok(())
     };
+    send("rename", &mut input, &mut output)?;
+    let frames = manager.desktops[&space].window_frames(area, 10.);
+    manager.draw_strips(space, &frames, primary_height(), 0, false);
+    unsafe {
+        let scroll: Obj = msg_send![&*manager.strips[0].panel, contentView];
+        let document: Obj = msg_send![scroll, documentView];
+        let tab: Obj = msg_send![document, viewWithTag:ids[0] as isize];
+        let title: Option<Retained<NSString>> = msg_send![tab, title];
+        if title.is_none_or(|value| value.to_string() != UPDATED_TITLE) {
+            return Err("La pestaña conservó el título AX anterior al cambio.".into());
+        }
+    }
+    println!("PASS: el título nuevo de la ventana llegó al botón de la pestaña.");
     let retire = |manager: &mut Manager| -> Result<(), String> {
         let identities = ws::all_window_ids().ok_or("Sin instantánea del compositor")?;
         manager.retire_closed_windows(&HashSet::new(), Some(&identities));
