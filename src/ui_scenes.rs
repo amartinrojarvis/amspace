@@ -6,9 +6,58 @@ use crate::{
     tile_manager::scenes::{SceneReview, SceneWindow},
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 const SKIP_SLOT: isize = 1;
 const FIRST_WINDOW: isize = 2;
+
+struct SceneLaunch {
+    deadline: Instant,
+    pending: Vec<(String, Receiver<bool>, bool)>,
+    failed: Vec<String>,
+}
+
+fn stopped_apps(review: &SceneReview) -> impl Iterator<Item = &str> {
+    let mut seen = HashSet::new();
+    review
+        .rows
+        .iter()
+        .filter(|row| row.available && row.candidates.is_empty())
+        .map(|row| row.bundle.as_str())
+        .filter(move |&id| seen.insert(id))
+        .filter(|id| unsafe {
+            let apps: Obj = msg_send![class!(NSRunningApplication),
+                runningApplicationsWithBundleIdentifier:&*NSString::from_str(id)];
+            let count: usize = msg_send![apps, count];
+            count == 0
+        })
+}
+
+fn launch_app(id: &str) -> Option<Receiver<bool>> {
+    unsafe {
+        let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let url: Option<Retained<AnyObject>> = msg_send![workspace,
+            URLForApplicationWithBundleIdentifier:&*NSString::from_str(id)];
+        let url = url?;
+        let config: Retained<AnyObject> =
+            msg_send![class!(NSWorkspaceOpenConfiguration), configuration];
+        let _: () = msg_send![&config, setActivates:false];
+        let (sender, receiver) = mpsc::channel();
+        let completion = block2::RcBlock::new(move |app: Obj, error: Obj| {
+            let _ = sender.send(!app.is_null() && error.is_null());
+        });
+        let _: () = msg_send![workspace, openApplicationAtURL: &*url,
+            configuration: &*config, completionHandler: &*completion];
+        Some(receiver)
+    }
+}
+
+pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
+    with_app_deferred(target, sel!(sceneLaunchProgress:), |app| {
+        app.update_scene_launch(target);
+    });
+}
 
 pub(super) struct Panel {
     pub(super) window: Retained<AnyObject>,
@@ -18,6 +67,8 @@ pub(super) struct Panel {
     scroll: Obj,
     status: Obj,
     apply: Obj,
+    open_missing: Obj,
+    launch: Option<SceneLaunch>,
     entries: Vec<scene_library::Entry>,
     captured_windows: HashMap<String, Vec<SceneWindow>>,
     review: Option<SceneReview>,
@@ -84,6 +135,7 @@ pub(super) extern "C-unwind" fn will_close(_: Obj, _: Sel, notice: Obj) {
             .filter(|p| ptr::eq(Retained::as_ptr(&p.window), closed))
         {
             panel.review = None;
+            panel.launch = None;
             panel.controls.clear();
             unsafe {
                 let _: () = msg_send![panel.scroll, setDocumentView:ptr::null::<AnyObject>()];
@@ -139,11 +191,18 @@ impl Panel {
                 target,
                 133,
             );
-            let scroll = alloc_view(class!(NSScrollView), rect(20., 91., 580., 212.));
+            let scroll = alloc_view(class!(NSScrollView), rect(20., 112., 580., 191.));
             let _: () = msg_send![&scroll, setHasVerticalScroller:true];
             let _: () = msg_send![&scroll, setBorderType:1usize];
             let _: () = msg_send![root, addSubview:&*scroll];
-            let status = wrapping_label(root, rect(20., 9., 408., 70.), "", 12.);
+            let status = wrapping_label(root, rect(20., 9., 385., 90.), "", 12.);
+            let open_missing = button(
+                root,
+                rect(413., 67., 188., 32.),
+                tr("Abrir apps que faltan"),
+                target,
+                137,
+            );
             let apply = button(
                 root,
                 rect(438., 27., 163., 32.),
@@ -160,6 +219,8 @@ impl Panel {
                 scroll: Retained::as_ptr(&scroll) as Obj,
                 status,
                 apply,
+                open_missing,
+                launch: None,
                 entries: Vec::new(),
                 captured_windows: HashMap::new(),
                 review: None,
@@ -357,9 +418,18 @@ impl Panel {
     }
     fn update_status(&self) {
         let choices = self.choices();
-        let ready = choices.is_some();
+        let ready = choices.is_some() && self.launch.is_none();
+        let open = self.launch.is_none()
+            && self
+                .review
+                .as_ref()
+                .is_some_and(|review| stopped_apps(review).next().is_some());
         let message = if self.entries.is_empty() {
             tr("Guarda una escena para empezar.")
+        } else if self.launch.is_some() {
+            tr("Abriendo aplicaciones y esperando sus ventanas…")
+        } else if open {
+            tr("Faltan aplicaciones. Ábrelas antes de aplicar la escena.")
         } else if choices
             .as_ref()
             .is_some_and(|rows| rows.iter().any(Option::is_none))
@@ -378,16 +448,91 @@ impl Panel {
         };
         unsafe {
             let _: () = msg_send![self.apply,setEnabled:ready];
+            let _: () = msg_send![self.open_missing,setEnabled:open];
             text(self.status, message);
         }
     }
 }
 
 impl App {
+    fn update_scene_launch(&mut self, target: Obj) {
+        let Some(panel) = self.scenes.as_mut() else {
+            return;
+        };
+        let Some(mut launch) = panel.launch.take() else {
+            return;
+        };
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let review = panel.selected().and_then(|entry| {
+            self.tile_manager
+                .review_scene(defaults, &entry.displays)
+                .ok()
+        });
+        launch.pending.retain_mut(|(id, response, opened)| {
+            if !*opened {
+                match response.try_recv() {
+                    Ok(true) => *opened = true,
+                    Ok(false) | Err(TryRecvError::Disconnected) => {
+                        launch.failed.push(id.clone());
+                        return false;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+            }
+            !*opened
+                || !review.as_ref().is_some_and(|review| {
+                    review
+                        .rows
+                        .iter()
+                        .any(|row| &row.bundle == id && !row.candidates.is_empty())
+                })
+        });
+        if !launch.pending.is_empty() && Instant::now() < launch.deadline {
+            panel.launch = Some(launch);
+            schedule_app_callback(target, sel!(sceneLaunchProgress:), 0.4);
+            return;
+        }
+        if let Some(review) = review {
+            panel.populate(Some(review), target);
+        } else {
+            panel.update_status();
+        }
+        let mut message = String::new();
+        if !launch.failed.is_empty() {
+            message = format!(
+                "{} {}",
+                tr("No se pudieron abrir:"),
+                launch.failed.join(", ")
+            );
+        }
+        if !launch.pending.is_empty() {
+            if !message.is_empty() {
+                message.push('\n');
+            }
+            message.push_str(tr(
+                "Si una app no mostró una ventana en mosaico, ábrela y pulsa Revisar.",
+            ));
+        }
+        if !message.is_empty() {
+            unsafe { text(panel.status, &message) };
+        }
+        if panel.review.is_none() && message.is_empty() {
+            unsafe {
+                text(
+                    panel.status,
+                    tr("La pantalla o sus ventanas han cambiado. Pulsa Revisar."),
+                )
+            };
+        }
+    }
+
     pub(super) fn scene_action(&mut self, tag: isize, preferred: Option<&str>) {
         let target = Retained::as_ptr(&self.target) as Obj;
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         let mut panel = self.scenes.take().unwrap_or_else(|| Panel::new(target));
+        if !matches!(tag, 135..=137) {
+            panel.launch = None;
+        }
         let result = (|| -> Result<(), String> {
             if tag == 130 {
                 let selected = panel.selected().map(|e| e.id.clone());
@@ -427,7 +572,7 @@ impl App {
                 panel.update_status();
                 return Ok(());
             }
-            if tag != 135 {
+            if !matches!(tag, 135 | 137) {
                 panel.populate(None, target);
             }
             if self.sleeping
@@ -442,7 +587,46 @@ impl App {
             if tag == 131 {
                 return panel.save_scene(defaults, &mut self.tile_manager);
             }
+            if tag == 137 {
+                if panel.launch.is_some() {
+                    return Ok(());
+                }
+                let Some(entry) = panel.selected() else {
+                    return Ok(());
+                };
+                let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
+                let mut launch = SceneLaunch {
+                    deadline: Instant::now() + Duration::from_secs(10),
+                    pending: Vec::new(),
+                    failed: Vec::new(),
+                };
+                for id in stopped_apps(&review) {
+                    if let Some(result) = launch_app(id) {
+                        launch.pending.push((id.into(), result, false));
+                    } else {
+                        launch.failed.push(id.into());
+                    }
+                }
+                if launch.pending.is_empty() {
+                    panel.populate(Some(review), target);
+                    if launch.failed.is_empty() {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "{} {}",
+                        tr("No se pudieron abrir:"),
+                        launch.failed.join(", ")
+                    ));
+                }
+                panel.launch = Some(launch);
+                panel.update_status();
+                schedule_app_callback(target, sel!(sceneLaunchProgress:), 0.4);
+                return Ok(());
+            }
             if tag == 135 {
+                if panel.launch.is_some() {
+                    return Ok(());
+                }
                 if let (Some(review), Some(choices)) = (&panel.review, panel.choices()) {
                     let partial = choices.iter().any(Option::is_none);
                     self.tile_manager.apply_scene(defaults, review, &choices)?;
@@ -693,6 +877,56 @@ pub(crate) fn check_scene_fixture(
                 }
             }
             println!("PASS: la escena parcial recoloca tres ventanas y contrae el puesto ausente.");
+            // Optional launch fixture: a separate, uniquely registered test app.
+            // This exercises the real button and Launch Services without
+            // starting or closing any of the user's applications.
+            if let Ok(bundle) = std::env::var("AMSPACE_SCENE_LAUNCH_FIXTURE") {
+                if !bundle.starts_with("io.github.amartinrojarvis.amspace.fixture.") {
+                    return Err("El bundle de lanzamiento debe ser un fixture desechable.".into());
+                }
+                let mut launch_scene = displays[0].clone();
+                launch_scene.bundles.fill(bundle);
+                let id = scene_library::save(defaults, "Apertura", &[launch_scene])?;
+                let mut app = App::build(controller.clone(), prefs.clone());
+                std::mem::swap(&mut app.tile_manager, &mut manager);
+                app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+                app.scene_action(130, Some(&id));
+                let panel_ref = app.scenes.as_ref().unwrap();
+                let enabled: bool = msg_send![panel_ref.open_missing, isEnabled];
+                if !enabled {
+                    return Err("No se ofreció abrir la app cerrada.".into());
+                }
+                let open_missing = panel_ref.open_missing;
+                APP.with(|cell| *cell.borrow_mut() = Some(app));
+                let _: () = msg_send![open_missing, performClick:ptr::null::<AnyObject>()];
+                let end = Instant::now() + Duration::from_secs(6);
+                let opened = loop {
+                    super::diagnostics::pump(0.1);
+                    if APP.with(|cell| {
+                        let app = cell.borrow();
+                        app.as_ref()
+                            .and_then(|app| app.scenes.as_ref()?.launch.as_ref())
+                            .is_some_and(|launch| {
+                                matches!(launch.pending.as_slice(), [(_, _, true)])
+                            })
+                    }) {
+                        break true;
+                    }
+                    if Instant::now() >= end {
+                        break false;
+                    }
+                };
+                let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+                std::mem::swap(&mut app.tile_manager, &mut manager);
+                panel = app.scenes.take().unwrap();
+                panel.launch = None;
+                if !opened {
+                    return Err("Launch Services no confirmó la apertura del fixture.".into());
+                }
+                println!(
+                    "PASS: el botón abre una aplicación cerrada una sola vez para tres puestos."
+                );
+            }
 
             let saved_frames = ids
                 .iter()

@@ -44,6 +44,17 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Escenas guardadas" => "Saved scenes",
         "Revisar" => "Review",
         "Aplicar escena" => "Apply scene",
+        "Abrir apps que faltan" => "Open missing apps",
+        "Abriendo aplicaciones y esperando sus ventanas…" => {
+            "Opening apps and waiting for their windows…"
+        }
+        "Faltan aplicaciones. Ábrelas antes de aplicar la escena." => {
+            "Some apps are closed. Open them before applying the scene."
+        }
+        "No se pudieron abrir:" => "Could not open:",
+        "Si una app no mostró una ventana en mosaico, ábrela y pulsa Revisar." => {
+            "If an app did not show a tiled window, open one and click Review."
+        }
         "Pantalla desconectada" => "Display disconnected",
         "Sin ventana compatible" => "No matching window",
         "Elige una ventana…" => "Choose a window…",

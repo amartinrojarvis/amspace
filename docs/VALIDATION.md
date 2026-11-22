@@ -1,3 +1,8 @@
+## 0.9.40/build 95 — Apertura de aplicaciones de una escena
+
+- `--check-work-scenes` pulsó **Abrir apps que faltan** en una escena con tres puestos de una misma app desechable cerrada. Launch Services confirmó una única solicitud exitosa. El escenario no arranca el mosaico global: valida la apertura, no la admisión automática de las ventanas de esa app ni sus documentos.
+- `scripts/check.sh`: 298 pruebas correctas (nueve ignoradas), formato, Clippy y plist. Bundle universal; apertura comprobada en Apple Silicon en el escritorio visible del segundo monitor, sin traslado entre monitores ni ejecución en Intel.
+
 ## 0.9.39/build 94 — Ida y vuelta de escenas de trabajo
 
 - `--check-work-scenes` guardó un reparto asimétrico de tres ventanas AppKit de la misma app, intercambió sus puestos y volvió a revisar. El panel preseleccionó las ventanas originales y Accesibilidad confirmó que cada una recuperó exactamente su marco. El diagnóstico también comprobó que elegir solo una ventana en una escena ambigua no omite implícitamente las demás.

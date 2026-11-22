@@ -137,6 +137,8 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | `python3 scripts/benchmark.py <PID> --seconds 20` | Mide CPU y RSS del proceso; ajustes cerrados y ratón en reposo para una muestra comparable |
 | `AMSPACE_BENCH_PID=$(pgrep -x Finder) cargo test --release benchmark_window_geometry -- --ignored --nocapture` | Compara lecturas AX individuales y agrupadas sobre la misma ventana, sin moverla ni activarla. Requiere permiso AX y una ventana estable que no esté minimizada ni a pantalla completa. Informa latencia por lectura, no CPU o RSS del proceso. |
 
+`--check-work-scenes` también comprueba el lanzamiento si `AMSPACE_SCENE_LAUNCH_FIXTURE` contiene el bundle ID de una app AppKit desechable registrada en Launch Services y que todavía no se esté ejecutando. Usa el prefijo `io.github.amartinrojarvis.amspace.fixture.` y configura la app de prueba para que termine por sí sola. El diagnóstico comprueba la apertura real, no la admisión de sus ventanas en el mosaico global.
+
 `--check-tab-close` también comprueba la continuidad de los controles: doce reconciliaciones de tres ventanas sin cambios deben conservar el botón que recibe el siguiente gesto. Tras cambiar el título de una de las ventanas del fixture, el botón debe mostrar el título nuevo.
 
 `--space-transfer-fixture` y `--tab-group-fixture` son entradas internas de diagnósticos, no segundas apps de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.

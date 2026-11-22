@@ -74,11 +74,28 @@ pub fn run_fixture() {
             command as extern "C-unwind" fn(Obj, Sel, Obj),
         );
         let delegate: Retained<AnyObject> = msg_send![builder.register(), new];
+        // The primary monitor may be occupied by a fullscreen app. Put the
+        // disposable windows on a monitor with an actual visible desktop.
+        let fixture_origin = spaces::visible_desktops()
+            .into_iter()
+            .find_map(|(display, _)| area(display))
+            .map_or((200., 220.), |r| {
+                (
+                    r.origin.x + 100.,
+                    primary_height() - r.origin.y - r.size.height + 100.,
+                )
+            });
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();
             for index in 0..3 {
                 let window: Allocated<AnyObject> = msg_send![class!(NSWindow), alloc];
-                let window: Retained<AnyObject> = msg_send![window, initWithContentRect:rect(200. + 40. * index as f64, 220., 420., 280.), styleMask:15usize, backing:2usize, defer:false];
+                let frame = rect(
+                    fixture_origin.0 + 40. * index as f64,
+                    fixture_origin.1,
+                    420.,
+                    280.,
+                );
+                let window: Retained<AnyObject> = msg_send![window, initWithContentRect:frame, styleMask:15usize, backing:2usize, defer:false];
                 let _: () = msg_send![&window, setReleasedWhenClosed:false];
                 let _: () = msg_send![&window, setLevel:3isize];
                 let _: () = msg_send![&window, setTabbingMode:2isize];

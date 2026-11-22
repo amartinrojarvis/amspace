@@ -4573,7 +4573,7 @@ impl App {
                 }
                 57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),
-                130..=136 => self.scene_action(tag, None),
+                130..=137 => self.scene_action(tag, None),
                 50 => {
                     let state: isize = msg_send![sender, state];
                     crate::tile_manager::save(
@@ -5809,6 +5809,7 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(checkUpdates:), check_updates),
                 (sel!(change:), change),
                 (sel!(windowWillClose:), scenes::will_close),
+                (sel!(sceneLaunchProgress:), scenes::launch_progress),
                 (sel!(hover:), hover),
                 (sel!(tileTick:), tile_tick),
                 (sel!(tileMouseEvent:), mouse_delivery::drain),
