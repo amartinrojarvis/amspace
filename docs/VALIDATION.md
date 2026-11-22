@@ -2,6 +2,8 @@
 
 - `--check-work-scenes` pulsó **Abrir apps que faltan** en una escena con tres puestos de una misma app desechable cerrada. Launch Services confirmó una única solicitud exitosa. El escenario no arranca el mosaico global: valida la apertura, no la admisión automática de las ventanas de esa app ni sus documentos.
 - `scripts/check.sh`: 298 pruebas correctas (nueve ignoradas), formato, Clippy y plist. Bundle universal; apertura comprobada en Apple Silicon en el escritorio visible del segundo monitor, sin traslado entre monitores ni ejecución en Intel.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45061523102) para `381974a`. Los cinco archivos de [v0.9.40](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.40) se descargaron sin autenticación y coincidieron con los preparados. El DMG público se montó en solo lectura: se verificaron la guía, la disposición, el enlace a Aplicaciones, el build 95 y la firma del bundle. El ZIP inmutable (`3bc0b5d`) tiene SHA-256 `d2ab15c4d0fe27d41a411079546c7302469d22d29e48277eaaadd45b8f6e04f5`.
+- El catálogo de `40d4ad9` devolvió los bytes firmados sin compresión y con las cabeceras de Sparkle (gzip). No se probó instalar desde Sparkle ni una primera instalación en otra cuenta; no se sustituyó la instalación habitual.
 
 ## 0.9.39/build 94 — Ida y vuelta de escenas de trabajo
 
