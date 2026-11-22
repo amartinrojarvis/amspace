@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.35</title><pubDate>Sun, 22 Nov 2026 17:41:16 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.35 — Guardado de escenas de trabajo.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.36</title><pubDate>Sun, 22 Nov 2026 17:59:26 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.36 — Escenas de trabajo en el selector de plantillas.
 
-- Guardar y revisar escenas ya no dependen de que el mosaico termine de actualizar su estado interno, si macOS confirma que las ventanas siguen en su escritorio. Aplicar conserva esa protección antes de mover ventanas.
-- El panel confirma el guardado sin iniciar una revisión automática y distingue los bloqueos por permisos, gestos o cambios de escritorio.
+- Abre **Escenas de trabajo** desde el selector emergente o pulsando **S**. Elige una escena para abrir su revisión; las ventanas solo se mueven al pulsar **Aplicar escena**.
+- **Gestionar escenas…** abre la biblioteca para guardar o borrar escenas.
 
 English
 
-- Saving and reviewing scenes no longer wait for the tiling state to settle when macOS confirms the windows are still on their desktop. Applying still waits before moving windows.
-- The panel confirms the save without starting a review and distinguishes permission, gesture, and desktop-transition blockers.
+- Open **Work scenes** from the layout picker or press **S**. Choose a scene to review it; windows only move when you click **Apply scene**.
+- **Manage scenes…** opens the library to save or delete scenes.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.35/AMSpace-universal.zip" length="3248706" type="application/octet-stream" sparkle:version="90" sparkle:shortVersionString="0.9.35" sparkle:edSignature="XuNCabUOucL/oAEKAk7UyqG28GFQWFg5uS5K0KMEW/qttglHpcNBBUKirEsdFH4iN+PWSQTOZ0brun7ignsnAw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 2pN94XRuCPcVQIxDNBgEWJc5cBZmdzkwIqwRiM7sjAmwZR/U06YEbBdjcNjWEh2rMHhDxR6bpgM2qvskrf/EAQ==
-length: 2078
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.36/AMSpace-universal.zip" length="3256311" type="application/octet-stream" sparkle:version="91" sparkle:shortVersionString="0.9.36" sparkle:edSignature="PhMotDeeOYKdK4X+HB/xqb02rGqJw4f3Njl47Nv4Kkm5DRPj5Jr85hH6OOqRBsqZu3HqlhtZccf8MXYCQgnADA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: Y4xwzxvvUckt+yBDMTu9ScfSaII3p6hV3JZs9Enf1qwhAOg67/YWQ93QYmQqnsNRZXb+0HC0lVzPCyyeYgIgDg==
+length: 1887
 -->
