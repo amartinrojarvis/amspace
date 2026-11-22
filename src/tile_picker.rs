@@ -13,6 +13,13 @@ use objc2::{
 use objc2_foundation::{NSRect, NSString};
 use std::{ptr, sync::OnceLock};
 
+pub(crate) const SCENES_MENU_TAG: isize = 137;
+
+pub(crate) enum SceneChoice {
+    Review(String),
+    Manage,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     Select(usize),
@@ -263,7 +270,14 @@ extern "C-unwind" fn send_event(panel: Obj, _: Sel, event: Obj) {
         let flags: usize = msg_send![event, modifierFlags];
         if kind == 10 && flags & ((1 << 18) | (1 << 19) | (1 << 20)) == 0 {
             let key: u16 = msg_send![event, keyCode];
-            crate::ui::layout_picker_key(key, flags & (1 << 17) != 0);
+            if key == 1 {
+                // Let AppKit track the menu outside the mutable App borrow.
+                let root: Obj = msg_send![panel, contentView];
+                let scenes: Obj = msg_send![root, viewWithTag:SCENES_MENU_TAG];
+                let _: () = msg_send![scenes, performClick:ptr::null::<AnyObject>()];
+            } else {
+                crate::ui::layout_picker_key(key, flags & (1 << 17) != 0);
+            }
         } else {
             let _: () = msg_send![super(panel, class!(NSPanel)), sendEvent:event];
         }
@@ -320,8 +334,45 @@ unsafe fn choice(
     }
 }
 
+unsafe fn scene_menu(parent: Obj, frame: NSRect, target: Obj, defaults: Obj) -> Obj {
+    use crate::i18n::tr;
+    unsafe {
+        let button: Allocated<AnyObject> = msg_send![class!(NSPopUpButton), alloc];
+        let button: Retained<AnyObject> = msg_send![button, initWithFrame:frame, pullsDown:true];
+        let title = NSString::from_str(tr("Escenas de trabajo"));
+        let _: () = msg_send![&button, setTag:SCENES_MENU_TAG];
+        let _: () = msg_send![&button, setAccessibilityLabel:&*title];
+        let hint = NSString::from_str(tr("S: abrir el menú de escenas"));
+        let _: () = msg_send![&button, setToolTip:&*hint];
+        let _: () = msg_send![&button, addItemWithTitle:&*title];
+        let menu: Obj = msg_send![&button, menu];
+        let add = |title: &str, id: Option<&str>| {
+            let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
+            let _: () = msg_send![&item, setTitle:&*NSString::from_str(title)];
+            let _: () = msg_send![&item, setTarget:target];
+            let _: () = msg_send![&item, setAction:sel!(layoutSceneChoice:)];
+            if let Some(id) = id {
+                let _: () = msg_send![&item, setRepresentedObject:&*NSString::from_str(id)];
+            }
+            let _: () = msg_send![menu, addItem:&*item];
+        };
+        let entries = crate::scene_library::entries(defaults);
+        if !entries.is_empty() {
+            for entry in &entries {
+                add(&entry.name, Some(&entry.id));
+            }
+            let separator: Retained<AnyObject> = msg_send![class!(NSMenuItem), separatorItem];
+            let _: () = msg_send![menu, addItem:&*separator];
+        }
+        add(tr("Gestionar escenas…"), None);
+        let _: () = msg_send![parent, addSubview:&*button];
+        menu
+    }
+}
+
 pub struct Picker {
     panel: Retained<AnyObject>,
+    scene_menu: Obj,
     pub context: PickerContext,
     pub selected: usize,
     pub columns: usize,
@@ -384,23 +435,28 @@ impl Picker {
             } = gallery_geometry(area, total);
             let backdrop = plate(root, gallery, 0.96, false, 22.);
             crate::native::hud_surface(backdrop, false, 0.95);
-            let orientation = if columns == 2 {
-                crate::i18n::tr("vertical")
-            } else {
-                crate::i18n::tr("horizontal")
-            };
+            let header_width = gallery.size.width - 48.;
+            let menu_width = (header_width * 0.43).min(204.);
+            let scene_menu = scene_menu(
+                root,
+                rect(
+                    gallery.origin.x + gallery.size.width - 24. - menu_width,
+                    gallery.origin.y + gallery.size.height - 43.,
+                    menu_width,
+                    28.,
+                ),
+                target,
+                defaults,
+            );
             light_label(
                 root,
                 rect(
                     gallery.origin.x + 24.,
                     gallery.origin.y + gallery.size.height - 40.,
-                    gallery.size.width - 48.,
+                    (header_width - menu_width - 12.).max(1.),
                     26.,
                 ),
-                &crate::tr_format!(
-                    "Distribuciones · pantalla {orientation}",
-                    "Layouts · {orientation} display"
-                ),
+                crate::i18n::tr("Plantillas"),
                 21.,
                 true,
             );
@@ -551,6 +607,7 @@ impl Picker {
             let selected = context.desktop.layout.selection_index() as usize;
             let mut picker = Self {
                 panel,
+                scene_menu,
                 context,
                 selected,
                 columns,
@@ -569,6 +626,18 @@ impl Picker {
     pub fn show(&self) {
         unsafe {
             let _: () = msg_send![&self.panel,makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
+    }
+    pub(crate) fn scene_choice(&self, item: Obj) -> Option<SceneChoice> {
+        unsafe {
+            let menu: Obj = msg_send![item, menu];
+            if menu != self.scene_menu {
+                return None;
+            }
+            let id: Option<Retained<NSString>> = msg_send![item, representedObject];
+            Some(id.map_or(SceneChoice::Manage, |id| {
+                SceneChoice::Review(id.to_string())
+            }))
         }
     }
     pub fn select(&mut self, index: usize) {

@@ -30,6 +30,12 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         " · seleccionada" => " · selected",
         "Escenas de trabajo…" => "Work scenes…",
         "Escenas de trabajo" => "Work scenes",
+        "Plantillas" => "Layouts",
+        "Gestionar escenas…" => "Manage scenes…",
+        "S: abrir el menú de escenas" => "S: open the scenes menu",
+        "Esta escena ya no está guardada. Elige otra." => {
+            "This scene is no longer saved. Choose another."
+        }
         "Guarda el mosaico visible de cada pantalla y elige las ventanas al recuperarlo." => {
             "Save each display’s visible layout and choose its windows when restoring."
         }

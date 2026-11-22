@@ -266,6 +266,8 @@ El gesto distingue el redimensionado iniciado en un borde del cambio de tamaño 
 
 La galería mantiene el tamaño legible de sus tarjetas y usa un `NSScrollView` vertical cuando la biblioteca excede el alto útil. Las miniaturas y botones pertenecen a su documento, no al panel; al cambiar la selección con teclado se llama a `scrollRectToVisible:`. La escala depende del ancho disponible, no del número de plantillas.
 
+La cabecera tiene un menú AppKit independiente para escenas de trabajo, accesible con **S**. Sus opciones conservan el UUID de la escena y no ocupan índices de plantilla. Al elegir una se cierra el selector y se recarga la biblioteca para abrir la revisión por UUID. Una escena borrada mientras el menú estaba abierto no redirige a otra. Solo el botón **Aplicar escena** puede mover ventanas.
+
 Las tarjetas personales y su preview grande se calculan sobre una copia del `PickerContext.desktop`, con identidades, grupos, reserva de cabecera, mínimos de aplicaciones y rejilla del contexto. No se usa el ejemplo ordinal de la biblioteca para decidir si una plantilla cabe. Solo las miniaturas de plantillas rechazadas pueden mostrar ese ejemplo; no habilita aplicar ni dibuja un destino válido.
 
 

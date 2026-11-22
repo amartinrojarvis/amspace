@@ -1,3 +1,8 @@
+## 0.9.36/build 91 — Escenas de trabajo en el selector de plantillas
+
+- `--check-work-scenes` envió la acción AppKit del elemento «Estudio», segundo de dos escenas, desde el menú de la galería. El selector se cerró y abrió la revisión de esa escena por UUID. Las tres ventanas conservaron su geometría hasta la aplicación explícita. Se comprobó visualmente el menú en la cabecera; el diagnóstico no simula la pulsación física de **S**.
+- `scripts/check.sh`: 296 pruebas correctas, nueve ignoradas. Bundle universal arm64/x86_64; diagnóstico ejecutado en Apple Silicon.
+
 ## 0.9.35/build 90 — Guardado de escenas durante la reentrada
 
 - `--check-work-scenes` usa tres ventanas AppKit desechables y preferencias aisladas. Tras simular una notificación de pantalla sin cambiar el Space físico, guardar y revisar funcionan durante la reentrada; aplicar sigue bloqueado y no cambia ningún marco.

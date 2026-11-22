@@ -314,17 +314,23 @@ impl Panel {
 }
 
 impl App {
-    pub(super) fn scene_action(&mut self, tag: isize) {
+    pub(super) fn scene_action(&mut self, tag: isize, preferred: Option<&str>) {
         let target = Retained::as_ptr(&self.target) as Obj;
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         let mut panel = self.scenes.take().unwrap_or_else(|| Panel::new(target));
         let result = (|| -> Result<(), String> {
             if tag == 130 {
                 let selected = panel.selected().map(|e| e.id.clone());
-                panel.reload(defaults, selected.as_deref());
+                panel.reload(defaults, preferred.or(selected.as_deref()));
                 unsafe {
                     let _: () =
                         msg_send![&panel.window,makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+                }
+                if let Some(id) = preferred {
+                    if panel.selected().is_none_or(|entry| entry.id != id) {
+                        panel.populate(None, target);
+                        return Err(tr("Esta escena ya no está guardada. Elige otra.").into());
+                    }
                 }
             }
             if tag == 133 {
@@ -406,8 +412,8 @@ pub(crate) fn check_scene_fixture(
         let defaults = Retained::as_ptr(&prefs) as Obj;
         let _: () = msg_send![&prefs, removePersistentDomainForName:&*suite];
         let _: () = msg_send![&prefs, setInteger:1isize, forKey:ns_string!("tile.enabled")];
-        let target = controller();
-        let target = Retained::as_ptr(&target) as Obj;
+        let controller = controller();
+        let target = Retained::as_ptr(&controller) as Obj;
         let mut panel = Panel::new(target);
         let result = (|| {
             let geometry = |id| {
@@ -431,14 +437,57 @@ pub(crate) fn check_scene_fixture(
                 distribution: displays[0].distribution.clone(),
                 bundles: displays[0].bundles.clone(),
             };
+            scene_library::save(defaults, "Antes", &displays)?;
             displays.push(offline);
             let saved = scene_library::save(defaults, "Estudio", &displays)?;
-            panel.reload(defaults, Some(&saved));
-            let review = manager.review_scene(
-                defaults,
-                &panel.selected().ok_or("Escena no guardada.")?.displays,
-            )?;
-            panel.populate(Some(review), target);
+            let mut desktop = crate::scene_library::ordinal_desktop(&displays[0])
+                .ok_or("No se pudo preparar la galería del fixture.")?;
+            desktop.order = ids.to_vec();
+            let context = crate::tile_manager::PickerContext {
+                workspace: (0, 0),
+                area,
+                desktop,
+            };
+            let mut app = App::build(controller.clone(), prefs.clone());
+            app.layout_picker = Some(
+                crate::tile_picker::Picker::new(context, target, defaults)
+                    .ok_or("No se pudo mostrar el selector de plantillas.")?,
+            );
+            app.layout_picker.as_ref().unwrap().show();
+            super::diagnostics::pump(0.06);
+            let native_app: Obj = msg_send![class!(NSApplication), sharedApplication];
+            let gallery: Option<Retained<AnyObject>> = msg_send![native_app, keyWindow];
+            let gallery = gallery.ok_or("El selector no recibió su ventana nativa.")?;
+            let root: Obj = msg_send![&gallery, contentView];
+            let popup: Obj = msg_send![root, viewWithTag:crate::tile_picker::SCENES_MENU_TAG];
+            let menu: Obj = msg_send![popup, menu];
+            let item: Option<Retained<AnyObject>> =
+                msg_send![menu, itemWithTitle:ns_string!("Estudio")];
+            let item = item.ok_or("Falta la escena Estudio en el menú de plantillas.")?;
+            super::diagnostics::capture_window(&gallery, ".cache/work-scenes-picker.png")?;
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            APP.with(|cell| *cell.borrow_mut() = Some(app));
+            let action: Sel = msg_send![&item, action];
+            let recipient: Obj = msg_send![&item, target];
+            let sent: bool = msg_send![native_app, sendAction:action, to:recipient, from:&*item];
+            let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            let visible: bool = msg_send![&gallery, isVisible];
+            if !sent || visible || app.layout_picker.is_some() {
+                return Err("Elegir una escena no cerró el selector de plantillas.".into());
+            }
+            panel = app
+                .scenes
+                .take()
+                .ok_or("No se abrió el panel de escenas.")?;
+            let visible: bool = msg_send![&panel.window, isVisible];
+            if !visible
+                || panel.review.is_none()
+                || panel.selected().is_none_or(|entry| entry.id != saved)
+            {
+                return Err("La galería no abrió la revisión de la escena elegida.".into());
+            }
+            println!("PASS: el menú de plantillas abre la revisión de la escena elegida.");
             if panel.choices().is_some() {
                 return Err("Se eligieron automáticamente ventanas ambiguas.".into());
             }

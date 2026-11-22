@@ -4566,7 +4566,7 @@ impl App {
                 }
                 57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),
-                130..=136 => self.scene_action(tag),
+                130..=136 => self.scene_action(tag, None),
                 50 => {
                     let state: isize = msg_send![sender, state];
                     crate::tile_manager::save(
@@ -5129,6 +5129,23 @@ extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
             picker.select(index as usize);
             a.commit_picker();
         }
+    });
+}
+extern "C-unwind" fn layout_scene_choice(_: Obj, _: Sel, sender: Obj) {
+    with_app(|app| {
+        let Some(choice) = app
+            .layout_picker
+            .as_ref()
+            .and_then(|picker| picker.scene_choice(sender))
+        else {
+            return;
+        };
+        app.dismiss_layout_picker();
+        let id = match &choice {
+            crate::tile_picker::SceneChoice::Review(id) => Some(id.as_str()),
+            crate::tile_picker::SceneChoice::Manage => None,
+        };
+        app.scene_action(130, id);
     });
 }
 pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) -> bool {
@@ -5806,6 +5823,7 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(tileTabClick:), tab_delivery::drain),
                 (sel!(dragTileTab:), drag_tile_tab),
                 (sel!(layoutChoice:), layout_choice),
+                (sel!(layoutSceneChoice:), layout_scene_choice),
                 (sel!(screensChanged:), screens_changed),
                 (sel!(desktopLifecycle:), desktop_lifecycle),
                 (sel!(desktopDistributed:), desktop_distributed),

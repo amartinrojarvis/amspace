@@ -258,6 +258,8 @@ En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rej
 
 **Ajustes → Mosaico → Escenas de trabajo…** permite dar nombre al reparto visible por monitor y aplicación. Para recuperarlo, selecciona la escena, revisa qué ventana ocupará cada puesto y pulsa **Aplicar escena**. Si hay dos ventanas de la misma aplicación, eliges tú. Una pantalla desconectada se omite: sus ventanas no se redirigen al portátil. No se abren aplicaciones ni se guardan títulos de documentos.
 
+También puedes abrir el selector emergente de plantillas y elegir una escena en **Escenas de trabajo** (o pulsar **S** para abrir su menú). La escena queda seleccionada y lista para revisar; no mueve ventanas hasta que pulses **Aplicar escena**. **Gestionar escenas…** abre la biblioteca para guardar o borrar.
+
 La revisión ofrece ventanas en mosaico de los escritorios visibles. Los grupos de pestañas conservan sus miembros en la misma pantalla. Si hay más ventanas en un destino que puestos en la escena, no se expulsa ninguna: deja flotantes las que sobren y pulsa **Revisar**. Una aplicación puede rechazar un tamaño o un traslado; AMSpace comprueba la geometría antes de dar la escena por aplicada.
 
 Recolocar las ventanas de una cuadrícula ajustada conserva sus huecos y proporciones; intercambia o reordena qué ventana ocupa cada hueco. Redimensionar desde una esquina exterior ajusta la división interna opuesta manteniendo el límite de pantalla, incluido el caso de una ventana izquierda y dos apiladas a la derecha.
