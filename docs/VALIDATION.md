@@ -2,6 +2,8 @@
 
 - `--check-work-scenes` guardó un reparto asimétrico de tres ventanas AppKit de la misma app, intercambió sus puestos y volvió a revisar. El panel preseleccionó las ventanas originales y Accesibilidad confirmó que cada una recuperó exactamente su marco. El diagnóstico también comprobó que elegir solo una ventana en una escena ambigua no omite implícitamente las demás.
 - `scripts/check.sh`: formato, Clippy, plist y 298 pruebas correctas (nueve ignoradas), incluidas la conservación de las divisiones capturadas con rejilla y del ancho principal en una escena centrada parcial. Bundle universal; diagnóstico en Apple Silicon, sin comprobar Intel ni traslados físicos entre monitores.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45059965661) para `779b780`. Los cinco archivos de [v0.9.39](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.39) se descargaron sin autenticación y coincidieron con los preparados. Se montó el DMG público en solo lectura y se comprobaron la guía, el enlace a Aplicaciones, los archivos de disposición, el build 94 y la firma del bundle. El ZIP inmutable (`5c3eb65`) tiene SHA-256 `ccf1a647842b80b393fa0de39dc9e3bc0a142e6dd7067898931360533553c983`.
+- El catálogo de `d485cbc` devolvió los bytes firmados sin compresión y con las cabeceras de Sparkle (gzip). No se probó instalar desde Sparkle ni una primera instalación en otra cuenta; no se sustituyó la instalación habitual.
 
 ## 0.9.38/build 93 — Aplicación parcial de escenas de trabajo
 
