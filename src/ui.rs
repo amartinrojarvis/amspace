@@ -165,6 +165,8 @@ struct App {
     tile_preview_portrait: Option<bool>,
     tile_grid_window: Option<Retained<AnyObject>>,
     scenes: Option<scenes::Panel>,
+    scene_restore: Option<scenes::Restore>,
+    scene_prompt_open: bool,
     tile_grid_fields: Vec<Obj>,
     tile_grid_status: Obj,
     tile_grid_toggle: Obj,
@@ -488,7 +490,7 @@ const SETTINGS_GENERAL_HEIGHT: f64 = 488.;
 fn settings_tile_height(width: f64) -> f64 {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    882. + rows.saturating_sub(2) as f64 * 108.
+    922. + rows.saturating_sub(2) as f64 * 108.
 }
 
 fn settings_window_size(visible: NSSize) -> NSSize {
@@ -693,6 +695,8 @@ impl App {
                 tile_preview_portrait: None,
                 tile_grid_window: None,
                 scenes: None,
+                scene_restore: None,
+                scene_prompt_open: false,
                 tile_grid_fields: vec![],
                 tile_grid_status: ptr::null_mut(),
                 tile_grid_toggle: ptr::null_mut(),
@@ -2765,6 +2769,24 @@ impl App {
                 target,
                 130,
             );
+            let open_missing = crate::i18n::tr("Abrir apps faltantes");
+            label(
+                root,
+                rect(18., actions_row - 72., width - 90., 22.),
+                open_missing,
+                13.,
+                0.,
+                false,
+            );
+            toggle(
+                root,
+                width - 58.,
+                actions_row - 72.,
+                open_missing,
+                target,
+                137,
+                crate::tile_manager::pref(defaults, scenes::OPEN_MISSING) == 1,
+            );
             let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
             button(
                 root,
@@ -2994,7 +3016,7 @@ impl App {
         if let crate::tile_picker::Selection::Scene(id) = selection {
             drop(picker);
             self.dismiss_layout_picker();
-            self.scene_action(130, Some(&id));
+            self.restore_scene(&id);
             return;
         }
         let context = picker.context.clone();
@@ -4573,7 +4595,16 @@ impl App {
                 }
                 57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),
-                130..=137 => self.scene_action(tag, None),
+                130..=136 | 138 => self.scene_action(tag),
+                137 => {
+                    let state: isize = msg_send![sender, state];
+                    crate::tile_manager::save(
+                        Retained::as_ptr(&self.defaults) as Obj,
+                        scenes::OPEN_MISSING,
+                        state,
+                    );
+                    self.scene_restore = None;
+                }
                 50 => {
                     let state: isize = msg_send![sender, state];
                     crate::tile_manager::save(
@@ -5133,7 +5164,7 @@ extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
     with_app(|a| {
         if index == -2 && a.layout_picker.is_some() {
             a.dismiss_layout_picker();
-            a.scene_action(130, None);
+            a.scene_action(130);
         } else if index < 0 {
             a.layout_picker = None;
         } else if let Some(picker) = &mut a.layout_picker {

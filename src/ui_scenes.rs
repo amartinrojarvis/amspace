@@ -1,4 +1,4 @@
-//! Manual scene review; selecting a scene or a window never moves anything.
+//! Quick scene restoration and optional manual window assignment.
 use super::*;
 use crate::{
     i18n::tr,
@@ -11,6 +11,18 @@ use std::time::{Duration, Instant};
 
 const SKIP_SLOT: isize = 1;
 const FIRST_WINDOW: isize = 2;
+pub(super) const OPEN_MISSING: &str = "tile.scenes.openMissing";
+
+pub(super) struct Restore {
+    entry: scene_library::Entry,
+    origin: SceneReview,
+    phase: RestorePhase,
+}
+
+enum RestorePhase {
+    Ask(Vec<(String, Retained<AnyObject>)>),
+    Waiting(SceneLaunch),
+}
 
 struct SceneLaunch {
     deadline: Instant,
@@ -34,12 +46,16 @@ fn stopped_apps(review: &SceneReview) -> impl Iterator<Item = &str> {
         })
 }
 
-fn launch_app(id: &str) -> Option<Receiver<bool>> {
+fn installed_app(id: &str) -> Option<Retained<AnyObject>> {
     unsafe {
         let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let url: Option<Retained<AnyObject>> = msg_send![workspace,
-            URLForApplicationWithBundleIdentifier:&*NSString::from_str(id)];
-        let url = url?;
+        msg_send![workspace, URLForApplicationWithBundleIdentifier:&*NSString::from_str(id)]
+    }
+}
+
+fn launch_app(url: &AnyObject) -> Receiver<bool> {
+    unsafe {
+        let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
         let config: Retained<AnyObject> =
             msg_send![class!(NSWorkspaceOpenConfiguration), configuration];
         let _: () = msg_send![&config, setActivates:false];
@@ -47,15 +63,52 @@ fn launch_app(id: &str) -> Option<Receiver<bool>> {
         let completion = block2::RcBlock::new(move |app: Obj, error: Obj| {
             let _ = sender.send(!app.is_null() && error.is_null());
         });
-        let _: () = msg_send![workspace, openApplicationAtURL: &*url,
+        let _: () = msg_send![workspace, openApplicationAtURL: url,
             configuration: &*config, completionHandler: &*completion];
-        Some(receiver)
+        receiver
     }
 }
 
 pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
+    let mut prompt = None;
     with_app_deferred(target, sel!(sceneLaunchProgress:), |app| {
-        app.update_scene_launch(target);
+        let Some(restore) = app.scene_restore.take() else {
+            return;
+        };
+        match restore.phase {
+            RestorePhase::Ask(apps) => {
+                app.scene_prompt_open = true;
+                prompt = Some((restore.entry, restore.origin, apps));
+            }
+            RestorePhase::Waiting(launch) => {
+                app.update_scene_launch(restore.entry, restore.origin, launch);
+            }
+        }
+    });
+    let Some((entry, origin, apps)) = prompt else {
+        return;
+    };
+    // The native modal runs its own loop. Do not hold the App borrow while it is up.
+    let open = unsafe {
+        let alert: Retained<AnyObject> = msg_send![class!(NSAlert), new];
+        let _: () =
+            msg_send![&alert, setMessageText:&*NSString::from_str(tr("¿Abrir apps faltantes?"))];
+        let _: () = msg_send![&alert, setInformativeText:&*NSString::from_str(tr(
+            "Puedes abrirlas o cargar la escena solo con las ventanas disponibles."
+        ))];
+        let _: Obj =
+            msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr("Cargar sin abrir"))];
+        let _: Obj =
+            msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr("Abrir y cargar"))];
+        let response: isize = msg_send![&alert, runModal];
+        response == 1001
+    };
+    with_app(|app| {
+        app.scene_prompt_open = false;
+        let result = app.resume_scene(entry, &origin, open, apps);
+        if let Err(message) = result {
+            app.show_notice(&message);
+        }
     });
 }
 
@@ -67,13 +120,51 @@ pub(super) struct Panel {
     scroll: Obj,
     status: Obj,
     apply: Obj,
-    open_missing: Obj,
-    launch: Option<SceneLaunch>,
+    load: Obj,
     entries: Vec<scene_library::Entry>,
     captured_windows: HashMap<String, Vec<SceneWindow>>,
     review: Option<SceneReview>,
     controls: Vec<Obj>,
     confirming: bool,
+}
+
+fn remembered_slots(
+    review: &SceneReview,
+    remembered: Option<&[SceneWindow]>,
+) -> Vec<Option<usize>> {
+    let mut used = HashSet::new();
+    review
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let window = remembered?.get(index)?;
+            row.candidates
+                .iter()
+                .position(|c| window.matches(c) && used.insert(c.id))
+        })
+        .collect()
+}
+
+fn quick_choices(review: &SceneReview, remembered: Option<&[SceneWindow]>) -> Vec<Option<u32>> {
+    let mut choices = remembered_slots(review, remembered);
+    let mut used: HashSet<_> = review
+        .rows
+        .iter()
+        .zip(&choices)
+        .filter_map(|(row, choice)| choice.map(|i| row.candidates[i].id))
+        .collect();
+    for (row, choice) in review.rows.iter().zip(&mut choices) {
+        if choice.is_none() {
+            *choice = row.candidates.iter().position(|c| used.insert(c.id));
+        }
+    }
+    review
+        .rows
+        .iter()
+        .zip(choices)
+        .map(|(row, choice)| choice.map(|i| row.candidates[i].id))
+        .collect()
 }
 
 /// One normalized rectangle per ordinal slot, in the same order as the saved bundles.
@@ -135,7 +226,6 @@ pub(super) extern "C-unwind" fn will_close(_: Obj, _: Sel, notice: Obj) {
             .filter(|p| ptr::eq(Retained::as_ptr(&p.window), closed))
         {
             panel.review = None;
-            panel.launch = None;
             panel.controls.clear();
             unsafe {
                 let _: () = msg_send![panel.scroll, setDocumentView:ptr::null::<AnyObject>()];
@@ -157,7 +247,7 @@ impl Panel {
                 root,
                 rect(21., 402., 578., 23.),
                 tr(
-                    "Guarda el mosaico visible de cada pantalla y elige las ventanas al recuperarlo.",
+                    "Guarda el mosaico visible de cada pantalla y recupéralo desde el selector de plantillas.",
                 ),
                 13.,
                 0.,
@@ -167,6 +257,9 @@ impl Panel {
             let placeholder = NSString::from_str(tr("Nombre de la nueva escena"));
             let _: () = msg_send![&name, setPlaceholderString:&*placeholder];
             let _: () = msg_send![&name, setAccessibilityLabel:&*placeholder];
+            let _: () = msg_send![&name, setTarget:target];
+            let _: () = msg_send![&name, setAction:sel!(change:)];
+            let _: () = msg_send![&name, setTag:131isize];
             let _: () = msg_send![root, addSubview:&*name];
             button(
                 root,
@@ -175,11 +268,12 @@ impl Panel {
                 target,
                 131,
             );
-            let library = popup(root, rect(17., 315., 365., 28.), &[], target, 132);
+            let library = popup(root, rect(17., 315., 296., 28.), &[], target, 132);
             let _: () = msg_send![library, setAccessibilityLabel:&*NSString::from_str(tr("Escenas guardadas"))];
+            let load = button(root, rect(311., 314., 92., 30.), tr("Cargar"), target, 138);
             button(
                 root,
-                rect(381., 314., 118., 30.),
+                rect(401., 314., 100., 30.),
                 tr("Revisar"),
                 target,
                 134,
@@ -196,13 +290,6 @@ impl Panel {
             let _: () = msg_send![&scroll, setBorderType:1usize];
             let _: () = msg_send![root, addSubview:&*scroll];
             let status = wrapping_label(root, rect(20., 9., 385., 90.), "", 12.);
-            let open_missing = button(
-                root,
-                rect(413., 67., 188., 32.),
-                tr("Abrir apps que faltan"),
-                target,
-                137,
-            );
             let apply = button(
                 root,
                 rect(438., 27., 163., 32.),
@@ -219,8 +306,7 @@ impl Panel {
                 scroll: Retained::as_ptr(&scroll) as Obj,
                 status,
                 apply,
-                open_missing,
-                launch: None,
+                load,
                 entries: Vec::new(),
                 captured_windows: HashMap::new(),
                 review: None,
@@ -246,6 +332,7 @@ impl Panel {
                 }
             }
             let _: () = msg_send![self.delete, setEnabled:!self.entries.is_empty()];
+            let _: () = msg_send![self.load, setEnabled:!self.entries.is_empty()];
         }
     }
 
@@ -263,7 +350,7 @@ impl Panel {
             text(self.name, "");
             text(
                 self.status,
-                tr("Escena guardada. Pulsa Revisar para prepararla."),
+                tr("Escena guardada. Está disponible en el selector de plantillas."),
             );
         }
         Ok(())
@@ -285,21 +372,18 @@ impl Panel {
             let root = Retained::as_ptr(&doc) as Obj;
             if let Some(review) = &self.review {
                 let slots = self.selected().map(slot_previews).unwrap_or_default();
-                let remembered = self
-                    .selected()
-                    .and_then(|entry| self.captured_windows.get(&entry.id))
-                    .filter(|windows| windows.len() == review.rows.len());
-                let mut selected = vec![None; review.rows.len()];
-                let mut reserved = HashSet::new();
-                if let Some(windows) = remembered {
-                    for ((row, window), choice) in
-                        review.rows.iter().zip(windows).zip(&mut selected)
-                    {
-                        *choice = row.candidates.iter().position(|candidate| {
-                            window.matches(candidate) && reserved.insert(candidate.id)
-                        });
-                    }
-                }
+                let selected = remembered_slots(
+                    review,
+                    self.selected()
+                        .and_then(|entry| self.captured_windows.get(&entry.id))
+                        .map(Vec::as_slice),
+                );
+                let reserved: HashSet<_> = review
+                    .rows
+                    .iter()
+                    .zip(&selected)
+                    .filter_map(|(row, choice)| choice.map(|i| row.candidates[i].id))
+                    .collect();
                 let mut occurrences = HashMap::new();
                 for (row, choice) in review.rows.iter().zip(&selected) {
                     if choice.is_none() {
@@ -418,18 +502,11 @@ impl Panel {
     }
     fn update_status(&self) {
         let choices = self.choices();
-        let ready = choices.is_some() && self.launch.is_none();
-        let open = self.launch.is_none()
-            && self
-                .review
-                .as_ref()
-                .is_some_and(|review| stopped_apps(review).next().is_some());
+        let ready = choices.is_some();
         let message = if self.entries.is_empty() {
             tr("Guarda una escena para empezar.")
-        } else if self.launch.is_some() {
-            tr("Abriendo aplicaciones y esperando sus ventanas…")
-        } else if open {
-            tr("Faltan aplicaciones. Ábrelas antes de aplicar la escena.")
+        } else if self.review.is_none() {
+            tr("Selecciona una escena para cargarla o pulsa Revisar para elegir ventanas.")
         } else if choices
             .as_ref()
             .is_some_and(|rows| rows.iter().any(Option::is_none))
@@ -448,26 +525,135 @@ impl Panel {
         };
         unsafe {
             let _: () = msg_send![self.apply,setEnabled:ready];
-            let _: () = msg_send![self.open_missing,setEnabled:open];
             text(self.status, message);
         }
     }
 }
 
 impl App {
-    fn update_scene_launch(&mut self, target: Obj) {
-        let Some(panel) = self.scenes.as_mut() else {
+    fn scene_access(&self, defaults: Obj) -> Result<(), String> {
+        if self.sleeping
+            || self.tiling_paused
+            || crate::desktop_mode::active()
+            || self.transfer.is_some()
+            || self.switching.is_some()
+            || crate::tile_manager::pref(defaults, "tile.enabled") == 0
+        {
+            return Err(tr("Activa el mosaico y espera a que termine la transición.").into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn restore_scene(&mut self, id: &str) {
+        if self.scene_prompt_open {
             return;
-        };
-        let Some(mut launch) = panel.launch.take() else {
-            return;
-        };
+        }
+        self.scene_restore = None;
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
-        let review = panel.selected().and_then(|entry| {
-            self.tile_manager
-                .review_scene(defaults, &entry.displays)
-                .ok()
+        let result = (|| {
+            self.scene_access(defaults)?;
+            let entry = scene_library::entry(defaults, id)
+                .ok_or_else(|| tr("Esta escena ya no está guardada. Elige otra.").to_owned())?;
+            let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
+            if crate::tile_manager::pref(defaults, OPEN_MISSING) == 1 {
+                let apps: Vec<_> = stopped_apps(&review)
+                    .filter_map(|id| Some((id.to_owned(), installed_app(id)?)))
+                    .collect();
+                if !apps.is_empty() {
+                    self.queue_scene(entry, review, RestorePhase::Ask(apps), 0.);
+                    return Ok(());
+                }
+            }
+            self.apply_quick_scene(defaults, &entry.id, &review)
+        })();
+        if let Err(message) = result {
+            self.show_notice(&message);
+        }
+    }
+
+    fn queue_scene(
+        &mut self,
+        entry: scene_library::Entry,
+        origin: SceneReview,
+        phase: RestorePhase,
+        delay: f64,
+    ) {
+        self.scene_restore = Some(Restore {
+            entry,
+            origin,
+            phase,
         });
+        schedule_app_callback(
+            Retained::as_ptr(&self.target) as Obj,
+            sel!(sceneLaunchProgress:),
+            delay,
+        );
+    }
+
+    fn scene_after_wait(
+        &mut self,
+        defaults: Obj,
+        entry: &scene_library::Entry,
+        origin: &SceneReview,
+    ) -> Result<SceneReview, String> {
+        self.scene_access(defaults)?;
+        let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
+        if !origin.same_destinations(&review) {
+            return Err(
+                tr("La pantalla o el escritorio han cambiado. Vuelve a cargar la escena.").into(),
+            );
+        }
+        Ok(review)
+    }
+
+    fn resume_scene(
+        &mut self,
+        entry: scene_library::Entry,
+        origin: &SceneReview,
+        open: bool,
+        apps: Vec<(String, Retained<AnyObject>)>,
+    ) -> Result<(), String> {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let review = self.scene_after_wait(defaults, &entry, origin)?;
+        if open && crate::tile_manager::pref(defaults, OPEN_MISSING) == 1 {
+            let stopped: HashSet<_> = stopped_apps(&review).collect();
+            let pending: Vec<_> = apps
+                .into_iter()
+                .filter(|(id, _)| stopped.contains(id.as_str()))
+                .map(|(id, url)| (id, launch_app(&url), false))
+                .collect();
+            if !pending.is_empty() {
+                self.show_notice(tr("Abriendo aplicaciones y esperando sus ventanas…"));
+                self.queue_scene(
+                    entry,
+                    review,
+                    RestorePhase::Waiting(SceneLaunch {
+                        deadline: Instant::now() + Duration::from_secs(10),
+                        pending,
+                        failed: Vec::new(),
+                    }),
+                    0.25,
+                );
+                return Ok(());
+            }
+        }
+        self.apply_quick_scene(defaults, &entry.id, &review)
+    }
+
+    fn update_scene_launch(
+        &mut self,
+        entry: scene_library::Entry,
+        origin: SceneReview,
+        mut launch: SceneLaunch,
+    ) {
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let review = match self.scene_after_wait(defaults, &entry, &origin) {
+            Ok(review) => review,
+            Err(message) => {
+                self.show_notice(&message);
+                return;
+            }
+        };
         launch.pending.retain_mut(|(id, response, opened)| {
             if !*opened {
                 match response.try_recv() {
@@ -480,73 +666,82 @@ impl App {
                 }
             }
             !*opened
-                || !review.as_ref().is_some_and(|review| {
-                    review
-                        .rows
-                        .iter()
-                        .any(|row| &row.bundle == id && !row.candidates.is_empty())
-                })
+                || !review
+                    .rows
+                    .iter()
+                    .any(|row| &row.bundle == id && !row.candidates.is_empty())
         });
         if !launch.pending.is_empty() && Instant::now() < launch.deadline {
-            panel.launch = Some(launch);
-            schedule_app_callback(target, sel!(sceneLaunchProgress:), 0.4);
+            self.queue_scene(entry, origin, RestorePhase::Waiting(launch), 0.25);
             return;
         }
-        if let Some(review) = review {
-            panel.populate(Some(review), target);
-        } else {
-            panel.update_status();
-        }
-        let mut message = String::new();
-        if !launch.failed.is_empty() {
-            message = format!(
+        if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
+            self.show_notice(&message);
+        } else if !launch.failed.is_empty() {
+            self.show_notice(&format!(
                 "{} {}",
                 tr("No se pudieron abrir:"),
                 launch.failed.join(", ")
-            );
-        }
-        if !launch.pending.is_empty() {
-            if !message.is_empty() {
-                message.push('\n');
-            }
-            message.push_str(tr(
-                "Si una app no mostró una ventana en mosaico, ábrela y pulsa Revisar.",
             ));
-        }
-        if !message.is_empty() {
-            unsafe { text(panel.status, &message) };
-        }
-        if panel.review.is_none() && message.is_empty() {
-            unsafe {
-                text(
-                    panel.status,
-                    tr("La pantalla o sus ventanas han cambiado. Pulsa Revisar."),
-                )
-            };
         }
     }
 
-    pub(super) fn scene_action(&mut self, tag: isize, preferred: Option<&str>) {
+    fn apply_quick_scene(
+        &mut self,
+        defaults: Obj,
+        id: &str,
+        review: &SceneReview,
+    ) -> Result<(), String> {
+        let remembered = self
+            .scenes
+            .as_ref()
+            .and_then(|panel| panel.captured_windows.get(id))
+            .map(Vec::as_slice);
+        let choices = quick_choices(review, remembered);
+        if choices.iter().all(Option::is_none) {
+            return Err(tr("No hay ventanas compatibles en los mosaicos visibles.").into());
+        }
+        self.tile_manager.apply_scene(defaults, review, &choices)?;
+        self.refresh_tile_controls();
+        let message = if choices.iter().any(Option::is_none) {
+            tr("Escena aplicada con puestos omitidos.")
+        } else {
+            tr("Escena aplicada.")
+        };
+        if let Some(panel) = &mut self.scenes {
+            let target = Retained::as_ptr(&self.target) as Obj;
+            panel.populate(None, target);
+            unsafe { text(panel.status, message) };
+        }
+        Ok(())
+    }
+
+    pub(super) fn scene_action(&mut self, tag: isize) {
         let target = Retained::as_ptr(&self.target) as Obj;
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         let mut panel = self.scenes.take().unwrap_or_else(|| Panel::new(target));
-        if !matches!(tag, 135..=137) {
-            panel.launch = None;
+        if matches!(tag, 132 | 138) {
+            let id = panel.selected().map(|entry| entry.id.clone());
+            panel.populate(None, target);
+            self.scenes = Some(panel);
+            if let Some(id) = id {
+                self.restore_scene(&id);
+            }
+            return;
+        }
+        if matches!(tag, 131 | 133..=135) {
+            self.scene_restore = None;
         }
         let result = (|| -> Result<(), String> {
             if tag == 130 {
                 let selected = panel.selected().map(|e| e.id.clone());
-                panel.reload(defaults, preferred.or(selected.as_deref()));
+                panel.reload(defaults, selected.as_deref());
                 unsafe {
                     let _: () =
                         msg_send![&panel.window,makeKeyAndOrderFront:ptr::null::<AnyObject>()];
                 }
-                if let Some(id) = preferred {
-                    if panel.selected().is_none_or(|entry| entry.id != id) {
-                        panel.populate(None, target);
-                        return Err(tr("Esta escena ya no está guardada. Elige otra.").into());
-                    }
-                }
+                panel.populate(None, target);
+                return Ok(());
             }
             if tag == 133 {
                 if !panel.confirming {
@@ -566,67 +761,22 @@ impl App {
                     panel.captured_windows.remove(&id);
                 }
                 panel.reload(defaults, None);
+                panel.populate(None, target);
+                return Ok(());
             }
             panel.reset_delete();
             if tag == 136 {
                 panel.update_status();
                 return Ok(());
             }
-            if !matches!(tag, 135 | 137) {
+            if tag != 135 {
                 panel.populate(None, target);
             }
-            if self.sleeping
-                || self.tiling_paused
-                || crate::desktop_mode::active()
-                || self.transfer.is_some()
-                || self.switching.is_some()
-                || crate::tile_manager::pref(defaults, "tile.enabled") == 0
-            {
-                return Err(tr("Activa el mosaico y espera a que termine la transición.").into());
-            }
+            self.scene_access(defaults)?;
             if tag == 131 {
                 return panel.save_scene(defaults, &mut self.tile_manager);
             }
-            if tag == 137 {
-                if panel.launch.is_some() {
-                    return Ok(());
-                }
-                let Some(entry) = panel.selected() else {
-                    return Ok(());
-                };
-                let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
-                let mut launch = SceneLaunch {
-                    deadline: Instant::now() + Duration::from_secs(10),
-                    pending: Vec::new(),
-                    failed: Vec::new(),
-                };
-                for id in stopped_apps(&review) {
-                    if let Some(result) = launch_app(id) {
-                        launch.pending.push((id.into(), result, false));
-                    } else {
-                        launch.failed.push(id.into());
-                    }
-                }
-                if launch.pending.is_empty() {
-                    panel.populate(Some(review), target);
-                    if launch.failed.is_empty() {
-                        return Ok(());
-                    }
-                    return Err(format!(
-                        "{} {}",
-                        tr("No se pudieron abrir:"),
-                        launch.failed.join(", ")
-                    ));
-                }
-                panel.launch = Some(launch);
-                panel.update_status();
-                schedule_app_callback(target, sel!(sceneLaunchProgress:), 0.4);
-                return Ok(());
-            }
             if tag == 135 {
-                if panel.launch.is_some() {
-                    return Ok(());
-                }
                 if let (Some(review), Some(choices)) = (&panel.review, panel.choices()) {
                     let partial = choices.iter().any(Option::is_none);
                     self.tile_manager.apply_scene(defaults, review, &choices)?;
@@ -684,15 +834,25 @@ pub(crate) fn check_scene_fixture(
                 let (p, s) = ax::geometry(window.0).ok_or("Sin geometría del fixture.")?;
                 Ok::<_, String>(NSRect::new(p, s))
             };
+            let capture = manager
+                .capture_scene(defaults)
+                .map_err(|e| format!("Captura inicial: {e}"))?;
+            let mut displays = capture.displays;
+            if displays.len() != 1 || displays[0].bundles.len() != ids.len() {
+                return Err("La captura no coincide con las ventanas desechables.".into());
+            }
+            let initial = manager
+                .review_scene(defaults, &displays)
+                .map_err(|e| format!("Revisión inicial: {e}"))?;
+            let choices: Vec<_> = ids.iter().copied().map(Some).collect();
+            manager
+                .apply_scene(defaults, &initial, &choices)
+                .map_err(|e| format!("Colocación inicial: {e}"))?;
             let before = ids
                 .iter()
                 .copied()
                 .map(geometry)
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut displays = manager.capture_scene(defaults)?.displays;
-            if displays.len() != 1 || displays[0].bundles.len() != ids.len() {
-                return Err("La captura no coincide con las ventanas desechables.".into());
-            }
             let offline = crate::tile_manager::scenes::SceneDisplay {
                 name: "Monitor desconectado".into(),
                 uuid: "00000000-0000-0000-0000-000000000000".into(),
@@ -728,6 +888,20 @@ pub(crate) fn check_scene_fixture(
             if !caption.to_string().contains("Estudio") {
                 return Err("La tarjeta de la escena no tiene su nombre accesible.".into());
             }
+            let initial = manager
+                .review_scene(defaults, &displays)
+                .map_err(|e| format!("Preparación de la tarjeta: {e}"))?;
+            let reordered: Vec<_> = ids.iter().rev().copied().map(Some).collect();
+            manager
+                .apply_scene(defaults, &initial, &reordered)
+                .map_err(|e| format!("Permutación del fixture: {e}"))?;
+            if geometry(ids[0])? == before[0] {
+                return Err("La preparación no permutó las ventanas del fixture.".into());
+            }
+            panel
+                .captured_windows
+                .insert(saved.clone(), capture.windows);
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
             super::diagnostics::capture_window(&gallery, ".cache/work-scenes-picker.png")?;
             std::mem::swap(&mut app.tile_manager, &mut manager);
             APP.with(|cell| *cell.borrow_mut() = Some(app));
@@ -738,18 +912,22 @@ pub(crate) fn check_scene_fixture(
             if visible || app.layout_picker.is_some() {
                 return Err("Elegir una escena no cerró el selector de plantillas.".into());
             }
-            panel = app
-                .scenes
-                .take()
-                .ok_or("No se abrió el panel de escenas.")?;
+            panel = app.scenes.take().unwrap();
             let visible: bool = msg_send![&panel.window, isVisible];
-            if !visible
-                || panel.review.is_none()
-                || panel.selected().is_none_or(|entry| entry.id != saved)
-            {
-                return Err("La galería no abrió la revisión de la escena elegida.".into());
+            if visible || panel.review.is_some() || app.scene_restore.is_some() {
+                return Err("La tarjeta abrió una revisión o dejó una carga pendiente.".into());
             }
-            println!("PASS: la tarjeta gráfica abre la revisión de la escena elegida.");
+            for (&id, &frame) in ids.iter().zip(&before) {
+                if geometry(id)? != frame {
+                    return Err("La tarjeta no recuperó por sí sola la geometría guardada.".into());
+                }
+            }
+            println!(
+                "PASS: una tarjeta carga la escena directamente, sin revisión ni confirmación."
+            );
+            panel.captured_windows.remove(&saved);
+            panel.reload(defaults, Some(&saved));
+            panel.populate(Some(manager.review_scene(defaults, &displays)?), target);
             if panel.choices().is_some() {
                 return Err("Se eligieron automáticamente ventanas ambiguas.".into());
             }
@@ -854,11 +1032,23 @@ pub(crate) fn check_scene_fixture(
             }
             panel.update_status();
             let enabled: bool = msg_send![panel.apply, isEnabled];
-            let choices = panel
+            panel
                 .choices()
                 .filter(|choices| enabled && choices[1].is_none())
-                .ok_or("La ventana ausente bloqueó la aplicación parcial.")?;
-            manager.apply_scene(defaults, review, &choices)?;
+                .ok_or("La ventana ausente bloqueó la revisión parcial.")?;
+            let choices = quick_choices(review, None);
+            let mut app = App::build(controller.clone(), prefs.clone());
+            let load = panel.load;
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            APP.with(|cell| *cell.borrow_mut() = Some(app));
+            let _: () = msg_send![load, performClick:ptr::null::<AnyObject>()];
+            let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
+            if app.scene_restore.is_some() {
+                return Err("Con la opción desactivada quedó una apertura pendiente.".into());
+            }
             for (ordinal, target) in expected.window_frames(area, 10.) {
                 let id = choices[ordinal as usize - 1].unwrap();
                 let actual = geometry(id)?;
@@ -877,54 +1067,78 @@ pub(crate) fn check_scene_fixture(
                 }
             }
             println!("PASS: la escena parcial recoloca tres ventanas y contrae el puesto ausente.");
-            // Optional launch fixture: a separate, uniquely registered test app.
-            // This exercises the real button and Launch Services without
-            // starting or closing any of the user's applications.
+            // A registered disposable app exercises the native prompt and Launch Services.
             if let Ok(bundle) = std::env::var("AMSPACE_SCENE_LAUNCH_FIXTURE") {
                 if !bundle.starts_with("io.github.amartinrojarvis.amspace.fixture.") {
                     return Err("El bundle de lanzamiento debe ser un fixture desechable.".into());
                 }
                 let mut launch_scene = displays[0].clone();
-                launch_scene.bundles.fill(bundle);
+                launch_scene.bundles.fill(bundle.clone());
                 let id = scene_library::save(defaults, "Apertura", &[launch_scene])?;
                 let mut app = App::build(controller.clone(), prefs.clone());
                 std::mem::swap(&mut app.tile_manager, &mut manager);
-                app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
-                app.scene_action(130, Some(&id));
-                let panel_ref = app.scenes.as_ref().unwrap();
-                let enabled: bool = msg_send![panel_ref.open_missing, isEnabled];
-                if !enabled {
-                    return Err("No se ofreció abrir la app cerrada.".into());
+                let entry = scene_library::entry(defaults, &id).unwrap();
+                let review = app.tile_manager.review_scene(defaults, &entry.displays)?;
+                if stopped_apps(&review).collect::<Vec<_>>() != [bundle.as_str()]
+                    || installed_app(&bundle).is_none()
+                {
+                    return Err("El fixture de lanzamiento debe estar instalado y cerrado.".into());
                 }
-                let open_missing = panel_ref.open_missing;
+                app.restore_scene(&id);
+                if app.scene_restore.is_some() || stopped_apps(&review).next().is_none() {
+                    return Err(
+                        "La configuración por defecto inició la apertura de una app cerrada."
+                            .into(),
+                    );
+                }
+                crate::tile_manager::save(defaults, OPEN_MISSING, 1);
                 APP.with(|cell| *cell.borrow_mut() = Some(app));
-                let _: () = msg_send![open_missing, performClick:ptr::null::<AnyObject>()];
+                let answer = |response: isize| {
+                    with_app(|app| app.restore_scene(&id));
+                    let answered = std::rc::Rc::new(std::cell::Cell::new(false));
+                    let flag = answered.clone();
+                    let complete = block2::RcBlock::new(move |_: Obj| {
+                        let modal: Obj = msg_send![native_app, modalWindow];
+                        if !modal.is_null() {
+                            flag.set(true);
+                            let _: () = msg_send![native_app, stopModalWithCode:response];
+                        }
+                    });
+                    let timer: Retained<AnyObject> = msg_send![class!(NSTimer),
+                        timerWithTimeInterval:0.1f64, repeats:false, block:&*complete];
+                    let run_loop: Obj = msg_send![class!(NSRunLoop), mainRunLoop];
+                    let _: () = msg_send![run_loop, addTimer:&*timer, forMode:ns_string!("NSModalPanelRunLoopMode")];
+                    super::diagnostics::pump(0.15);
+                    answered.get()
+                };
+                let declined = answer(1000) && stopped_apps(&review).next().is_some();
+                let accepted = answer(1001);
                 let end = Instant::now() + Duration::from_secs(6);
                 let opened = loop {
-                    super::diagnostics::pump(0.1);
                     if APP.with(|cell| {
                         let app = cell.borrow();
-                        app.as_ref()
-                            .and_then(|app| app.scenes.as_ref()?.launch.as_ref())
-                            .is_some_and(|launch| {
-                                matches!(launch.pending.as_slice(), [(_, _, true)])
-                            })
+                        matches!(
+                            app.as_ref().and_then(|app| app.scene_restore.as_ref()).map(|r| &r.phase),
+                            Some(RestorePhase::Waiting(launch)) if matches!(launch.pending.as_slice(), [(_, _, true)])
+                        )
                     }) {
                         break true;
                     }
                     if Instant::now() >= end {
                         break false;
                     }
+                    super::diagnostics::pump(0.1);
                 };
                 let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
                 std::mem::swap(&mut app.tile_manager, &mut manager);
-                panel = app.scenes.take().unwrap();
-                panel.launch = None;
-                if !opened {
-                    return Err("Launch Services no confirmó la apertura del fixture.".into());
+                crate::tile_manager::save(defaults, OPEN_MISSING, 0);
+                if !declined || !accepted || !opened {
+                    return Err(
+                        "El aviso nativo no respetó el rechazo o la apertura confirmada.".into(),
+                    );
                 }
                 println!(
-                    "PASS: el botón abre una aplicación cerrada una sola vez para tres puestos."
+                    "PASS: por defecto no abre; la opción pregunta; rechazar no abre; confirmar abre una sola app para tres puestos."
                 );
             }
 
@@ -949,13 +1163,13 @@ pub(crate) fn check_scene_fixture(
             if geometry(ids[0])? == saved_frames[0] {
                 return Err("La distribución intermedia no cambió la posición de prueba.".into());
             }
-            let review = manager.review_scene(defaults, &saved.displays)?;
-            panel.populate(Some(review), target);
-            let choices = panel
-                .choices()
-                .filter(|choices| choices.iter().copied().eq(ids.iter().copied().map(Some)))
-                .ok_or("La revisión no recuperó la identidad de cada ventana guardada.")?;
-            manager.apply_scene(defaults, panel.review.as_ref().unwrap(), &choices)?;
+            let saved_id = saved.id.clone();
+            let mut app = App::build(controller.clone(), prefs.clone());
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            app.restore_scene(&saved_id);
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
             for (&id, frame) in ids.iter().zip(saved_frames) {
                 let actual = geometry(id)?;
                 if actual != frame {
@@ -979,7 +1193,8 @@ pub(crate) fn check_scene_fixture(
             text(panel.name, "Durante la reentrada");
             panel.save_scene(defaults, &mut manager)?;
             let status: Retained<NSString> = msg_send![panel.status, stringValue];
-            if status.to_string() != tr("Escena guardada. Pulsa Revisar para prepararla.")
+            if status.to_string()
+                != tr("Escena guardada. Está disponible en el selector de plantillas.")
                 || panel.selected().map(|entry| entry.name.as_str()) != Some("Durante la reentrada")
             {
                 return Err("El panel no confirmó ni seleccionó la escena recién guardada.".into());

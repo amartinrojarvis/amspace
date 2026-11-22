@@ -806,7 +806,7 @@ impl Picker {
             crate::native::text(
                 self.status,
                 if self.selected >= self.template_count() {
-                    crate::i18n::tr("Intro: revisar escena · Esc: cancelar")
+                    crate::i18n::tr("Intro: cargar escena · Esc: cancelar")
                 } else if self.valid[self.selected] {
                     crate::i18n::tr("Ratón o teclas · Flechas · Intro: aplicar · Esc: cancelar")
                 } else {

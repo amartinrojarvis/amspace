@@ -10,8 +10,8 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Termina el gesto de mosaico antes de continuar." => {
             "Finish the tiling gesture before continuing."
         }
-        "Escena guardada. Pulsa Revisar para prepararla." => {
-            "Scene saved. Click Review to prepare it."
+        "Escena guardada. Está disponible en el selector de plantillas." => {
+            "Scene saved. It is available in the layout picker."
         }
         "La pantalla o sus ventanas han cambiado. Pulsa Revisar." => {
             "The display or its windows changed. Click Review."
@@ -32,29 +32,36 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Escenas de trabajo" => "Work scenes",
         "Plantillas" => "Layouts",
         "Ver todas…" => "View all…",
-        "Intro: revisar escena · Esc: cancelar" => "Return: review scene · Esc: cancel",
+        "Intro: cargar escena · Esc: cancelar" => "Return: load scene · Esc: cancel",
         "Esta escena ya no está guardada. Elige otra." => {
             "This scene is no longer saved. Choose another."
         }
-        "Guarda el mosaico visible de cada pantalla y elige las ventanas al recuperarlo." => {
-            "Save each display’s visible layout and choose its windows when restoring."
+        "Guarda el mosaico visible de cada pantalla y recupéralo desde el selector de plantillas." => {
+            "Save each display’s visible layout and restore it from the layout picker."
+        }
+        "Selecciona una escena para cargarla o pulsa Revisar para elegir ventanas." => {
+            "Select a scene to load it, or click Review to choose windows."
         }
         "Nombre de la nueva escena" => "New scene name",
         "Guardar escena actual" => "Save current scene",
         "Escenas guardadas" => "Saved scenes",
         "Revisar" => "Review",
         "Aplicar escena" => "Apply scene",
-        "Abrir apps que faltan" => "Open missing apps",
+        "Cargar" => "Load",
+        "Abrir apps faltantes" => "Open missing apps",
+        "¿Abrir apps faltantes?" => "Open missing apps?",
+        "Cargar sin abrir" => "Load without opening",
+        "Abrir y cargar" => "Open and load",
+        "Puedes abrirlas o cargar la escena solo con las ventanas disponibles." => {
+            "Open the apps, or load the scene using only the available windows."
+        }
+        "La pantalla o el escritorio han cambiado. Vuelve a cargar la escena." => {
+            "The display or desktop changed. Load the scene again."
+        }
         "Abriendo aplicaciones y esperando sus ventanas…" => {
             "Opening apps and waiting for their windows…"
         }
-        "Faltan aplicaciones. Ábrelas antes de aplicar la escena." => {
-            "Some apps are closed. Open them before applying the scene."
-        }
         "No se pudieron abrir:" => "Could not open:",
-        "Si una app no mostró una ventana en mosaico, ábrela y pulsa Revisar." => {
-            "If an app did not show a tiled window, open one and click Review."
-        }
         "Pantalla desconectada" => "Display disconnected",
         "Sin ventana compatible" => "No matching window",
         "Elige una ventana…" => "Choose a window…",

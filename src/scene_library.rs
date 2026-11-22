@@ -80,6 +80,25 @@ fn parse_display(obj: Obj) -> Option<SceneDisplay> {
     })
 }
 
+fn parse_entry(dict: Obj, key: Obj, id: String) -> Option<Entry> {
+    let obj: Obj = unsafe { msg_send![dict, objectForKey:key] };
+    if !valid_text(&id, 80) || !is_dict(obj) {
+        return None;
+    }
+    let name = string(property(obj, ns_string!("name")))?;
+    let displays = array(property(obj, ns_string!("displays")), 32, parse_display)?;
+    (valid_text(&name, 240) && valid(&displays)).then_some(Entry { id, name, displays })
+}
+
+pub(crate) fn entry(defaults: Obj, id: &str) -> Option<Entry> {
+    let dict: Obj = unsafe { msg_send![defaults, dictionaryForKey:key()] };
+    if dict.is_null() {
+        return None;
+    }
+    let key = NSString::from_str(id);
+    parse_entry(dict, Retained::as_ptr(&key) as Obj, id.to_owned())
+}
+
 pub(crate) fn entries(defaults: Obj) -> Vec<Entry> {
     unsafe {
         let dict: Obj = msg_send![defaults, dictionaryForKey:key()];
@@ -91,14 +110,7 @@ pub(crate) fn entries(defaults: Obj) -> Vec<Entry> {
         let mut entries: Vec<_> = (0..count.min(LIMIT))
             .filter_map(|i| {
                 let key: Obj = msg_send![keys, objectAtIndex:i];
-                let id = string(key)?;
-                let obj: Obj = msg_send![dict, objectForKey:key];
-                if !valid_text(&id, 80) || !is_dict(obj) {
-                    return None;
-                }
-                let name = string(property(obj, ns_string!("name")))?;
-                let displays = array(property(obj, ns_string!("displays")), 32, parse_display)?;
-                (valid_text(&name, 240) && valid(&displays)).then_some(Entry { id, name, displays })
+                parse_entry(dict, key, string(key)?)
             })
             .collect();
         entries.sort_by_cached_key(|item| item.name.to_lowercase());

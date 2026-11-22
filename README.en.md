@@ -253,7 +253,9 @@ In **Mosaic → Grid and layout…** you can enable snapping to a virtual grid. 
 
 **Save layout** keeps the layout, proportions, structure and grid per desktop. **Restore layout** uses logical positions and requires the same number of windows; it does not distinguish applications.
 
-**Settings → Tiling → Work scenes…** lets you name the visible arrangement by display and application. To restore it, select the scene, review the window for each slot and click **Apply scene**. If two windows belong to the same application, you choose which to use. A disconnected display is skipped, not redirected to your laptop. Scenes do not open applications or store document titles.
+In **Settings → Tiling → Work scenes…**, name the visible arrangement and click **Save current scene**, or press Return. Click a scene’s card in the layout picker to load it immediately using available tiled windows. **View all…** opens the library, where **Load** reapplies the selected scene and **Review** allows manual window assignment. Missing windows and disconnected displays are skipped.
+
+**Settings → Tiling → Open missing apps** is off by default. Enable it to get a single confirmation before opening installed apps that are not running. If you accept, AMSpace waits up to ten seconds for compatible windows, then loads the scene without a second confirmation. It does not reopen specific documents.
 
 The review lists tiled windows on visible desktops. Tab groups keep their members on the same display. If a destination has extra windows, none are evicted: float the extras and click **Review**. An application can refuse a size or a move; AMSpace checks the resulting geometry before reporting success.
 

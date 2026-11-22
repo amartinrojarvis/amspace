@@ -51,6 +51,12 @@ pub(crate) struct SceneReview {
     displays: Vec<SceneDisplay>,
     destinations: Vec<Option<(Workspace, NSRect)>>,
 }
+
+impl SceneReview {
+    pub(crate) fn same_destinations(&self, other: &Self) -> bool {
+        self.destinations == other.destinations
+    }
+}
 struct Screen {
     uuid: String,
     name: String,
