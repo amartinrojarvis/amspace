@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.40</title><pubDate>Sun, 22 Nov 2026 19:35:27 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.40 — Abre las aplicaciones cerradas de una escena.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.41</title><pubDate>Sun, 22 Nov 2026 19:55:44 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.41 — Escenas de trabajo en un clic.
 
-- En la revisión de la escena, pulsa **Abrir apps que faltan**. AMSpace abre las aplicaciones instaladas que estén cerradas y espera a que aparezcan sus ventanas en mosaico antes de actualizar la revisión.
-- Después, revisa los puestos y pulsa **Aplicar escena**. Si una aplicación arranca sin ventana, abre una y pulsa **Revisar**. No se reabren documentos concretos.
+- Selecciona una escena para recolocar directamente las ventanas disponibles, sin pasar por la revisión. Si faltan ventanas, se omiten sus puestos.
+- **Ajustes → Mosaico → Abrir apps faltantes**, desactivado por defecto, permite confirmar la apertura de las apps instaladas que estén cerradas. La escena se aplica después sin pedir otra confirmación.
+- La biblioteca conserva **Revisar** para elegir ventanas manualmente. Las escenas no reabren documentos concretos.
 
 English
 
-- In the scene review, click **Open missing apps**. AMSpace launches installed apps that are not running and waits for their tiled windows before refreshing the review.
-- Then review the assignments and click **Apply scene**. If an app starts without a window, open one and click **Review**. Specific documents are not reopened.
+- Select a scene to rearrange the available windows immediately, without a review. Missing windows are skipped.
+- **Settings → Tiling → Open missing apps** is off by default. Enable it to confirm before launching installed apps that are not running. The scene then loads without a second confirmation.
+- **Review** remains available in the library for manual assignment. Scenes do not reopen specific documents.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.40/AMSpace-universal.zip" length="3286305" type="application/octet-stream" sparkle:version="95" sparkle:shortVersionString="0.9.40" sparkle:edSignature="KMSJREhmY9NuRic4l0CeC2734uoNsV2m3p1GZTlcayrKPQb9wDt+HB936rqV/fLNUaI+OKvzAFrJhh/rktAkBg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: tg7BBb8qzWXUhqUuO7FL/HJbryujY93k8EZhGIS2SGPEEnmb4c3kGdsM35f7vgALoU6/hNuRfAX+XnH4sD/1Ag==
-length: 2126
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.41/AMSpace-universal.zip" length="3304882" type="application/octet-stream" sparkle:version="96" sparkle:shortVersionString="0.9.41" sparkle:edSignature="uUkKktQmtpHLuduIkuztJd8gDGA+0E+ukEhHxkh9NNKnb/xX9TSp1Sjw4QnISQAJ9vjsQ0cQsqkLJ6HmBcFnDg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: Oth2wpNbS8eCQB0HgbLTVjI87eDd4UfWElFnqK9c437NoUPC2Evbjtqn5+AAD+UrxPu29n2pEgStUjRsbkIjCw==
+length: 2299
 -->
