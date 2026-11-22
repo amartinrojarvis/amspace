@@ -2,8 +2,9 @@
 
 - La configuración física leída en macOS 27.2.1 tiene un monitor principal de 2560 × 1440 puntos (ID 5) y un secundario vertical de 1080 × 1920 (ID 2). `screen_configuration` los ordena por ID. Usar la altura del primero de la lista desplazaba los rectángulos en 480 puntos: en esa topología una capa 18 de pantalla completa no alcanzaba el 90 % de solapamiento en ninguno de los monitores. La conversión usa ahora la altura del ID principal de CoreGraphics.
 - La regresión evalúa las capas de «Mostrar escritorio» de ambos monitores con esa topología y orden reales. La captura pasiva solo observó el escritorio normal; no se completó la prueba física de la esquina y apertura de ventana con el bundle corregido. No se sustituyó la app instalada.
-- `scripts/check.sh`: formato, Clippy, plist, 295 pruebas correctas y nueve ignoradas. Pasaron la regresión de detección multipantalla y la de admisión flotante al salir. Bundle universal compilado para arm64 y x86_64; no se ejecutó en Intel.
+- `scripts/check.sh` sobre el commit publicado `679b8d4`: formato, Clippy, plist, 296 pruebas correctas y nueve ignoradas. Bundle universal arm64/x86_64; `--check-tab-controls` pasó en Apple Silicon, sin ejecución en Intel.
 - La regresión de reentrada descubre una nueva identidad aún fuera de pantalla durante la barrera de Spaces. Tras vencer el plazo de captura, solo esa ventana conserva la admisión flotante: ni la anterior al gesto ni otra publicada después del plazo la heredan.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45048553019). Los archivos de [v0.9.34](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.34) coinciden con los preparados; se verificó el bundle del DMG público montado en solo lectura. El ZIP inmutable (`902d031`) tiene SHA-256 `5ddf8e8a5a0b7f42e051278903daf2ec8dc00030852b1cbc7d8c2fd84a4bf077`. El catálogo anunciado en `6ff673f` devolvió los bytes firmados con y sin compresión. No se probó la instalación desde el actualizador ni una primera instalación en otra cuenta.
 
 ## 0.9.33/build 88 — correcciones del escritorio
 
