@@ -1,21 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.41</title><pubDate>Sun, 22 Nov 2026 19:55:44 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.41 — Escenas de trabajo en un clic.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.42</title><pubDate>Sun, 22 Nov 2026 20:23:55 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.42 — Recuperación precisa de escenas.
 
-- Selecciona una escena para recolocar directamente las ventanas disponibles, sin pasar por la revisión. Si faltan ventanas, se omiten sus puestos.
-- **Ajustes → Mosaico → Abrir apps faltantes**, desactivado por defecto, permite confirmar la apertura de las apps instaladas que estén cerradas. La escena se aplica después sin pedir otra confirmación.
-- La biblioteca conserva **Revisar** para elegir ventanas manualmente. Las escenas no reabren documentos concretos.
+- Al cargar una escena, AMSpace restablece y verifica tanto la posición como el tamaño de las ventanas, incluso si se han desviado solo uno o dos puntos.
+- **Abrir apps faltantes** está activado por defecto. Si falta una app instalada, AMSpace pregunta antes de abrirla. Puedes desactivar el ajuste en **Ajustes → Mosaico**.
 
 English
 
-- Select a scene to rearrange the available windows immediately, without a review. Missing windows are skipped.
-- **Settings → Tiling → Open missing apps** is off by default. Enable it to confirm before launching installed apps that are not running. The scene then loads without a second confirmation.
-- **Review** remains available in the library for manual assignment. Scenes do not reopen specific documents.
+- Loading a scene restores and verifies both window position and size, even when they differ by just one or two points.
+- **Open missing apps** is on by default. AMSpace asks before launching missing installed apps. You can turn it off in **Settings → Tiling**.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.41/AMSpace-universal.zip" length="3304882" type="application/octet-stream" sparkle:version="96" sparkle:shortVersionString="0.9.41" sparkle:edSignature="uUkKktQmtpHLuduIkuztJd8gDGA+0E+ukEhHxkh9NNKnb/xX9TSp1Sjw4QnISQAJ9vjsQ0cQsqkLJ6HmBcFnDg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: Oth2wpNbS8eCQB0HgbLTVjI87eDd4UfWElFnqK9c437NoUPC2Evbjtqn5+AAD+UrxPu29n2pEgStUjRsbkIjCw==
-length: 2299
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.42/AMSpace-universal.zip" length="3306184" type="application/octet-stream" sparkle:version="97" sparkle:shortVersionString="0.9.42" sparkle:edSignature="U4svWMhkRCciXr0qMHF95mrS8eZ2dQHlwbpeDYlONAfHg8MtlhwUcIB0VkOU3oTx6kDwm+EY8ltQMLYT7XiaBg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: HPlIK9pkhwG3wU3i2aRhrQdY2LA/xS6bPIpj+BadfBGUn31RtDBymPLAtkdsHfYtR0va/ttIHONnLCOwubTBCg==
+length: 2005
 -->
