@@ -50,7 +50,7 @@ struct Api {
     ordered: Option<unsafe extern "C" fn(i32, u32, *mut u8) -> i32>,
 }
 static API: OnceLock<Option<Api>> = OnceLock::new();
-static WATCHED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static WATCHED: Mutex<Option<Vec<u32>>> = Mutex::new(Some(Vec::new()));
 static TARGET: AtomicU32 = AtomicU32::new(0);
 static BORDER: AtomicU32 = AtomicU32::new(0);
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -336,6 +336,15 @@ pub fn corner_radius(id: u32) -> f64 {
     };
     read().unwrap_or(10.)
 }
+fn update_subscription(
+    confirmed: &mut Option<Vec<u32>>,
+    ids: Vec<u32>,
+    request: impl FnOnce(&[u32]) -> bool,
+) {
+    if confirmed.as_ref() != Some(&ids) {
+        *confirmed = request(&ids).then_some(ids);
+    }
+}
 fn watch(mut ids: Vec<u32>, target: u32) {
     ids.sort_unstable();
     ids.dedup(); // Stacking changes do not change the notification subscription.
@@ -351,24 +360,18 @@ fn watch(mut ids: Vec<u32>, target: u32) {
         }
         ok
     });
-    let changed = WATCHED.lock().is_ok_and(|mut watched| {
-        if *watched == ids {
-            return false;
-        }
-        *watched = ids.clone();
-        true
-    });
-    if changed {
-        unsafe {
-            (api.watch)((api.connection)(), ids.as_ptr(), ids.len() as i32);
-        }
+    if let Ok(mut watched) = WATCHED.lock() {
+        // The notification callback only touches atomics, never WATCHED.
+        update_subscription(&mut watched, ids, |ids| unsafe {
+            (api.watch)((api.connection)(), ids.as_ptr(), ids.len() as i32) == 0
+        });
     }
 }
 pub fn set_border(id: u32) {
     BORDER.store(id, Ordering::Release);
 }
 pub fn native_tracking() -> bool {
-    REGISTERED.get().copied().unwrap_or(false)
+    REGISTERED.get().copied().unwrap_or(false) && WATCHED.lock().is_ok_and(|ids| ids.is_some())
 }
 pub fn stop() {
     ENABLED.store(false, Ordering::Release);
@@ -739,6 +742,16 @@ pub fn visible_normal_window_ids() -> Option<std::collections::HashSet<(i32, u32
 #[cfg(test)]
 mod tests {
     use super::classify_event;
+    #[test]
+    fn failed_window_subscription_can_recover_without_a_focus_change() {
+        let mut confirmed = Some(vec![1]);
+        super::update_subscription(&mut confirmed, vec![1, 2], |_| false);
+        assert!(confirmed.is_none(), "geometry needs AX fallback");
+        super::update_subscription(&mut confirmed, vec![1, 2], |ids| ids == [1, 2]);
+        assert_eq!(confirmed.as_deref(), Some([1, 2].as_slice()));
+        super::update_subscription(&mut confirmed, vec![1, 2], |_| panic!("already subscribed"));
+    }
+
     #[test]
     fn offscreen_metadata_omits_boolean_and_malformed_values_are_rejected() {
         use super::*;

@@ -233,7 +233,7 @@ Al pasar explícitamente a flotante, mediante el atajo, la zona superior o el me
 
 El borde y el foco bajo el cursor siguen funcionando; el mosaico no activa ni eleva ventanas al distribuirlas. Se excluyen diálogos, ventanas no redimensionables, minimizadas, pantalla completa, ventanas propias y ventanas asignadas a todos los escritorios. Algunas aplicaciones imponen tamaños mínimos: las divisiones se ajustan conservando la plantilla, incluida Espiral. Si no cabe, el selector la deshabilita y los ajustes muestran un aviso; usa otra plantilla o deja esa ventana flotante.
 
-Esta es una adaptación nativa de la interacción de [Omarchy/Hyprland](https://github.com/omacom/omarchy/blob/master/default/hypr/bindings/tiling.lua), no un compositor Hyprland: no incluye pseudotiling, scratchpads ni todos sus atajos. Las plantillas y ajustes persisten; el árbol, el orden, los grupos y las ventanas flotantes son estado de la sesión. El guardado de proporciones y rejilla por escritorio está disponible; los perfiles con identidad de aplicaciones y monitores quedan para una ampliación futura.
+Esta es una adaptación nativa de la interacción de [Omarchy/Hyprland](https://github.com/omacom/omarchy/blob/master/default/hypr/bindings/tiling.lua), no un compositor Hyprland: no incluye pseudotiling, scratchpads ni todos sus atajos. Las plantillas y ajustes persisten; el árbol activo, el orden, los grupos y las ventanas flotantes son estado de la sesión.
 
 
 ### Redimensionado y aplicaciones flotantes
@@ -254,7 +254,11 @@ El temporizador de tiling funciona a 60 Hz durante animaciones y arrastres, a 12
 
 En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rejilla virtual. Valores iniciales: **120 columnas × 6 filas**, configurables entre 2–240 columnas y 2–60 filas. Pulsa **Aplicar rejilla** tras editar. Se ajustan las divisiones compartidas, respetando gaps y tamaños mínimos, no cada ventana por separado. Si una alineación no cabe por los mínimos de un subárbol, prevalece el mínimo.
 
-**Guardar distribución** conserva una distribución de tamaños por escritorio: plantilla, proporciones, estructura y rejilla. **Restaurar distribución** la aplica a los tiles presentes y requiere el mismo número de ventanas. Usa posiciones lógicas, no IDs de ventana guardados, por lo que puede restaurarse después de reiniciar. No abre aplicaciones ni identifica documentos, y no es todavía un gestor de perfiles multipantalla con nombres.
+**Guardar distribución** conserva plantilla, proporciones, estructura y rejilla por escritorio. **Restaurar distribución** usa posiciones lógicas y requiere el mismo número de ventanas; no distingue aplicaciones.
+
+**Ajustes → Mosaico → Escenas de trabajo…** permite dar nombre al reparto visible por monitor y aplicación. Para recuperarlo, selecciona la escena, revisa qué ventana ocupará cada puesto y pulsa **Aplicar escena**. Si hay dos ventanas de la misma aplicación, eliges tú. Una pantalla desconectada se omite: sus ventanas no se redirigen al portátil. No se abren aplicaciones ni se guardan títulos de documentos.
+
+La revisión ofrece ventanas en mosaico de los escritorios visibles. Los grupos de pestañas conservan sus miembros en la misma pantalla. Si hay más ventanas en un destino que puestos en la escena, no se expulsa ninguna: deja flotantes las que sobren y pulsa **Revisar**. Una aplicación puede rechazar un tamaño o un traslado; AMSpace comprueba la geometría antes de dar la escena por aplicada.
 
 Recolocar las ventanas de una cuadrícula ajustada conserva sus huecos y proporciones; intercambia o reordena qué ventana ocupa cada hueco. Redimensionar desde una esquina exterior ajusta la división interna opuesta manteniendo el límite de pantalla, incluido el caso de una ventana izquierda y dos apiladas a la derecha.
 

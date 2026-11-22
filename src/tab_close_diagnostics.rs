@@ -115,7 +115,7 @@ impl Drop for RestoreFocus {
     }
 }
 
-pub fn check() -> Result<(), String> {
+pub fn check(scenes_only: bool) -> Result<(), String> {
     if !ax::trusted() {
         return Err(
             "El diagnóstico de cierre necesita Accesibilidad; no modifica permisos.".into(),
@@ -180,6 +180,10 @@ pub fn check() -> Result<(), String> {
     }
     let mut desktop = Desktop::configured(Layout::Spiral, None);
     desktop.reconcile_at(&ids, area, 10., None);
+    if scenes_only {
+        manager.desktops.insert(space, desktop);
+        return crate::ui::diagnostics::check_scene_fixture(manager, &ids, pid, area);
+    }
     for (target, id) in ids.iter().zip(&ids[1..]) {
         desktop = desktop
             .proposed_drop(*id, DropIntent::Group(*target), area, 10.)

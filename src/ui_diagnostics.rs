@@ -1,7 +1,8 @@
 //! Explicit main-thread diagnostics using only AMSpace panels and isolated defaults.
+pub(crate) use super::scenes::check_scene_fixture;
 use super::*;
 
-fn pump(seconds: f64) {
+pub(super) fn pump(seconds: f64) {
     let end = Instant::now() + Duration::from_secs_f64(seconds);
     while Instant::now() < end {
         objc2::rc::autoreleasepool(|_| unsafe {
@@ -37,6 +38,26 @@ unsafe fn check_settings_layout(
             app.build_settings_for_screen(rect(0., 0., width, height));
             let panel = app.settings.as_ref().unwrap().clone();
             let _: () = msg_send![&panel, setLevel:3isize];
+            if name == "roomy" && app.tile_space.is_some() {
+                // A retained but hidden panel still displays the previous
+                // workspace until reopened. Reopening must reflect the pause.
+                app.tiling_paused = true;
+                app.refresh_workspace();
+                let before: bool = msg_send![app.tile_controls[1], isEnabled];
+                app.show_settings();
+                let after: bool = msg_send![app.tile_controls[1], isEnabled];
+                if let Some(timer) = app.settings_timer.take() {
+                    let _: () = msg_send![&timer, invalidate];
+                }
+                if !before || after {
+                    return Err("Ajustes no difirió el refresco de Mosaico hasta reabrir.".into());
+                }
+                println!(
+                    "Settings: hidden Mosaic controls stayed untouched; reopening reflected the current pause."
+                );
+                app.tiling_paused = false;
+                app.refresh_tile_controls();
+            }
             let _: () = msg_send![&panel, orderFrontRegardless];
             let result = (|| -> Result<(), String> {
                 for (page, section) in SETTINGS_SECTIONS.iter().take(5).enumerate() {
@@ -462,6 +483,40 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             check_power_reentry(target_ptr, &defaults)?;
             APP.with(|cell| {
                 let mut borrowed = cell.borrow_mut();
+                let app = borrowed.as_mut().unwrap();
+                app.desktop_preview.pending = Some((1, NSRect::ZERO));
+                space_changed(target_ptr, sel!(spaceChanged:), ptr::null_mut());
+                pump(0.025);
+            });
+            pump(0.035);
+            if APP.with(|cell| {
+                let borrowed = cell.borrow();
+                borrowed.as_ref().unwrap().desktop_preview.pending.is_some()
+            }) {
+                return Err(
+                    "La preview del escritorio anterior sobrevivió al cambio de Space.".into(),
+                );
+            }
+            APP.with(|cell| {
+                let mut borrowed = cell.borrow_mut();
+                borrowed.as_mut().unwrap().screen_configuration.clear();
+                screens_changed(target_ptr, sel!(screensChanged:), ptr::null_mut());
+                pump(0.025);
+            });
+            pump(0.035);
+            let actual = screen_configuration();
+            if actual.is_empty()
+                || APP.with(|cell| cell.borrow().as_ref().unwrap().screen_configuration != actual)
+            {
+                return Err(
+                    "No se recuperó la topología de pantallas tras la reentrada AX.".into(),
+                );
+            }
+            println!(
+                "Topology callbacks: stale preview dismissed and screen configuration refreshed after nested delivery."
+            );
+            APP.with(|cell| {
+                let mut borrowed = cell.borrow_mut();
                 borrowed.as_mut().unwrap().sleeping = false;
                 crate::desktop_mode::update(crate::desktop_mode::Mode::Desktop);
                 pump(0.025);
@@ -579,6 +634,29 @@ pub(crate) fn check_deferred_callbacks() -> Result<(), String> {
             println!(
                 "Float drop setting: default enabled, disable/enable persisted in isolated suite; native Mosaic page rendered"
             );
+            let open: Obj = msg_send![view, viewWithTag:130isize];
+            if open.is_null() {
+                return Err("Falta la entrada de escenas en Mosaico.".into());
+            }
+            let _: () = msg_send![open, performClick:ptr::null::<AnyObject>()];
+            let scene = APP
+                .with(|cell| {
+                    cell.borrow()
+                        .as_ref()?
+                        .scenes
+                        .as_ref()
+                        .map(|p| p.window.clone())
+                })
+                .ok_or("El botón de escenas no abrió su panel.")?;
+            let content: Obj = msg_send![&scene, contentView];
+            let apply: Obj = msg_send![content, viewWithTag:135isize];
+            if apply.is_null() || msg_send![apply, isEnabled] {
+                return Err("Aplicar debe estar desactivado sin ventanas revisadas.".into());
+            }
+            pump(0.06);
+            let capture = capture_window(&scene, ".cache/work-scenes.png");
+            let _: () = msg_send![&scene, orderOut:ptr::null::<AnyObject>()];
+            capture?;
             check_full_picker(Retained::as_ptr(&defaults) as Obj)?;
             Ok(())
         })();
@@ -701,14 +779,17 @@ fn check_power_reentry(target: Obj, defaults: &AnyObject) -> Result<(), String> 
     unsafe {
         let _: () = msg_send![defaults, setBool:false, forKey:ns_string!("tile.enabled")];
     }
-    let switch = if ax::trusted() {
-        match spaces::visible_desktops().first() {
-            Some((_, space)) => Some(space_switch::Switch::start(*space).map_err(str::to_owned)?),
-            None => None,
+    let make_switch = || -> Result<_, String> {
+        if ax::trusted()
+            && let Some((_, space)) = spaces::visible_desktops().first()
+        {
+            return space_switch::Switch::start(*space)
+                .map(Some)
+                .map_err(str::to_owned);
         }
-    } else {
-        None
+        Ok(None)
     };
+    let switch = make_switch()?;
     let had_switch = switch.is_some();
     APP.with(|cell| -> Result<(), String> {
         let mut borrowed = cell.borrow_mut();
@@ -759,6 +840,34 @@ fn check_power_reentry(target: Obj, defaults: &AnyObject) -> Result<(), String> 
         }
         Ok(())
     })?;
+    // A newer notification can arrive after APP is released but before
+    // the older notification's 10 ms retry runs.
+    let switch = make_switch()?;
+    with_app(|app| app.switching = switch);
+    for last_sleep in [false, true] {
+        APP.with(|cell| {
+            let _borrowed = cell.borrow_mut();
+            if last_sleep {
+                wake(target, sel!(wake:), ptr::null_mut());
+            } else {
+                sleep(target, sel!(sleep:), ptr::null_mut());
+            }
+        });
+        if last_sleep {
+            sleep(target, sel!(sleep:), ptr::null_mut());
+        } else {
+            wake(target, sel!(wake:), ptr::null_mut());
+        }
+        pump(0.035);
+        let applied = APP.with(|cell| {
+            let borrowed = cell.borrow();
+            let app = borrowed.as_ref().unwrap();
+            app.sleeping == last_sleep && app.switching.is_none()
+        });
+        if !applied {
+            return Err("Orden de energía incorrecto o navegación antigua sin cancelar.".into());
+        }
+    }
     println!(
         "Power callbacks: local sleep/wake survive AX reentry; old navigation cancelled={had_switch}; disabled tiling/hover stay off. No physical sleep, Space switch or global input."
     );
@@ -1032,7 +1141,7 @@ pub(crate) fn check_tab_pan(
     }
 }
 
-fn capture_window(panel: &AnyObject, path: &str) -> Result<(), String> {
+pub(super) fn capture_window(panel: &AnyObject, path: &str) -> Result<(), String> {
     let number: isize = unsafe { msg_send![panel, windowNumber] };
     std::fs::create_dir_all(".cache").map_err(|error| error.to_string())?;
     // Native controls can be compositor-backed and absent from cacheDisplay.

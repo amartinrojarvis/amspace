@@ -71,7 +71,18 @@ pub fn neighbor(id: u64, right: bool) -> Option<u64> {
 fn position_in_display(ids: &[u64], target: u64) -> Option<usize> {
     ids.iter().position(|id| *id == target)
 }
+pub(crate) fn display_uuid(id: u32) -> Option<String> {
+    unsafe {
+        let uuid = Owned::new(CGDisplayCreateUUIDFromDisplayID(id))?;
+        let value = Owned::new(CFUUIDCreateString(std::ptr::null(), uuid.0))?;
+        Some((&*value.0.cast::<NSString>()).to_string())
+    }
+}
+
 fn display_number(identifier: Cf) -> Option<u32> {
+    if identifier.is_null() {
+        return None;
+    }
     if equals_text(identifier, "Main") {
         return Some(unsafe { CGMainDisplayID() });
     }
@@ -172,6 +183,19 @@ mod tests {
             let rows = settings_rows(displays.0);
             let labels: Vec<_> = rows.iter().map(|r| (r.id, r.number, r.display)).collect();
             assert_eq!(labels, [(8, 1, Some(1)), (9, 2, Some(2))]);
+        });
+    }
+    #[test]
+    fn missing_display_identifier_cannot_supply_a_shortcut_destination() {
+        objc2::rc::autoreleasepool(|_| {
+            let displays = fixture(
+                r#"[{"Spaces":[{"type":0,"ManagedSpaceID":8}]},
+                    {"Display Identifier":"Main","Spaces":[{"type":0,"ManagedSpaceID":9}]}]"#,
+            );
+            assert_eq!(
+                desktops_from_snapshot(displays.0, 2, display_number).collect::<Vec<_>>(),
+                [9]
+            );
         });
     }
     #[test]

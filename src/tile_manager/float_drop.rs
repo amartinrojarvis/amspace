@@ -72,11 +72,19 @@ fn title_for(floating: bool) -> &'static str {
     }
 }
 
+fn instruction(highlighted: bool) -> &'static str {
+    crate::i18n::tr(if highlighted {
+        "Suelta aquí para confirmar"
+    } else {
+        "Arrastra al recuadro"
+    })
+}
+
 fn symbol_for(floating: bool) -> &'static str {
     if floating {
-        "rectangle.stack"
+        "rectangle.split.2x1"
     } else {
-        "rectangle.3.group"
+        "macwindow.on.rectangle"
     }
 }
 
@@ -103,24 +111,24 @@ impl Overlay {
                 ),
                 [0.08, 0.09, 0.12],
                 0.92,
-                12.,
+                18.,
             );
             let card = card_geometry(frame.size.width, frame.size.height);
             let tint = color(0.97, 0.98, 1., 1.);
             let title =
                 crate::native::label(plate, card.title, title_for(floating), 16., 0.4, false);
-            let _: () = msg_send![title, setAlignment:1isize];
+            let _: () = msg_send![title, setAlignment:card.alignment];
             let _: () = msg_send![title, setTextColor:tint];
             let subtitle = crate::native::label(
                 plate,
                 card.subtitle,
-                crate::i18n::tr("Suelta aquí para confirmar"),
+                instruction(highlighted),
                 12.,
                 0.,
                 true,
             );
-            let _: () = msg_send![subtitle, setAlignment:1isize];
-            let _: () = msg_send![subtitle, setTextColor:tint];
+            let _: () = msg_send![subtitle, setAlignment:card.alignment];
+            let _: () = msg_send![subtitle, setTextColor:color(0.83,0.85,0.90,1.)];
             let icon = image_view(
                 plate,
                 card.icon,
@@ -128,7 +136,7 @@ impl Overlay {
                 title_for(floating),
                 tint,
             );
-            paint(plate, highlighted);
+            crate::native::hud_surface(plate, highlighted, 0.95);
             let _: () = msg_send![&panel, setContentView:&*root];
             Overlay {
                 panel,
@@ -174,6 +182,7 @@ impl Overlay {
                 let card = card_geometry(target.size.width, target.size.height);
                 for (view, slot) in [(self.title, card.title), (self.subtitle, card.subtitle)] {
                     let _: () = msg_send![view, setFrame:slot];
+                    let _: () = msg_send![view, setAlignment:card.alignment];
                 }
                 let _: () = msg_send![self.icon, setFrame:card.icon];
                 self.width = target.size.width;
@@ -182,7 +191,6 @@ impl Overlay {
             if self.floating != floating {
                 let title = title_for(floating);
                 crate::native::text(self.title, title);
-                crate::native::text(self.subtitle, crate::i18n::tr("Suelta aquí para confirmar"));
                 let image: Obj = msg_send![
                     class!(NSImage),
                     imageWithSystemSymbolName:&*NSString::from_str(symbol_for(floating)),
@@ -194,7 +202,8 @@ impl Overlay {
                 self.floating = floating;
             }
             if self.highlighted != highlighted {
-                paint(self.plate, highlighted);
+                crate::native::hud_surface(self.plate, highlighted, 0.95);
+                crate::native::text(self.subtitle, instruction(highlighted));
                 self.highlighted = highlighted;
             }
             let visible: bool = msg_send![&self.panel, isVisible];
@@ -215,8 +224,9 @@ impl Overlay {
     }
 }
 
-/// Centered icon/title/subtitle stack inside the plate, in plate-local points.
+/// Wide cards read as a command with a leading glyph. Narrow cards stack vertically.
 struct Card {
+    alignment: isize,
     icon: NSRect,
     title: NSRect,
     subtitle: NSRect,
@@ -225,11 +235,28 @@ struct Card {
 fn card_geometry(width: f64, height: f64) -> Card {
     let plate_width = (width - PLATE_INSET * 2.).max(1.);
     let plate_height = (height - PLATE_INSET * 2.).max(1.);
+    if plate_width >= 220. {
+        let icon = ICON_SIZE.min(plate_height - 12.);
+        let x = 24. + icon + 16.;
+        let bottom = (plate_height - TITLE_HEIGHT - TITLE_GAP - SUBTITLE_HEIGHT) / 2.;
+        return Card {
+            alignment: 0,
+            icon: rect(24., (plate_height - icon) / 2., icon, icon),
+            title: rect(
+                x,
+                bottom + SUBTITLE_HEIGHT + TITLE_GAP,
+                plate_width - x - 12.,
+                TITLE_HEIGHT,
+            ),
+            subtitle: rect(x, bottom, plate_width - x - 12., SUBTITLE_HEIGHT),
+        };
+    }
     let icon = (plate_height - TEXT_STACK).clamp(0., ICON_SIZE);
     let stack = icon + TEXT_STACK;
     let bottom = ((plate_height - stack) / 2.).max(0.);
     let text_width = (plate_width - 8.).max(1.);
     Card {
+        alignment: 1,
         icon: rect((plate_width - icon) / 2., bottom + TEXT_STACK, icon, icon),
         title: rect(
             4.,
@@ -238,31 +265,6 @@ fn card_geometry(width: f64, height: f64) -> Card {
             TITLE_HEIGHT,
         ),
         subtitle: rect(4., bottom, text_width, SUBTITLE_HEIGHT),
-    }
-}
-
-/// Same two states as `paint_hint`: idle dark plate, active blue plate.
-unsafe fn paint(plate: Obj, highlighted: bool) {
-    unsafe {
-        if plate.is_null() {
-            return;
-        }
-        let layer: Obj = msg_send![plate, layer];
-        let fill = if highlighted {
-            color(0.12, 0.28, 0.52, 0.96)
-        } else {
-            color(0.08, 0.09, 0.12, 0.92)
-        };
-        let outline = if highlighted {
-            color(0.50, 0.77, 1., 1.)
-        } else {
-            color(1., 1., 1., 0.45)
-        };
-        let fill: *const crate::native::CgColor = msg_send![fill, CGColor];
-        let outline: *const crate::native::CgColor = msg_send![outline, CGColor];
-        let _: () = msg_send![layer, setBackgroundColor:fill];
-        let _: () = msg_send![layer, setBorderColor:outline];
-        let _: () = msg_send![layer, setBorderWidth:if highlighted { 3f64 } else { 1f64 }];
     }
 }
 
@@ -368,7 +370,10 @@ mod tests {
             let plate = height - PLATE_INSET * 2.;
             assert!(card.subtitle.origin.y >= 0.);
             assert!(card.title.origin.y >= top(card.subtitle) - 1e-9);
-            assert!(card.icon.origin.y >= top(card.title) - 1e-9);
+            assert!(
+                right(card.icon) <= card.title.origin.x
+                    || card.icon.origin.y >= top(card.title) - 1e-9
+            );
             assert!(top(card.icon) <= plate + 1e-9);
             assert!(card.icon.size.width <= ICON_SIZE + 1e-9);
         }

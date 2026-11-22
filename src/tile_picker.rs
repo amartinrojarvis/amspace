@@ -73,6 +73,7 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         25 => Input::Select(8),
         29 => Input::Select(9),
         123 => Input::Move(-1),
+        124 => Input::Move(1),
         125 => Input::Move(columns as isize),
         126 => Input::Move(-(columns as isize)),
         48 => Input::Move(if shift { -1 } else { 1 }),
@@ -157,7 +158,8 @@ unsafe fn plate(parent: Obj, frame: NSRect, alpha: f64, accent: bool, radius: f6
         let _: () = msg_send![&view, setWantsLayer:true];
         let layer: Obj = msg_send![&view, layer];
         let c = if accent {
-            color(0.48, 0.60, 1., alpha)
+            let accent: Obj = msg_send![class!(NSColor), controlAccentColor];
+            msg_send![accent, colorWithAlphaComponent:alpha]
         } else {
             color(0.10, 0.12, 0.18, alpha)
         };
@@ -180,6 +182,42 @@ unsafe fn light_label(parent: Obj, frame: NSRect, value: &str, size: f64, bold: 
         );
         let _: () = msg_send![v,setTextColor:color(0.94,0.96,1.,1.)];
         v
+    }
+}
+
+unsafe fn card_caption(root: Obj, card: NSRect, index: usize, title: &str, fits: bool) {
+    unsafe {
+        if !fits {
+            let badge = rect(
+                card.origin.x + card.size.width - 84.,
+                card.origin.y + card.size.height - 28.,
+                74.,
+                20.,
+            );
+            plate(root, badge, 0.98, false, 6.);
+            let reason = light_label(root, badge, crate::i18n::tr("No cabe"), 11., true);
+            let _: () = msg_send![reason, setAlignment:1isize];
+        }
+        let keyed = index < 10;
+        if keyed {
+            let chip = rect(card.origin.x + 10., card.origin.y + 8., 28., 22.);
+            plate(root, chip, 0.95, false, 7.);
+            let key = light_label(root, chip, &((index + 1) % 10).to_string(), 12., true);
+            let _: () = msg_send![key, setAlignment:1isize];
+        }
+        let inset = if keyed { 46. } else { 12. };
+        light_label(
+            root,
+            rect(
+                card.origin.x + inset,
+                card.origin.y + 8.,
+                (card.size.width - inset - 8.).max(1.),
+                22.,
+            ),
+            title,
+            13.,
+            true,
+        );
     }
 }
 fn transparent_view_class() -> &'static AnyClass {
@@ -344,7 +382,8 @@ impl Picker {
                 cards,
                 columns,
             } = gallery_geometry(area, total);
-            plate(root, gallery, 0.92, false, 22.);
+            let backdrop = plate(root, gallery, 0.96, false, 22.);
+            crate::native::hud_surface(backdrop, false, 0.95);
             let orientation = if columns == 2 {
                 crate::i18n::tr("vertical")
             } else {
@@ -362,7 +401,7 @@ impl Picker {
                     "Distribuciones · pantalla {orientation}",
                     "Layouts · {orientation} display"
                 ),
-                18.,
+                21.,
                 true,
             );
             light_label(
@@ -413,7 +452,7 @@ impl Picker {
                 let examples = layout.example_count();
                 let ids: Vec<u32> = (1..=examples).collect();
                 example.reconcile_at(&ids, area, 10., None);
-                for (_, frame) in example.frames(area, 10.) {
+                for (slot, (_, frame)) in example.frames(area, 10.).into_iter().enumerate() {
                     let scale = thumb.size.width / area.size.width;
                     plate(
                         root,
@@ -424,23 +463,18 @@ impl Picker {
                             frame.size.width * scale,
                             frame.size.height * scale,
                         ),
-                        if valid[index] { 0.48 } else { 0.16 },
+                        if !valid[index] {
+                            0.18
+                        } else if slot == 0 {
+                            0.94
+                        } else {
+                            0.52
+                        },
                         true,
                         2.,
                     );
                 }
-                light_label(
-                    root,
-                    rect(
-                        card.origin.x + 12.,
-                        card.origin.y + 10.,
-                        card.size.width - 24.,
-                        20.,
-                    ),
-                    &format!("{}  {}", index + 1, layout.short_name(area)),
-                    13.,
-                    true,
-                );
+                card_caption(root, *card, index, layout.short_name(area), valid[index]);
                 buttons.push(choice(
                     root,
                     *card,
@@ -486,18 +520,7 @@ impl Picker {
                         );
                     }
                 }
-                light_label(
-                    root,
-                    rect(
-                        card.origin.x + 12.,
-                        card.origin.y + 10.,
-                        card.size.width - 24.,
-                        20.,
-                    ),
-                    &format!("{}  {}", index + 1, template.name),
-                    13.,
-                    true,
-                );
+                card_caption(root, *card, index, &template.name, fits);
                 buttons.push(choice(
                     root,
                     *card,
@@ -539,7 +562,7 @@ impl Picker {
                 ghost: Retained::as_ptr(&ghost) as Obj,
                 status,
             };
-            picker.render();
+            picker.render(None);
             Some(picker)
         }
     }
@@ -550,8 +573,8 @@ impl Picker {
     }
     pub fn select(&mut self, index: usize) {
         if index < self.valid.len() && self.valid[index] && index != self.selected {
-            self.selected = index;
-            self.render();
+            let previous = std::mem::replace(&mut self.selected, index);
+            self.render(Some(previous));
         }
     }
     pub fn move_selection(&mut self, offset: isize) {
@@ -576,31 +599,30 @@ impl Picker {
             .get(self.selected - Layout::ALL.len())
             .map(|template| Selection::Custom(template.distribution.clone()))
     }
-    fn render(&mut self) {
+    fn render(&mut self, previous: Option<usize>) {
         unsafe {
             for (index, view) in self.card_views.iter().enumerate() {
+                if previous.is_some_and(|old| old != index && index != self.selected) {
+                    continue;
+                }
                 let title = format!(
                     "{} · {}{}",
                     index + 1,
                     self.titles[index],
                     if !self.valid[index] {
-                        " · no cabe"
+                        crate::i18n::tr(" · no cabe")
                     } else if index == self.selected {
-                        " · seleccionada"
+                        crate::i18n::tr(" · seleccionada")
                     } else {
                         ""
                     }
                 );
                 let _: () = msg_send![self.buttons[index],setAccessibilityLabel:&*NSString::from_str(&title)];
-                let layer: Obj = msg_send![*view, layer];
-                let c = color(
-                    0.48,
-                    0.60,
-                    1.,
-                    if index == self.selected { 0.32 } else { 0.10 },
+                crate::native::hud_surface(
+                    *view,
+                    index == self.selected && self.valid[index],
+                    0.95,
                 );
-                let cg: *const crate::native::CgColor = msg_send![c, CGColor];
-                let _: () = msg_send![layer,setBackgroundColor:cg];
                 let _: () = msg_send![self.buttons[index],setState:if index==self.selected {1isize}else{0isize}];
             }
             let selected = self.card_views[self.selected];
@@ -694,6 +716,7 @@ mod tests {
     #[test]
     fn keyboard_selection_adapts_to_gallery_orientation() {
         assert_eq!(key_input(125, 3, false), Some(Input::Move(3)));
+        assert_eq!(key_input(124, 3, false), Some(Input::Move(1)));
         assert_eq!(key_input(125, 2, false), Some(Input::Move(2)));
         assert_eq!(key_input(48, 2, true), Some(Input::Move(-1)));
         assert_eq!(key_input(53, 2, false), Some(Input::Cancel));

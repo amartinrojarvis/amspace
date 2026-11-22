@@ -1,6 +1,54 @@
 //! Authored settings, sidebar, menu, tooltip, accessibility and feedback strings.
 pub(super) fn english(text: &str) -> Option<&'static str> {
     Some(match text {
+        "Activa Mosaico y Accesibilidad y termina cualquier gesto antes de revisar." => {
+            "Enable tiling and Accessibility, then finish any active gesture before reviewing."
+        }
+        "La pantalla o sus ventanas han cambiado. Pulsa Revisar." => {
+            "The display or its windows changed. Click Review."
+        }
+        "No hay ventanas en mosaico para guardar." => "There are no tiled windows to save.",
+        "Sobran ventanas en el mosaico de destino. Déjalas flotantes y vuelve a revisar." => {
+            "The destination has additional tiled windows. Float them and review again."
+        }
+        "macOS no confirmó la colocación. Se intentó recuperar la posición anterior; revisa las ventanas." => {
+            "macOS did not confirm placement. Previous positions were requested; review the windows."
+        }
+        "Arrastra al recuadro" => "Drag into the card",
+        "TERCIO SUPERIOR" => "UPPER THIRD",
+        "ZONA INFERIOR" => "LOWER ZONE",
+        " · no cabe" => " · does not fit",
+        " · seleccionada" => " · selected",
+        "Escenas de trabajo…" => "Work scenes…",
+        "Escenas de trabajo" => "Work scenes",
+        "Guarda el mosaico visible de cada pantalla y elige las ventanas al recuperarlo." => {
+            "Save each display’s visible layout and choose its windows when restoring."
+        }
+        "Nombre de la nueva escena" => "New scene name",
+        "Guardar escena actual" => "Save current scene",
+        "Escenas guardadas" => "Saved scenes",
+        "Revisar" => "Review",
+        "Aplicar escena" => "Apply scene",
+        "Pantalla desconectada" => "Display disconnected",
+        "Sin ventana compatible" => "No matching window",
+        "Elige una ventana…" => "Choose a window…",
+        "La revisión de ventanas aparecerá aquí." => "The window review will appear here.",
+        "Guarda una escena para empezar." => "Save a scene to get started.",
+        "Revisa los destinos. Las pantallas desconectadas se omiten." => {
+            "Review the destinations. Disconnected displays will be skipped."
+        }
+        "Elige una ventana distinta para cada puesto de las pantallas disponibles." => {
+            "Choose a different window for each slot on the available displays."
+        }
+        "Confirmar" => "Confirm",
+        "Pulsa Confirmar para eliminar esta escena." => "Click Confirm to delete this scene.",
+        "Activa el mosaico y espera a que termine la transición." => {
+            "Enable tiling and wait for the transition to finish."
+        }
+        "Escena aplicada." => "Scene applied.",
+        "No se puede guardar esta escena." => "This scene cannot be saved.",
+        "Ya existe una escena con ese nombre." => "A scene with that name already exists.",
+        "La biblioteca admite hasta 64 escenas." => "The library holds up to 64 scenes.",
         // Sidebar and page titles.
         "Accesibilidad…" => "Accessibility…",
         "Navegación y traslado de ventanas" => "Navigation and window transfer",

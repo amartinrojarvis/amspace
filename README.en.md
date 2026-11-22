@@ -233,7 +233,7 @@ Explicitly floating a window through the shortcut, the top drop zone or a tab's 
 
 The border and the focus under the cursor keep working; the mosaic does not activate nor raise windows when distributing them. Dialogs, non-resizable windows, minimized, full-screen, own windows and windows assigned to all desktops are excluded. Some applications impose minimum sizes: the divisions are adjusted keeping the template, including Spiral. If it does not fit, the picker disables it and the settings show a notice; use another template or leave that window floating.
 
-This is a native adaptation of the interaction of [Omarchy/Hyprland](https://github.com/omacom/omarchy/blob/master/default/hypr/bindings/tiling.lua), not a Hyprland compositor: it does not include pseudotiling, scratchpads nor all its shortcuts. The templates and settings persist; the tree, the order, the groups and the floating windows are session state. Saving proportions and grid per desktop is available; profiles with application and monitor identity are left for a future extension.
+This is a native adaptation of the interaction of [Omarchy/Hyprland](https://github.com/omacom/omarchy/blob/master/default/hypr/bindings/tiling.lua), not a Hyprland compositor: it does not include pseudotiling, scratchpads or all its shortcuts. Templates and settings persist; the active tree, order, groups and floating windows are session state.
 
 ### Resizing and floating apps
 
@@ -251,7 +251,11 @@ The tiling timer runs at 60 Hz during animations and drags, at 12.5 Hz during se
 
 In **Mosaic → Grid and layout…** you can enable snapping to a virtual grid. Initial values: **120 columns × 6 rows**, configurable between 2–240 columns and 2–60 rows. Press **Apply grid** after editing. The shared divisions are adjusted, respecting gaps and minimum sizes, not each window separately. If an alignment does not fit due to the minimums of a subtree, the minimum prevails.
 
-**Save layout** keeps a sizes layout per desktop: template, proportions, structure and grid. **Restore layout** applies it to the tiles present and requires the same number of windows. It uses logical positions, not saved window IDs, so it can be restored after a restart. It opens no applications nor identifies documents, and it is not yet a multi-screen profile manager with names.
+**Save layout** keeps the layout, proportions, structure and grid per desktop. **Restore layout** uses logical positions and requires the same number of windows; it does not distinguish applications.
+
+**Settings → Tiling → Work scenes…** lets you name the visible arrangement by display and application. To restore it, select the scene, review the window for each slot and click **Apply scene**. If two windows belong to the same application, you choose which to use. A disconnected display is skipped, not redirected to your laptop. Scenes do not open applications or store document titles.
+
+The review lists tiled windows on visible desktops. Tab groups keep their members on the same display. If a destination has extra windows, none are evicted: float the extras and click **Review**. An application can refuse a size or a move; AMSpace checks the resulting geometry before reporting success.
 
 Repositioning the windows of a snapped grid keeps their slots and proportions; it swaps or reorders which window occupies each slot. Resizing from an outer corner adjusts the opposite internal division keeping the screen limit, including the case of one left window and two stacked on the right.
 

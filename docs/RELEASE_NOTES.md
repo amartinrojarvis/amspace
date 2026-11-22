@@ -1,12 +1,14 @@
-AMSpace 0.9.31 — Borde, pestañas e indicador más ligeros.
+AMSpace 0.9.32 — Escenas de trabajo y superposiciones rediseñadas.
 
-- El borde evita consultas al sistema para ventanas que no pueden taparlo. El mosaico reutiliza los botones de pestaña cuando no cambian y evita copiar la distribución. El indicador deja de preparar el texto de Ajustes antes de abrir esta vista.
-- Las lecturas de posición y tamaño de las ventanas se agrupan para reducir las llamadas de Accesibilidad. Se conserva la frecuencia de actualización y el gesto de retorno de flotantes al mosaico.
+- En Ajustes → Mosaico → Escenas de trabajo, guarda con nombre el reparto visible por monitor y aplicación. Revisa qué ventana ocupa cada puesto antes de aplicar. Las pantallas desconectadas se omiten y no se abren aplicaciones.
+- El selector de plantillas muestra atajos y distribuciones que no caben. Las zonas de arrastre distinguen mejor apilar como pestaña, intercambiar, hacer flotante y volver al mosaico.
+- Mejoras de estabilidad: dormir y despertar ya no dejan que una entrega antigua vuelva a suspender la interfaz; el borde recupera la geometría si falla su suscripción al sistema y Ajustes evita recalcular el mosaico mientras está cerrado.
 
 English
 
-- The active border skips system queries for windows that cannot cover it. Tiling reuses unchanged tab controls without copying the layout. The menu bar indicator skips preparing Settings text until the view is opened.
-- Window position and size reads are batched to reduce Accessibility calls. Update frequency and the gesture for returning floating windows to tiling are unchanged.
+- In Settings → Tiling → Work scenes, save a named arrangement by display and application. Review which window fills each slot before applying. Disconnected displays are skipped and apps are not launched.
+- The layout picker shows keyboard shortcuts and layouts that do not fit. Drag overlays better distinguish stacking, swapping, floating and returning to tiling.
+- Stability improvements: stale sleep callbacks no longer suspend the interface after wake; the border falls back to window geometry if its system subscription fails, and closed Settings no longer recomputes tiling controls.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

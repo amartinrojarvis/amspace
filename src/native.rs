@@ -67,6 +67,30 @@ pub unsafe fn alloc_view(
 pub unsafe fn color(r: f64, g: f64, b: f64, a: f64) -> Obj {
     unsafe { msg_send![class!(NSColor), colorWithSRGBRed:r, green:g, blue:b, alpha:a] }
 }
+
+/// A dark HUD surface with a system-accent outline and an independent weight cue.
+pub(crate) unsafe fn hud_surface(view: Obj, selected: bool, opacity: f64) {
+    unsafe {
+        let layer: Obj = msg_send![view, layer];
+        let accent: Obj = msg_send![class!(NSColor), controlAccentColor];
+        let dark = color(0.075, 0.082, 0.105, opacity);
+        let fill: Obj = if selected {
+            msg_send![dark, blendedColorWithFraction:0.30f64, ofColor:accent]
+        } else {
+            dark
+        };
+        let stroke = if selected {
+            accent
+        } else {
+            color(1., 1., 1., 0.22)
+        };
+        let bg: *const CgColor = msg_send![fill, CGColor];
+        let edge: *const CgColor = msg_send![stroke, CGColor];
+        let _: () = msg_send![layer, setBackgroundColor:bg];
+        let _: () = msg_send![layer, setBorderColor:edge];
+        let _: () = msg_send![layer, setBorderWidth:if selected { 2.5f64 } else { 1f64 }];
+    }
+}
 pub unsafe fn label(
     parent: Obj,
     frame: NSRect,

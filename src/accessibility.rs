@@ -476,6 +476,7 @@ pub fn focus(window: Cf, pid: i32) -> bool {
 }
 pub struct Observer {
     handle: Owned,
+    pub geometry_fallback: bool,
 }
 impl Observer {
     pub fn new(pid: i32, window: Option<Cf>, geometry_fallback: bool) -> Option<Self> {
@@ -486,6 +487,7 @@ impl Observer {
         }
         let this = Self {
             handle: Owned::new(observer)?,
+            geometry_fallback,
         };
         for name in [
             "AXFocusedWindowChanged",

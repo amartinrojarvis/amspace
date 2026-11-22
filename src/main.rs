@@ -14,6 +14,7 @@ mod instance;
 mod layout_thumbnail;
 mod model;
 mod native;
+mod scene_library;
 mod shortcuts;
 mod sky_bridge;
 mod space_style;
@@ -38,8 +39,12 @@ fn main() {
         objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::run_fixture());
     } else if std::env::args().any(|a| a == "--tab-close-fixture") {
         objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::run_fixture());
-    } else if std::env::args().any(|a| a == "--check-tab-close") {
-        let result = objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::check());
+    } else if let Some(mode) =
+        std::env::args().find(|a| matches!(a.as_str(), "--check-tab-close" | "--check-work-scenes"))
+    {
+        let result = objc2::rc::autoreleasepool(|_| {
+            tile_manager::close_diagnostics::check(mode == "--check-work-scenes")
+        });
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);

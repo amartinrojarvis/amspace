@@ -11,7 +11,7 @@ use objc2::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, ns_string};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     ptr,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
@@ -21,6 +21,8 @@ use std::{
 pub(crate) mod diagnostics;
 #[path = "ui_mouse.rs"]
 mod mouse_delivery;
+#[path = "ui_scenes.rs"]
+mod scenes;
 #[path = "ui_tabs.rs"]
 mod tab_delivery;
 #[link(name = "AppKit", kind = "framework")]
@@ -162,6 +164,7 @@ struct App {
     tile_choices: Vec<Obj>,
     tile_preview_portrait: Option<bool>,
     tile_grid_window: Option<Retained<AnyObject>>,
+    scenes: Option<scenes::Panel>,
     tile_grid_fields: Vec<Obj>,
     tile_grid_status: Obj,
     tile_grid_toggle: Obj,
@@ -485,7 +488,7 @@ const SETTINGS_GENERAL_HEIGHT: f64 = 488.;
 fn settings_tile_height(width: f64) -> f64 {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    842. + rows.saturating_sub(2) as f64 * 108.
+    882. + rows.saturating_sub(2) as f64 * 108.
 }
 
 fn settings_window_size(visible: NSSize) -> NSSize {
@@ -552,6 +555,29 @@ unsafe fn primary_height() -> Option<f64> {
     }
 }
 impl App {
+    fn refresh_workspace(&mut self) {
+        self.ensure_desktop_observer();
+        self.tile_manager.invalidate();
+        // The retained settings panel can be closed for days. Only a visible
+        // panel needs to solve all eight layout choices on app activation.
+        if self
+            .settings
+            .as_ref()
+            .is_some_and(|w| unsafe { msg_send![w, isVisible] })
+        {
+            self.refresh_tile_controls();
+        }
+        self.refresh_spaces();
+        self.refresh_permission();
+        self.update_window();
+        self.settle_focus();
+    }
+
+    fn dismiss_layout_picker(&mut self) {
+        self.layout_picker = None;
+        self.hover_resume = Instant::now() + Duration::from_millis(300);
+    }
+
     unsafe fn new(target: Retained<AnyObject>) -> Self {
         unsafe {
             let defaults: Retained<AnyObject> =
@@ -666,6 +692,7 @@ impl App {
                 tile_choices: vec![],
                 tile_preview_portrait: None,
                 tile_grid_window: None,
+                scenes: None,
                 tile_grid_fields: vec![],
                 tile_grid_status: ptr::null_mut(),
                 tile_grid_toggle: ptr::null_mut(),
@@ -1199,14 +1226,20 @@ impl App {
             let changed =
                 self.observed_pid != pid || self.tracked.map(|w| w.id) != selected.map(|w| w.id);
             self.tracked = selected;
-            if changed || self.observer.is_none() {
+            let geometry_fallback = !ws::native_tracking();
+            if changed
+                || self
+                    .observer
+                    .as_ref()
+                    .is_none_or(|o| o.geometry_fallback != geometry_fallback)
+            {
                 self.observer = None;
                 self.observed_window = selected_element
                     .or_else(|| selected.and_then(|w| ax::window_for_id(pid, w.id)));
                 self.observer = ax::Observer::new(
                     pid,
                     self.observed_window.as_ref().map(|w| w.0),
-                    !ws::native_tracking(),
+                    geometry_fallback,
                 );
                 self.observed_pid = pid;
             }
@@ -1543,6 +1576,8 @@ impl App {
         unsafe {
             if self.settings.is_none() {
                 self.build_settings();
+            } else {
+                self.refresh_tile_controls();
             }
             self.refresh_permission();
             self.refresh_login();
@@ -2713,6 +2748,13 @@ impl App {
                 crate::i18n::tr("Selector de plantillas"),
                 target,
                 57,
+            );
+            button(
+                root,
+                rect(15., actions_row - 36., width - 30., 30.),
+                crate::i18n::tr("Escenas de trabajo…"),
+                target,
+                130,
             );
             let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
             button(
@@ -4515,6 +4557,7 @@ impl App {
                 }
                 57 => self.toggle_picker(),
                 49 => self.show_tile_grid(),
+                130..=136 => self.scene_action(tag),
                 50 => {
                     let state: isize = msg_send![sender, state];
                     crate::tile_manager::save(
@@ -5045,10 +5088,7 @@ extern "C-unwind" fn focus_pending(target: Obj, selector: Sel, _: Obj) {
     with_app_deferred(target, selector, App::finish_focus);
 }
 pub fn cancel_layout_picker() {
-    with_app(|a| {
-        a.layout_picker = None;
-        a.hover_resume = Instant::now() + Duration::from_millis(300);
-    });
+    with_app(App::dismiss_layout_picker);
 }
 pub fn layout_picker_hover(index: usize) {
     with_app(|a| {
@@ -5115,8 +5155,8 @@ pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) -> bool {
         }
     })
 }
-extern "C-unwind" fn desktop_lifecycle(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| a.ensure_desktop_observer());
+extern "C-unwind" fn desktop_lifecycle(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, App::ensure_desktop_observer);
 }
 extern "C-unwind" fn presentation_tick(_: Obj, _: Sel, _: Obj) {
     autoreleasepool(|_| crate::desktop_mode::refresh());
@@ -5532,8 +5572,8 @@ extern "C-unwind" fn fade_flash(target: Obj, selector: Sel, _: Obj) {
 extern "C-unwind" fn hide_flash(target: Obj, selector: Sel, _: Obj) {
     with_app_deferred(target, selector, App::hide_flash);
 }
-extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj) {
-    with_app(|a| {
+extern "C-unwind" fn space_changed(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         a.desktop_preview.hide();
         a.pause_border_for_space();
         a.focus_target = None;
@@ -5543,50 +5583,35 @@ extern "C-unwind" fn space_changed(target: Obj, selector: Sel, notification: Obj
         if a.tile_timer.is_some() && !a.tiling_paused && !a.sleeping {
             a.tile_manager.resume_space_strips();
         }
+        a.refresh_workspace();
     });
-    workspace(target, selector, notification);
 }
-extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, notification: Obj) {
-    let mut changed = false;
-    let mut physical_change = false;
-    with_app(|a| {
+extern "C-unwind" fn screens_changed(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, |a| {
         let configuration = screen_configuration();
-        if configuration != a.screen_configuration {
-            physical_change = configuration.len() != a.screen_configuration.len()
-                || configuration
-                    .iter()
-                    .zip(&a.screen_configuration)
-                    .any(|(new, old)| {
-                        new.id != old.id || new.frame != old.frame || new.scale != old.scale
-                    });
-            a.screen_configuration = configuration;
-            changed = true;
+        if configuration == a.screen_configuration {
+            return;
         }
-    });
-    if !changed {
-        return;
-    }
-    cancel_layout_picker();
-    with_app(|a| {
+        let physical_change = configuration.len() != a.screen_configuration.len()
+            || configuration
+                .iter()
+                .zip(&a.screen_configuration)
+                .any(|(new, old)| {
+                    new.id != old.id || new.frame != old.frame || new.scale != old.scale
+                });
+        a.screen_configuration = configuration;
+        a.dismiss_layout_picker();
         if physical_change {
             a.tile_manager.screens_changed();
         } else {
             // Dock/menu bar changes are reconciled per display by the manager.
             a.tile_manager.invalidate();
         }
+        a.refresh_workspace();
     });
-    workspace(target, selector, notification);
 }
-extern "C-unwind" fn workspace(_: Obj, _: Sel, _: Obj) {
-    with_app(|a| {
-        a.ensure_desktop_observer();
-        a.tile_manager.invalidate();
-        a.refresh_tile_controls();
-        a.refresh_spaces();
-        a.refresh_permission();
-        a.update_window();
-        a.settle_focus();
-    });
+extern "C-unwind" fn workspace(target: Obj, selector: Sel, _: Obj) {
+    with_app_deferred(target, selector, App::refresh_workspace);
 }
 extern "C-unwind" fn permission_changed(target: Obj, selector: Sel, _: Obj) {
     with_app_deferred(target, selector, |a| {
@@ -5624,32 +5649,58 @@ extern "C-unwind" fn became_active(target: Obj, selector: Sel, _: Obj) {
         a.refresh_login();
     });
 }
-extern "C-unwind" fn sleep(target: Obj, selector: Sel, _: Obj) {
-    with_app_deferred(target, selector, |a| {
-        a.sleeping = true;
-        a.switching = None;
-        a.transfer = None;
-        a.desktop_preview.hide();
-        a.stop_permission_watch();
-        a.update_presentation_timer();
-        a.configure_hover();
-        a.configure_tiling();
-        a.update_window();
-    });
+#[derive(Clone, Copy, PartialEq)]
+enum PowerChange {
+    Sleep,
+    Wake,
+    SleepThenWake,
 }
-extern "C-unwind" fn wake(target: Obj, selector: Sel, _: Obj) {
+thread_local! {
+    static PENDING_POWER: Cell<Option<PowerChange>> = const { Cell::new(None) };
+}
+extern "C-unwind" fn sleep(target: Obj, _: Sel, _: Obj) {
+    PENDING_POWER.set(Some(PowerChange::Sleep));
+    deliver_power(target, sel!(deliverPower:), ptr::null_mut());
+}
+extern "C-unwind" fn wake(target: Obj, _: Sel, _: Obj) {
+    // Even if wake overtakes a deferred sleep, the old gestures and transfers
+    // must be cancelled before resuming. Intermediate wakeups need no replay.
+    let change = match PENDING_POWER.get() {
+        Some(PowerChange::Sleep | PowerChange::SleepThenWake) => PowerChange::SleepThenWake,
+        _ => PowerChange::Wake,
+    };
+    PENDING_POWER.set(Some(change));
+    deliver_power(target, sel!(deliverPower:), ptr::null_mut());
+}
+extern "C-unwind" fn deliver_power(target: Obj, selector: Sel, _: Obj) {
     with_app_deferred(target, selector, |a| {
-        a.sleeping = false;
-        crate::desktop_mode::refresh();
-        a.update_presentation_timer();
-        if !a.refresh_permission() {
+        let Some(change) = PENDING_POWER.take() else {
+            return;
+        };
+        if change != PowerChange::Wake {
+            a.sleeping = true;
+            a.switching = None;
+            a.transfer = None;
+            a.desktop_preview.hide();
+            a.stop_permission_watch();
+            a.update_presentation_timer();
             a.configure_hover();
             a.configure_tiling();
             a.update_window();
         }
-        a.refresh_spaces();
-        if !a.permission_trusted && a.wants_accessibility() {
-            a.watch_permission();
+        if change != PowerChange::Sleep {
+            a.sleeping = false;
+            crate::desktop_mode::refresh();
+            a.update_presentation_timer();
+            if !a.refresh_permission() {
+                a.configure_hover();
+                a.configure_tiling();
+                a.update_window();
+            }
+            a.refresh_spaces();
+            if !a.permission_trusted && a.wants_accessibility() {
+                a.watch_permission();
+            }
         }
     });
 }
@@ -5737,6 +5788,7 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(about:), about),
                 (sel!(checkUpdates:), check_updates),
                 (sel!(change:), change),
+                (sel!(windowWillClose:), scenes::will_close),
                 (sel!(hover:), hover),
                 (sel!(tileTick:), tile_tick),
                 (sel!(tileMouseEvent:), mouse_delivery::drain),
@@ -5760,6 +5812,7 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(permissionTick:), permission_tick),
                 (sel!(sleep:), sleep),
                 (sel!(wake:), wake),
+                (sel!(deliverPower:), deliver_power),
                 (sel!(quit:), quit),
                 (sel!(settingsRefresh:), settings_refresh),
                 (sel!(transferTick:), transfer_tick),

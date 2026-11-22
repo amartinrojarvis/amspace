@@ -30,6 +30,7 @@ pub mod close_diagnostics;
 pub mod diagnostics;
 #[path = "tab_drag_diagnostics.rs"]
 mod drag_diagnostics;
+pub(crate) mod scenes;
 
 fn centered_resize_request(
     from: NSRect,
@@ -5462,9 +5463,12 @@ impl Manager {
             return;
         }
         let identities = ws::all_window_ids();
+        let mut dropped: Vec<_> = Vec::new();
         for (id, w) in &self.windows {
-            if w.space.1 == space
-                && !self.inactive_tabs.contains(id)
+            if w.space.1 != space {
+                continue;
+            }
+            if !self.inactive_tabs.contains(id)
                 && !self.floating.contains(id)
                 && !ax::flag(w.element.0, "AXFullScreen")
             {
@@ -5477,12 +5481,16 @@ impl Manager {
                 ) {
                     ax::set_frame(w.element.0, target);
                 }
-                self.applied.remove(id);
-                self.transitions.remove(id);
-                self.verifications.remove(id);
             }
+            dropped.push(*id);
         }
-        self.windows.retain(|_, w| w.space.1 != space);
+        // One complete prune per dropped window, the same one `forget_window`
+        // gives a retired id. A partial cleanup would leave learned limits,
+        // minima, observed frames and tab identities anchored to nothing, and
+        // the next scan would hand them to a recycled window id.
+        for id in dropped {
+            self.forget_window(id);
+        }
         self.invalidate();
     }
 }
@@ -6454,22 +6462,11 @@ unsafe fn paint_hint(plates: &[Obj; 2], hint: DropHint) {
                 continue;
             }
             let active = hint.active == Some(index) && hint.available[index];
-            let layer: Obj = msg_send![plate, layer];
-            let fill = if active {
-                color(0.12, 0.28, 0.52, 0.96)
-            } else {
-                color(0.08, 0.09, 0.12, 0.92)
-            };
-            let outline = if active {
-                color(0.50, 0.77, 1., 1.)
-            } else {
-                color(1., 1., 1., 0.45)
-            };
-            let fill: *const crate::native::CgColor = msg_send![fill, CGColor];
-            let outline: *const crate::native::CgColor = msg_send![outline, CGColor];
-            let _: () = msg_send![layer, setBackgroundColor:fill];
-            let _: () = msg_send![layer, setBorderColor:outline];
-            let _: () = msg_send![layer, setBorderWidth:if active { 3f64 } else { 1f64 }];
+            crate::native::hud_surface(plate, active, 0.72);
+            let mark: Obj = msg_send![plate, viewWithTag:701isize];
+            if !mark.is_null() {
+                let _: () = msg_send![mark, setHidden:!active];
+            }
         }
     }
 }
@@ -6502,11 +6499,39 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 ),
                 [0.08, 0.09, 0.12],
                 0.92,
-                12.,
+                16.,
             );
             plates[index] = plate;
             let width = region.size.width - inset * 2.;
             let height = region.size.height - inset * 2.;
+            // Only roomy targets get a position caption and confirmation mark;
+            // compact targets keep all their space for the action or rejection.
+            if width >= 350. && height >= 96. && hint.kind == HintKind::Zones {
+                let caption = crate::i18n::tr(if index == 0 {
+                    "TERCIO SUPERIOR"
+                } else {
+                    "ZONA INFERIOR"
+                });
+                let eyebrow = crate::native::label(
+                    plate,
+                    rect(16., height - 29., width - 68., 16.),
+                    caption,
+                    10.,
+                    0.45,
+                    false,
+                );
+                let _: () = msg_send![eyebrow, setTextColor:color(0.81,0.84,0.9,1.)];
+                let mark = crate::native::label(
+                    plate,
+                    rect(width - 36., height - 32., 22., 22.),
+                    "✓",
+                    17.,
+                    0.6,
+                    false,
+                );
+                let _: () = msg_send![mark, setTag:701isize];
+                let _: () = msg_send![mark, setTextColor:color(1.,1.,1.,1.)];
+            }
             let group =
                 hint.kind == HintKind::Group || (hint.kind == HintKind::Zones && index == 0);
             let title = if group {
@@ -6590,8 +6615,12 @@ unsafe fn badge_content(hint: DropHint) -> (Retained<AnyObject>, [Obj; 2]) {
                 let _: () = msg_send![label, setTextColor:tint];
             }
             if icon_size > 0. {
-                let symbol = if group {
-                    "rectangle.stack"
+                let symbol = if !hint.available[index] {
+                    "nosign"
+                } else if group {
+                    "rectangle.stack.fill"
+                } else if hint.kind != HintKind::Zones {
+                    "rectangle.inset.filled"
                 } else {
                     "arrow.left.arrow.right"
                 };
