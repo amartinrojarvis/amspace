@@ -2168,11 +2168,8 @@ impl Manager {
             return true;
         }
         crate::desktop_mode::refresh();
-        if crate::desktop_mode::active() {
-            self.set_presentation(crate::desktop_mode::current());
-            return true;
-        }
-        false
+        self.set_presentation(crate::desktop_mode::current());
+        self.presentation != crate::desktop_mode::Mode::Normal
     }
     pub fn finish_deferred_restores(&mut self, defaults: Obj) -> bool {
         self.set_presentation(crate::desktop_mode::current());
@@ -2192,21 +2189,25 @@ impl Manager {
         true
     }
     pub fn set_presentation(&mut self, mode: crate::desktop_mode::Mode) {
-        if self.presentation == mode {
+        use crate::desktop_mode::{Mode, take_desktop_entry};
+        let entry = take_desktop_entry();
+        if entry.is_none() && self.presentation == mode {
             return;
         }
-        let snapshot = if mode == crate::desktop_mode::Mode::Desktop
-            || self.presentation == crate::desktop_mode::Mode::Desktop
+        let now = Instant::now();
+        if let Some(entry) = entry
+            && self.presentation != Mode::Desktop
         {
-            ws::all_window_ids()
-        } else {
-            None
-        };
-        self.set_presentation_at(mode, Instant::now(), snapshot);
-        if mode == crate::desktop_mode::Mode::Desktop
-            && let Some(visible) = ws::visible_normal_window_ids()
-        {
-            self.remember_late_desktop_windows(&visible);
+            self.set_presentation_at(Mode::Desktop, now, entry);
+            if let Some(visible) = ws::visible_normal_window_ids() {
+                self.remember_late_desktop_windows(&visible);
+            }
+        }
+        if self.presentation != mode {
+            let snapshot = (mode == Mode::Desktop || self.presentation == Mode::Desktop)
+                .then(ws::all_window_ids)
+                .flatten();
+            self.set_presentation_at(mode, now, snapshot);
         }
     }
     fn remember_late_desktop_windows(&mut self, visible: &HashSet<(i32, u32)>) {
@@ -2244,16 +2245,14 @@ impl Manager {
                     .collect()
             });
             self.desktop_floating
-                .extend(after.difference(before).copied());
+                .extend(after.iter().copied().filter(|&key| before.insert(key)));
         }
         if mode == Mode::Desktop {
             self.desktop_resume_until = None;
             if let Some(snapshot) = &snapshot {
                 self.desktop_floating.retain(|key| snapshot.contains(key));
             }
-            if self.desktop_baseline.is_none() {
-                self.desktop_baseline = snapshot;
-            }
+            self.desktop_baseline = snapshot;
         }
         let was_paused = self.presentation != Mode::Normal;
         self.presentation = mode;
@@ -2268,21 +2267,20 @@ impl Manager {
         }
     }
     fn finish_desktop_reentry(&mut self, candidates: &[(i32, u32, NSRect)], now: Instant) {
-        // Opening an app can dismiss Show Desktop before its window is published.
-        // Capture the first settled scan, but never extend this to a later manual
-        // resume after sleep, disabled tiling or loss of accessibility permission.
-        let within_resume = self
-            .desktop_resume_until
-            .take()
-            .is_some_and(|until| now <= until);
-        if let Some(before) = self.desktop_baseline.take()
-            && within_resume
-        {
+        // A valid scan may still precede a slow window's publication (or one
+        // of several windows from the same launch). Use the existing bounded
+        // grace period, without adding a scan or holding off normal placement.
+        if !self.desktop_resume_until.is_some_and(|until| now <= until) {
+            self.desktop_resume_until = None;
+            self.desktop_baseline = None;
+            return;
+        }
+        if let Some(before) = &mut self.desktop_baseline {
             self.desktop_floating.extend(
                 candidates
                     .iter()
                     .map(|(pid, id, _)| (*pid, *id))
-                    .filter(|key| !before.contains(key)),
+                    .filter(|&key| before.insert(key)),
             );
         }
     }
@@ -4889,6 +4887,17 @@ impl Manager {
             return;
         };
         self.finish_desktop_reentry(&candidates, Instant::now());
+        if !self.desktop_floating.is_empty() {
+            for &(pid, id, _) in &candidates {
+                if self
+                    .windows
+                    .get(&id)
+                    .is_some_and(|window| window.pid == pid)
+                {
+                    self.apply_desktop_float(pid, id);
+                }
+            }
+        }
         // One Space-membership memo per tick, so every reader of this frame
         // consults the same native answer instead of three mid-slide reads.
         let settling = self.settling_space();
@@ -7927,6 +7936,10 @@ mod tests {
             .unwrap()
             .reconcile(&[1, 3, 4], area, 10.);
         let candidates = [1, 2, 3, 4].map(|id| (pid, id, quick));
+        // A successful scan with only old windows must not close the
+        // arrival window before macOS publishes the new ones.
+        manager.finish_desktop_reentry(&candidates[..2], now + Duration::from_millis(400));
+        manager.finish_desktop_reentry(&candidates[..3], now + Duration::from_millis(500));
         manager.finish_desktop_reentry(&candidates, now + Duration::from_millis(600));
         manager.apply_desktop_float(pid + 1, 4);
         assert!(!manager.floating.contains(&4)); // A different PID cannot consume the classification.
@@ -7940,8 +7953,14 @@ mod tests {
             assert!(!manager.can_tile_drag(id, space));
             assert_eq!(manager.windows[&id].original, quick);
         }
-        // Ordinary subsequent arrivals are not captured by the completed cycle.
-        manager.finish_desktop_reentry(&[(pid, 5, quick)], now + Duration::from_millis(700));
+        // A later scan must not override an explicit return to the mosaic.
+        manager.floating.remove(&4);
+        manager.finish_desktop_reentry(&candidates, now + Duration::from_millis(700));
+        manager.apply_desktop_float(pid, 4);
+        assert!(!manager.floating.contains(&4));
+        manager.floating.insert(4);
+        // Ordinary subsequent arrivals are not captured after the grace period.
+        manager.finish_desktop_reentry(&[(pid, 5, quick)], now + Duration::from_secs(3));
         manager.apply_desktop_float(pid, 5);
         assert!(!manager.floating.contains(&5));
         let identities = HashSet::from([(pid, 1), (pid, 2), (pid, 3), (pid, 4)]);

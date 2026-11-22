@@ -1184,7 +1184,8 @@ impl App {
             if self.focus_target.is_some_and(|(owner, _, _)| owner != pid) {
                 self.focus_target = None;
             }
-            let Some(candidates) = ws::focus_windows(pid, self.focus_target.map(|(_, id, _)| id))
+            let Some(mut candidates) =
+                ws::focus_windows(pid, self.focus_target.map(|(_, id, _)| id))
             else {
                 // One bounded retry for a failed compositor query, preserving
                 // a same-process border instead of hiding/showing it immediately.
@@ -1201,6 +1202,14 @@ impl App {
             self.border_retry_pending = false;
             let mut selected = None;
             let mut selected_element = None;
+            // Finder can own the desktop without any key window. Its frontmost
+            // visible window (possibly on a different display) is not evidence
+            // of keyboard focus when the user clicks the wallpaper or an icon.
+            let bundle: Option<Retained<NSString>> = msg_send![app, bundleIdentifier];
+            if bundle.is_some_and(|bundle| *bundle == *ns_string!("com.apple.finder")) {
+                let focused = ax::focused_id(pid);
+                candidates.retain(|window| Some(window.id) == focused);
+            }
             for mut candidate in candidates {
                 if self.observed_pid == pid && self.tracked.is_some_and(|w| w.id == candidate.id) {
                     candidate.radius = self.tracked.unwrap().radius;

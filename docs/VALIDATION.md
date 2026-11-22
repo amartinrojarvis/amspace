@@ -1,3 +1,9 @@
+## Correcciones del escritorio posteriores a 0.9.32
+
+- `scripts/check.sh`: formato, Clippy, plist y 294 pruebas correctas (nueve ignoradas), en una copia aislada sin los cambios preexistentes de `src/tiling.rs`. La regresión del mosaico comprueba una primera lectura sin ventanas nuevas, dos llegadas escalonadas, preservación de geometría y árboles, respeto del retorno explícito a mosaico y caducidad de la captura. La prueba AX verifica que `AXDesktop` no acepta foco bajo el cursor.
+- Bundle universal `arm64`/`x86_64` compilado; `--check-tab-controls` pasó en Apple Silicon. Su escenario AppKit entrega entrada y salida durante una reentrada simulada y comprueba que la transición obsoleta no reinicie el reloj.
+- Pendiente la comprobación física del clic con una ventana de Finder en otro monitor y de la esquina activa seguida de una apertura. No se ha instalado ni publicado este cambio.
+
 ## 0.9.32/build 87 — escenas de trabajo y superposiciones
 
 - `--check-work-scenes`, en el bundle sobre arm64: tres ventanas AX desechables del mismo proceso. Revisar y rechazar una asignación duplicada dejaron intactos sus tres frames. Tras elegir una permutación, cada ID ocupó el rectángulo de su puesto (tolerancia inferior a 3 puntos por componente). Se omitieron tres puestos de un UUID ausente simulado. Suite de preferencias aislada, sin iniciar el mosaico global.

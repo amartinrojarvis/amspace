@@ -1,5 +1,7 @@
 //! Presentation state from WindowManager metadata, with legacy Dock signals.
 use std::{
+    cell::Cell,
+    collections::HashSet,
     ffi::c_void,
     sync::atomic::{AtomicU8, Ordering},
 };
@@ -36,6 +38,16 @@ pub fn distributed_mode(name: &str) -> Option<Mode> {
 static MODE: AtomicU8 = AtomicU8::new(0);
 static SIGNAL_MODE: AtomicU8 = AtomicU8::new(0);
 static COMPOSITOR_MODE: AtomicU8 = AtomicU8::new(0);
+type DesktopInventory = HashSet<(i32, u32)>;
+thread_local! {
+    // The presentation producers and manager run on the main thread. Keep the
+    // entry inventory even when a nested AppKit loop has already seen the exit.
+    static DESKTOP_ENTRY: Cell<Option<Option<DesktopInventory>>> = const { Cell::new(None) };
+}
+
+pub(crate) fn take_desktop_entry() -> Option<Option<DesktopInventory>> {
+    DESKTOP_ENTRY.take()
+}
 unsafe extern "C" {
     static _dispatch_main_q: c_void;
     fn dispatch_async_f(
@@ -96,6 +108,12 @@ pub fn refresh() {
 fn publish(mode: Mode) {
     if MODE.swap(mode as u8, Ordering::AcqRel) == mode as u8 {
         return;
+    }
+    if mode == Mode::Desktop {
+        DESKTOP_ENTRY.with(|pending| {
+            let entry = pending.take();
+            pending.set(entry.or_else(|| Some(crate::window_server::all_window_ids())));
+        });
     }
     if std::env::var_os("AMSPACE_TRACE_DESKTOP").is_some() {
         eprintln!("desktop-mode: {mode:?}");

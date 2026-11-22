@@ -229,7 +229,7 @@ fn protected_focus_role(role: Cf) -> bool {
         .any(|name| unsafe { CFEqual(role, cf(name)) })
 }
 fn pointer_focus_role_excluded(role: Cf) -> bool {
-    auxiliary_window_role(role) || protected_focus_role(role)
+    auxiliary_window_role(role) || protected_focus_role(role) || equals_text(role, "AXDesktop")
 }
 
 fn accepts_pointer_focus(window: Cf) -> bool {
@@ -425,6 +425,10 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         return None;
     }
     let hit = Owned::new(hit)?;
+    // Do not follow AXWindow from the desktop surface to a Finder window.
+    if attr(hit.0, "AXRole").is_some_and(|role| equals_text(role.0, "AXDesktop")) {
+        return None;
+    }
     let hit_window = attr(hit.0, "AXWindow").or_else(|| {
         let role = attr(hit.0, "AXRole")?;
         unsafe { CFEqual(role.0, cf(ns_string!("AXWindow"))) }.then_some(hit)
@@ -1036,6 +1040,7 @@ mod placement_tests {
             assert!(!protected_focus_role(cf(&NSString::from_str(role))));
         }
         assert!(!protected_focus_role(ptr::null()));
+        assert!(pointer_focus_role_excluded(cf(ns_string!("AXDesktop"))));
         for role in ["AXMenu", "AXMenuItem", "AXMenuBarItem"] {
             assert!(protected_focus_role(cf(&NSString::from_str(role))));
         }
