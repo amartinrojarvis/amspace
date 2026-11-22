@@ -1,3 +1,8 @@
+## 0.9.38/build 93 — Aplicación parcial de escenas de trabajo
+
+- `--check-work-scenes` habilitó **Aplicar escena** con tres ventanas AppKit para cuatro puestos. Accesibilidad confirmó que las tres se recolocaron en el reparto asimétrico y que el puesto ausente se contrajo. También se mantuvieron el rechazo de duplicados, la omisión de una pantalla desconectada y el bloqueo durante la reentrada.
+- `scripts/check.sh`: formato, Clippy, plist y 296 pruebas correctas (nueve ignoradas). Bundle universal arm64/x86_64; el diagnóstico se ejecutó en Apple Silicon, sin probar Intel ni traslados físicos entre monitores. Comprobaciones en una copia sin cambios ajenos ni sustitución de la app instalada.
+
 ## 0.9.37/build 92 — Selector gráfico de escenas de trabajo
 
 - `--check-work-scenes` mostró dos tarjetas en la misma ventana que las plantillas, con esquemas de uno y dos monitores. El botón AppKit de «Estudio» abrió su revisión y las tres ventanas conservaron su geometría hasta aplicar explícitamente. La captura verificó la composición en Apple Silicon; no se comprobó el teclado físico.

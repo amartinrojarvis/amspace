@@ -46,14 +46,24 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Aplicar escena" => "Apply scene",
         "Pantalla desconectada" => "Display disconnected",
         "Sin ventana compatible" => "No matching window",
-        "Elige una ventana…" => "Choose a window…",
+        "Omitir puesto" => "Skip slot",
         "La revisión de ventanas aparecerá aquí." => "The window review will appear here.",
         "Guarda una escena para empezar." => "Save a scene to get started.",
-        "Revisa los destinos. Las pantallas desconectadas se omiten." => {
-            "Review the destinations. Disconnected displays will be skipped."
+        "Revisa los destinos antes de aplicar la escena." => {
+            "Review the destinations before applying the scene."
         }
-        "Elige una ventana distinta para cada puesto de las pantallas disponibles." => {
-            "Choose a different window for each slot on the available displays."
+        "Asigna ventanas distintas u omite los puestos que no puedas completar." => {
+            "Assign different windows or skip the slots you cannot fill."
+        }
+        "No hay ventanas compatibles en los mosaicos visibles." => {
+            "There are no matching windows in the visible tiled desktops."
+        }
+        "Se aplicarán solo los puestos con ventana asignada." => {
+            "Only slots with an assigned window will be applied."
+        }
+        "No uses la misma ventana en dos puestos." => "Do not use the same window in two slots.",
+        "Asigna al menos una ventana para aplicar la escena." => {
+            "Assign at least one window to apply the scene."
         }
         "Confirmar" => "Confirm",
         "Pulsa Confirmar para eliminar esta escena." => "Click Confirm to delete this scene.",
@@ -61,6 +71,7 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
             "Enable tiling and wait for the transition to finish."
         }
         "Escena aplicada." => "Scene applied.",
+        "Escena aplicada con puestos omitidos." => "Scene applied with some slots skipped.",
         "No se puede guardar esta escena." => "This scene cannot be saved.",
         "Ya existe una escena con ese nombre." => "A scene with that name already exists.",
         "La biblioteca admite hasta 64 escenas." => "The library holds up to 64 scenes.",

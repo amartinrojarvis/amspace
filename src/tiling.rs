@@ -443,23 +443,30 @@ impl Node {
         }
     }
     fn remove(self, id: u32) -> Option<Self> {
+        self.map_windows(&|window| (window != id).then_some(window))
+    }
+
+    /// Replace or drop leaves, collapsing only splits with a missing child.
+    fn map_windows(mut self, map: &impl Fn(u32) -> Option<u32>) -> Option<Self> {
         match self {
             Self::Empty => Some(Self::Empty),
-            Self::Leaf(w) => (w != id).then_some(Self::Leaf(w)),
+            Self::Leaf(w) => map(w).map(Self::Leaf),
             Self::Split {
-                vertical,
-                ratio,
-                first,
-                second,
-            } => match (first.remove(id), second.remove(id)) {
-                (Some(a), Some(b)) => Some(Self::Split {
-                    vertical,
-                    ratio,
-                    first: Box::new(a),
-                    second: Box::new(b),
-                }),
-                (a, b) => a.or(b),
-            },
+                ref mut first,
+                ref mut second,
+                ..
+            } => {
+                let a = std::mem::replace(first.as_mut(), Self::Empty).map_windows(map);
+                let b = std::mem::replace(second.as_mut(), Self::Empty).map_windows(map);
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        **first = a;
+                        **second = b;
+                        Some(self)
+                    }
+                    (a, b) => a.or(b),
+                }
+            }
         }
     }
     /// Point the leaf of `target` at `id`, leaving every ratio untouched.
@@ -1781,6 +1788,33 @@ impl Desktop {
         self.grid = grid;
         self.layout = layout;
         self.resized = Some((self.layout, self.order.clone(), tree));
+        true
+    }
+
+    /// Decode with ordinal IDs so an absent slot cannot alias a real window
+    /// or an inactive tab. Keep the destination's existing groups and grid.
+    pub(crate) fn restore_scene_distribution(&mut self, text: &str, slots: &[Option<u32>]) -> bool {
+        let mut saved = Self {
+            order: (1..=slots.len() as u32).collect(),
+            ..Self::default()
+        };
+        if !saved.restore_distribution(text) {
+            return false;
+        }
+        let order: Vec<_> = slots.iter().flatten().copied().collect();
+        if order.is_empty() {
+            return false;
+        }
+        self.resized = saved.resized.and_then(|(layout, old, tree)| {
+            // A changed membership needs fresh sidebars for centered layouts.
+            if order.len() != old.len() && layout.centered_axis().is_some() {
+                return None;
+            }
+            tree.map_windows(&|ordinal| slots[ordinal as usize - 1])
+                .map(|tree| (layout, order.clone(), tree))
+        });
+        self.layout = saved.layout;
+        self.order = order;
         true
     }
     /// Preserve the chosen topology. Only clamp divisions that became too small;

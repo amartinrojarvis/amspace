@@ -256,11 +256,11 @@ En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rej
 
 **Guardar distribución** conserva plantilla, proporciones, estructura y rejilla por escritorio. **Restaurar distribución** usa posiciones lógicas y requiere el mismo número de ventanas; no distingue aplicaciones.
 
-**Ajustes → Mosaico → Escenas de trabajo…** permite dar nombre al reparto visible por monitor y aplicación. Para recuperarlo, selecciona la escena, revisa qué ventana ocupará cada puesto y pulsa **Aplicar escena**. Si hay dos ventanas de la misma aplicación, eliges tú. Una pantalla desconectada se omite: sus ventanas no se redirigen al portátil. No se abren aplicaciones ni se guardan títulos de documentos.
+**Ajustes → Mosaico → Escenas de trabajo…** permite dar nombre al reparto visible por monitor y aplicación. Para recuperarlo, selecciona la escena, revisa qué ventana ocupará cada puesto y pulsa **Aplicar escena**. Basta con asignar una ventana: los puestos sin candidata o marcados como **Omitir puesto** se contraen para que el resto aproveche el espacio. Si varias ventanas pueden ocupar un puesto, eliges tú. Una pantalla desconectada se omite: sus ventanas no se redirigen al portátil. No se abren aplicaciones ni se guardan títulos de documentos.
 
 El selector emergente muestra las **Escenas de trabajo** en una fila de tarjetas, con un esquema del reparto por monitor. Muestra solo las tarjetas que caben completas; **Ver todas…** abre la biblioteca. Pulsa una tarjeta para revisar esa escena, o pulsa **S** para seleccionar la primera y **Intro** para revisarla. Las ventanas no se mueven hasta que pulses **Aplicar escena**.
 
-La revisión ofrece ventanas en mosaico de los escritorios visibles. Los grupos de pestañas conservan sus miembros en la misma pantalla. Si hay más ventanas en un destino que puestos en la escena, no se expulsa ninguna: deja flotantes las que sobren y pulsa **Revisar**. Una aplicación puede rechazar un tamaño o un traslado; AMSpace comprueba la geometría antes de dar la escena por aplicada.
+La revisión ofrece ventanas en mosaico de los escritorios visibles. Los grupos de pestañas conservan sus miembros en la misma pantalla. Si un mosaico de destino contiene ventanas que no has asignado a la escena, no se expulsa ninguna: deja flotantes las que sobren y pulsa **Revisar**. Una aplicación puede rechazar un tamaño o un traslado; AMSpace comprueba la geometría antes de dar la escena por aplicada.
 
 Recolocar las ventanas de una cuadrícula ajustada conserva sus huecos y proporciones; intercambia o reordena qué ventana ocupa cada hueco. Redimensionar desde una esquina exterior ajusta la división interna opuesta manteniendo el límite de pantalla, incluido el caso de una ventana izquierda y dos apiladas a la derecha.
 

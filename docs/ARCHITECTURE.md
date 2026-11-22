@@ -154,6 +154,7 @@ Preferencias: `tile.enabled`, `tile.off.<SpaceID>`, `tile.layout.<SpaceID>.<Disp
 
 `tile.scenes.v1` es una biblioteca independiente de la copia rápida por escritorio. Guarda el nombre de la escena, UUID y nombre de cada monitor, distribución ordinal y bundle ID por puesto. Los títulos, IDs de ventana, PID y referencias AX no se persisten. Abrir el panel o elegir una ventana no aplica la escena. La revisión sólo se calcula por acción del usuario, sin un temporizador de escenas.
 Guardar y revisar verifican las ventanas visibles del reparto con PID/ID y pertenencia nativa, sin esperar la reconciliación global. Aplicar sí espera la barrera completa; ningún paso mueve ventanas durante el guardado o la revisión.
+Si faltan ventanas, aplicar usa solo los puestos asignados. En cada monitor participante se restaura el árbol ordinal, se contraen las ramas de puestos omitidos y luego se sustituyen los ordinales por IDs nativos. Las plantillas centradas reconstruyen sus columnas cuando cambia el número de puestos. Un monitor sin asignaciones no recibe una nueva distribución. Si quedan ventanas de mosaico sin asignar en un destino participante, se rechaza la operación en vez de expulsarlas.
 
 
 ### Proporciones, transiciones y reglas por aplicación

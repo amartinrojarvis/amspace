@@ -213,6 +213,12 @@ impl Panel {
             let root = Retained::as_ptr(&doc) as Obj;
             if let Some(review) = &self.review {
                 let slots = self.selected().map(slot_previews).unwrap_or_default();
+                let mut occurrences = std::collections::HashMap::new();
+                for row in &review.rows {
+                    for candidate in &row.candidates {
+                        *occurrences.entry(candidate.id).or_insert(0usize) += 1;
+                    }
+                }
                 for (index, row) in review.rows.iter().enumerate() {
                     let y = height - 52. - index as f64 * 53.;
                     if let Some(slot) = slots.get(index) {
@@ -245,19 +251,21 @@ impl Panel {
                     } else if row.candidates.is_empty() {
                         tr("Sin ventana compatible")
                     } else {
-                        tr("Elige una ventana…")
+                        tr("Omitir puesto")
                     };
                     let menu = popup(root, rect(236., y + 6., 315., 29.), &[first], target, 136);
                     let _: () = msg_send![menu, setAccessibilityLabel:&*NSString::from_str(&format!("{heading} · {}",row.bundle))];
+                    let native_menu: Obj = msg_send![menu, menu];
                     for candidate in &row.candidates {
                         // NSMenuItem, not addItemWithTitle:, preserves equal window titles.
-                        let native_menu: Obj = msg_send![menu, menu];
                         let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
                         let _: () =
                             msg_send![&item,setTitle:&*NSString::from_str(&candidate.label)];
                         let _: () = msg_send![native_menu,addItem:&*item];
                     }
-                    if row.available && row.candidates.len() == 1 {
+                    if let [only] = row.candidates.as_slice()
+                        && occurrences[&only.id] == 1
+                    {
                         let _: () = msg_send![menu, selectItemAtIndex:1isize];
                     }
                     let _: () =
@@ -284,11 +292,15 @@ impl Panel {
         let mut seen = std::collections::HashSet::new();
         let mut choices = Vec::with_capacity(review.rows.len());
         for (row, menu) in review.rows.iter().zip(&self.controls) {
-            if !row.available {
+            if !row.available || row.candidates.is_empty() {
                 choices.push(None);
                 continue;
             }
             let index: isize = unsafe { msg_send![*menu, indexOfSelectedItem] };
+            if index == 0 {
+                choices.push(None);
+                continue;
+            }
             let candidate = row.candidates.get(usize::try_from(index - 1).ok()?)?;
             if !seen.insert(candidate.id) {
                 return None;
@@ -298,13 +310,25 @@ impl Panel {
         (!seen.is_empty()).then_some(choices)
     }
     fn update_status(&self) {
-        let ready = self.choices().is_some();
+        let choices = self.choices();
+        let ready = choices.is_some();
         let message = if self.entries.is_empty() {
             tr("Guarda una escena para empezar.")
+        } else if choices
+            .as_ref()
+            .is_some_and(|rows| rows.iter().any(Option::is_none))
+        {
+            tr("Se aplicarán solo los puestos con ventana asignada.")
         } else if ready {
-            tr("Revisa los destinos. Las pantallas desconectadas se omiten.")
+            tr("Revisa los destinos antes de aplicar la escena.")
+        } else if self
+            .review
+            .as_ref()
+            .is_some_and(|review| review.rows.iter().all(|row| row.candidates.is_empty()))
+        {
+            tr("No hay ventanas compatibles en los mosaicos visibles.")
         } else {
-            tr("Elige una ventana distinta para cada puesto de las pantallas disponibles.")
+            tr("Asigna ventanas distintas u omite los puestos que no puedas completar.")
         };
         unsafe {
             let _: () = msg_send![self.apply,setEnabled:ready];
@@ -373,11 +397,19 @@ impl App {
             }
             if tag == 135 {
                 if let (Some(review), Some(choices)) = (&panel.review, panel.choices()) {
+                    let partial = choices.iter().any(Option::is_none);
                     let outcome = self.tile_manager.apply_scene(defaults, review, &choices);
                     panel.populate(None, target);
                     outcome?;
                     unsafe {
-                        text(panel.status, tr("Escena aplicada."));
+                        text(
+                            panel.status,
+                            if partial {
+                                tr("Escena aplicada con puestos omitidos.")
+                            } else {
+                                tr("Escena aplicada.")
+                            },
+                        );
                     }
                     self.refresh_tile_controls();
                 }
@@ -558,6 +590,60 @@ pub(crate) fn check_scene_fixture(
             println!(
                 "PASS: escena guardada, revisión con tres ventanas AX de la misma app, rechazo de duplicado y aplicación omitiendo la pantalla ausente."
             );
+            let mut partial = displays[0].clone();
+            partial
+                .bundles
+                .insert(1, "no.amspace.fixture.missing".into());
+            // Keep an asymmetric root and let the missing leaf share a split
+            // with the third slot. Removing it must not reset the root ratio.
+            partial.distribution = "2 1 4 0 0 v0.37 w0 h0.41 v0.47 w1 w2 w3".into();
+            let mut expected = scene_library::ordinal_desktop(&partial)
+                .ok_or("Distribución parcial de prueba inválida.")?;
+            expected.remove(2);
+            let partial_id = scene_library::save(defaults, "Parcial", &[partial])?;
+            panel.reload(defaults, Some(&partial_id));
+            let entry = panel.selected().ok_or("Falta la escena parcial.")?;
+            let review = manager.review_scene(defaults, &entry.displays)?;
+            panel.populate(Some(review), target);
+            let review = panel.review.as_ref().unwrap();
+            if !review.rows[1].available || !review.rows[1].candidates.is_empty() {
+                return Err(
+                    "El puesto sin ventana no se distinguió de la pantalla ausente.".into(),
+                );
+            }
+            for (&id, index) in ids.iter().zip([0, 2, 3]) {
+                let item = review.rows[index]
+                    .candidates
+                    .iter()
+                    .position(|c| c.id == id)
+                    .ok_or("Falta una ventana abierta en la revisión parcial.")?;
+                let _: () = msg_send![panel.controls[index], selectItemAtIndex:(item+1) as isize];
+            }
+            panel.update_status();
+            let enabled: bool = msg_send![panel.apply, isEnabled];
+            let choices = panel
+                .choices()
+                .filter(|choices| enabled && choices[1].is_none())
+                .ok_or("La ventana ausente bloqueó la aplicación parcial.")?;
+            manager.apply_scene(defaults, review, &choices)?;
+            for (ordinal, target) in expected.window_frames(area, 10.) {
+                let id = choices[ordinal as usize - 1].unwrap();
+                let actual = geometry(id)?;
+                if [
+                    actual.origin.x - target.origin.x,
+                    actual.origin.y - target.origin.y,
+                    actual.size.width - target.size.width,
+                    actual.size.height - target.size.height,
+                ]
+                .iter()
+                .any(|delta| delta.abs() >= 3.)
+                {
+                    return Err(format!(
+                        "La escena parcial no recolocó {id}: {actual:?} ≠ {target:?}"
+                    ));
+                }
+            }
+            println!("PASS: la escena parcial recoloca tres ventanas y contrae el puesto ausente.");
             let settled = ids
                 .iter()
                 .copied()

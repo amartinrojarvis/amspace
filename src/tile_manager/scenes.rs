@@ -262,9 +262,8 @@ impl Manager {
                 }
                 continue;
             };
-            proposals.insert(key, self.desktops.get(&key).cloned().unwrap_or_default());
             for i in range {
-                let id = choices[i].ok_or_else(stale)?;
+                let Some(id) = choices[i] else { continue };
                 let before = review.rows[i]
                     .candidates
                     .iter()
@@ -281,15 +280,15 @@ impl Manager {
                     })
                     .ok_or_else(stale)?;
                 if chosen.insert(id, (now.source, key)).is_some() {
-                    return Err(tr(
-                        "Elige una ventana distinta para cada puesto de las pantallas disponibles.",
-                    )
-                    .into());
+                    return Err(tr("No uses la misma ventana en dos puestos.").into());
                 }
+                proposals
+                    .entry(key)
+                    .or_insert_with(|| self.desktops.get(&key).cloned().unwrap_or_default());
             }
         }
         if chosen.is_empty() {
-            return Err(stale());
+            return Err(tr("Asigna al menos una ventana para aplicar la escena.").into());
         }
         for (&id, &(from, to)) in &chosen {
             if from != to {
@@ -311,6 +310,9 @@ impl Manager {
             let Some((key, area)) = *destination else {
                 continue;
             };
+            if choices[range.clone()].iter().all(Option::is_none) {
+                continue;
+            }
             if !areas.contains(&(key, area)) {
                 return Err(stale());
             }
@@ -318,12 +320,9 @@ impl Manager {
             if model.order.iter().any(|id| !chosen.contains_key(id)) {
                 return Err(tr("Sobran ventanas en el mosaico de destino. Déjalas flotantes y vuelve a revisar.").into());
             }
-            model.order = choices[range].iter().flatten().copied().collect();
-            let grid = model.grid;
-            if !model.restore_distribution(&d.distribution) {
+            if !model.restore_scene_distribution(&d.distribution, &choices[range]) {
                 return Err(stale());
             }
-            model.grid = grid;
             model.set_minimum_sizes(&self.minimum_sizes);
             let frames = model.window_frames(area, 10.);
             if frames.len() != model.order.len() {
