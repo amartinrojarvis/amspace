@@ -177,6 +177,25 @@ impl Panel {
             let _: () = msg_send![self.delete, setEnabled:!self.entries.is_empty()];
         }
     }
+
+    fn save_scene(
+        &mut self,
+        defaults: Obj,
+        manager: &mut crate::tile_manager::Manager,
+    ) -> Result<(), String> {
+        let value: Retained<NSString> = unsafe { msg_send![self.name, stringValue] };
+        let scene = manager.capture_scene(defaults)?;
+        let id = scene_library::save(defaults, &value.to_string(), &scene)?;
+        self.reload(defaults, Some(&id));
+        unsafe {
+            text(self.name, "");
+            text(
+                self.status,
+                tr("Escena guardada. Pulsa Revisar para prepararla."),
+            );
+        }
+        Ok(())
+    }
     fn reset_delete(&mut self) {
         self.confirming = false;
         unsafe {
@@ -344,13 +363,7 @@ impl App {
                 return Err(tr("Activa el mosaico y espera a que termine la transición.").into());
             }
             if tag == 131 {
-                let value: Retained<NSString> = unsafe { msg_send![panel.name, stringValue] };
-                let scene = self.tile_manager.capture_scene(defaults)?;
-                let id = scene_library::save(defaults, &value.to_string(), &scene)?;
-                panel.reload(defaults, Some(&id));
-                unsafe {
-                    text(panel.name, "");
-                }
+                return panel.save_scene(defaults, &mut self.tile_manager);
             }
             if tag == 135 {
                 if let (Some(review), Some(choices)) = (&panel.review, panel.choices()) {
@@ -495,6 +508,47 @@ pub(crate) fn check_scene_fixture(
             }
             println!(
                 "PASS: escena guardada, revisión con tres ventanas AX de la misma app, rechazo de duplicado y aplicación omitiendo la pantalla ausente."
+            );
+            let settled = ids
+                .iter()
+                .copied()
+                .map(geometry)
+                .collect::<Result<Vec<_>, _>>()?;
+            // Topology notification arms the placement barrier without changing
+            // the live displays of this fixture.
+            manager.screens_changed();
+            panel.populate(None, target);
+            text(panel.name, "Durante la reentrada");
+            panel.save_scene(defaults, &mut manager)?;
+            let status: Retained<NSString> = msg_send![panel.status, stringValue];
+            if status.to_string() != tr("Escena guardada. Pulsa Revisar para prepararla.")
+                || panel.selected().map(|entry| entry.name.as_str()) != Some("Durante la reentrada")
+            {
+                return Err("El panel no confirmó ni seleccionó la escena recién guardada.".into());
+            }
+            let pending = manager.review_scene(
+                defaults,
+                &panel
+                    .selected()
+                    .ok_or("Escena no guardada durante la reentrada.")?
+                    .displays,
+            )?;
+            let selection: Vec<_> = ids.iter().rev().copied().map(Some).collect();
+            if manager
+                .apply_scene(defaults, &pending, &selection)
+                .err()
+                .as_deref()
+                != Some(tr("Espera a que termine el cambio de escritorio."))
+            {
+                return Err("Aplicar no respetó la barrera de colocación.".into());
+            }
+            for (&id, frame) in ids.iter().zip(settled) {
+                if geometry(id)? != frame {
+                    return Err("Guardar o revisar durante la reentrada movió una ventana.".into());
+                }
+            }
+            println!(
+                "PASS: guardado y revisión durante reentrada, aplicación bloqueada sin mover ventanas."
             );
             Ok(())
         })();

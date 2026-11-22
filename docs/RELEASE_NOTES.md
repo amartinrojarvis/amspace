@@ -1,12 +1,12 @@
-AMSpace 0.9.34 — Ventanas flotantes al usar Mostrar escritorio.
+AMSpace 0.9.35 — Guardado de escenas de trabajo.
 
-- Se corrige la detección de «Mostrar escritorio» si un monitor secundario de distinta altura aparece antes del principal en la lista del sistema.
-- Las ventanas nuevas detectadas durante el regreso al mosaico conservan su estado flotante aunque macOS tarde en mostrarlas. No se mueven ni se redimensionan al incorporarlas.
+- Guardar y revisar escenas ya no dependen de que el mosaico termine de actualizar su estado interno, si macOS confirma que las ventanas siguen en su escritorio. Aplicar conserva esa protección antes de mover ventanas.
+- El panel confirma el guardado sin iniciar una revisión automática y distingue los bloqueos por permisos, gestos o cambios de escritorio.
 
 English
 
-- Show Desktop is detected correctly when a secondary display of a different height sorts before the main display.
-- New windows detected during the return to tiling stay floating even if macOS takes longer to show them. They are not moved or resized on admission.
+- Saving and reviewing scenes no longer wait for the tiling state to settle when macOS confirms the windows are still on their desktop. Applying still waits before moving windows.
+- The panel confirms the save without starting a review and distinguishes permission, gesture, and desktop-transition blockers.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

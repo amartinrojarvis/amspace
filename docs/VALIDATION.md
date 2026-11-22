@@ -1,3 +1,8 @@
+## 0.9.35/build 90 — Guardado de escenas durante la reentrada
+
+- `--check-work-scenes` usa tres ventanas AppKit desechables y preferencias aisladas. Tras simular una notificación de pantalla sin cambiar el Space físico, guardar y revisar funcionan durante la reentrada; aplicar sigue bloqueado y no cambia ningún marco.
+- La simulación no reproduce la animación de un cambio físico de Space. No se sustituyó la aplicación instalada.
+
 ## 0.9.34/build 89 — Mostrar escritorio con monitores de distinta altura
 
 - La configuración física leída en macOS 27.2.1 tiene un monitor principal de 2560 × 1440 puntos (ID 5) y un secundario vertical de 1080 × 1920 (ID 2). `screen_configuration` los ordena por ID. Usar la altura del primero de la lista desplazaba los rectángulos en 480 puntos: en esa topología una capa 18 de pantalla completa no alcanzaba el 90 % de solapamiento en ninguno de los monitores. La conversión usa ahora la altura del ID principal de CoreGraphics.

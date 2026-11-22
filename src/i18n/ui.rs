@@ -1,8 +1,17 @@
 //! Authored settings, sidebar, menu, tooltip, accessibility and feedback strings.
 pub(super) fn english(text: &str) -> Option<&'static str> {
     Some(match text {
-        "Activa Mosaico y Accesibilidad y termina cualquier gesto antes de revisar." => {
-            "Enable tiling and Accessibility, then finish any active gesture before reviewing."
+        "Activa Mosaico en Ajustes para usar escenas de trabajo." => {
+            "Enable tiling in Settings to use work scenes."
+        }
+        "Concede Accesibilidad para usar escenas de trabajo." => {
+            "Grant Accessibility access to use work scenes."
+        }
+        "Termina el gesto de mosaico antes de continuar." => {
+            "Finish the tiling gesture before continuing."
+        }
+        "Escena guardada. Pulsa Revisar para prepararla." => {
+            "Scene saved. Click Review to prepare it."
         }
         "La pantalla o sus ventanas han cambiado. Pulsa Revisar." => {
             "The display or its windows changed. Click Review."

@@ -98,26 +98,34 @@ fn live_frame(w: &Managed, id: u32, areas: &[(Workspace, NSRect)]) -> Option<NSR
 }
 impl Manager {
     fn scene_guard(&mut self, defaults: Obj) -> Result<(), String> {
-        if pref(defaults, "tile.enabled") == 0
-            || !ax::trusted()
-            || self.presentation_blocks_input()
-            || self.space_reentry.is_some()
-            || self.space_quiet_until.is_some()
-            || self.settling_space()
-            || self.drag.is_some()
+        if pref(defaults, "tile.enabled") == 0 {
+            return Err(tr("Activa Mosaico en Ajustes para usar escenas de trabajo.").into());
+        }
+        if !ax::trusted() {
+            return Err(tr("Concede Accesibilidad para usar escenas de trabajo.").into());
+        }
+        let now = Instant::now();
+        if self.presentation_blocks_input() || self.waiting_for_space(now) {
+            return Err(tr("Espera a que termine el cambio de escritorio.").into());
+        }
+        if self.drag.is_some()
             || self.tab_drag.is_some()
-            || self.pending_drop.is_some()
-            || !self.handoffs.is_empty()
-            || crate::focus::secure_input()
+            || self
+                .pending_drop
+                .as_ref()
+                .is_some_and(|drop| now < drop.expires)
+            || self.handoffs.values().any(|handoff| now < handoff.expires)
         {
-            return Err(tr(
-                "Activa Mosaico y Accesibilidad y termina cualquier gesto antes de revisar.",
-            )
-            .into());
+            return Err(tr("Termina el gesto de mosaico antes de continuar.").into());
+        }
+        if crate::focus::secure_input() {
+            return Err(tr("Hay una entrada segura activa; termina ese cuadro de diálogo.").into());
         }
         Ok(())
     }
     pub(crate) fn capture_scene(&mut self, defaults: Obj) -> Result<Vec<SceneDisplay>, String> {
+        // Saving reads the committed layout; it does not place windows. Verify
+        // every member live instead of waiting for the global placement barrier.
         self.scene_guard(defaults)?;
         let screens = screens(defaults)?;
         let areas: Vec<_> = screens.iter().filter_map(|s| s.visible).collect();
@@ -235,6 +243,9 @@ impl Manager {
         review: &SceneReview,
         choices: &[Option<u32>],
     ) -> Result<(), String> {
+        if self.space_reentry.is_some() || self.settling_space() {
+            return Err(tr("Espera a que termine el cambio de escritorio.").into());
+        }
         let fresh = self.review_scene(defaults, &review.displays)?;
         if review.destinations != fresh.destinations || choices.len() != review.rows.len() {
             return Err(stale());
