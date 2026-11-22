@@ -1,21 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.32</title><pubDate>Sun, 22 Nov 2026 16:50:41 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.32 — Escenas de trabajo y superposiciones rediseñadas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.33</title><pubDate>Sun, 22 Nov 2026 17:06:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.33 — Correcciones de Mostrar escritorio y del foco de Finder.
 
-- En Ajustes → Mosaico → Escenas de trabajo, guarda con nombre el reparto visible por monitor y aplicación. Revisa qué ventana ocupa cada puesto antes de aplicar. Las pantallas desconectadas se omiten y no se abren aplicaciones.
-- El selector de plantillas muestra atajos y distribuciones que no caben. Las zonas de arrastre distinguen mejor apilar como pestaña, intercambiar, hacer flotante y volver al mosaico.
-- Mejoras de estabilidad: dormir y despertar ya no dejan que una entrega antigua vuelva a suspender la interfaz; el borde recupera la geometría si falla su suscripción al sistema y Ajustes evita recalcular el mosaico mientras está cerrado.
+- Las ventanas abiertas durante «Mostrar escritorio», incluida la esquina activa, quedan flotantes sin cambiar de tamaño ni posición. También se detectan llegadas escalonadas durante la salida; los mosaicos anteriores conservan su distribución.
+- Pulsar el escritorio ya no hace que AMSpace marque como enfocada una ventana de Finder solo porque Finder quedó en primer plano, incluso si esa ventana está en otra pantalla. No cambia la activación que haga macOS.
 
 English
 
-- In Settings → Tiling → Work scenes, save a named arrangement by display and application. Review which window fills each slot before applying. Disconnected displays are skipped and apps are not launched.
-- The layout picker shows keyboard shortcuts and layouts that do not fit. Drag overlays better distinguish stacking, swapping, floating and returning to tiling.
-- Stability improvements: stale sleep callbacks no longer suspend the interface after wake; the border falls back to window geometry if its system subscription fails, and closed Settings no longer recomputes tiling controls.
+- Windows opened during Show Desktop, including from a Hot Corner, stay floating without being moved or resized. Windows that appear in stages as Show Desktop ends are also kept out of the existing layout.
+- Clicking the desktop no longer makes AMSpace highlight a Finder window just because Finder became the frontmost app, even if that window is on another display. This does not change macOS activation behavior.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.32/AMSpace-universal.zip" length="3241052" type="application/octet-stream" sparkle:version="87" sparkle:shortVersionString="0.9.32" sparkle:edSignature="5jGQ7KEg0XV/wdeZiy6QQLdO1gozFHtE5lgVPD1QLDr9elU1HqsfvtPWqmvPIWAx3NMIHw/nEqySG7mI3b7TAA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: rLn1vu7Z6685ecQU/56yELAn2K4+qNrneO8m4A4rorqYSXxcXxWRl/Lxb2YZl6SaechN0/lnXn047lhm4RkvBQ==
-length: 2686
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.33/AMSpace-universal.zip" length="3243885" type="application/octet-stream" sparkle:version="88" sparkle:shortVersionString="0.9.33" sparkle:edSignature="e3Ae91HGQb7bb/bXg353x9lYueLBCi2Dd0FP8ZVJQPwVAy/t6PowdgxJbLMNd/hjArPhiwoTHVeKkH4Yagm8BQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: Asn+DcBq2feJUkCYB6qVraVO3FmjbnNlcLxt9VK6wzPrFmKxfZ232FC0EI1kslW1D5HA5M7CG8yEo7wgTnChBQ==
+length: 2321
 -->
