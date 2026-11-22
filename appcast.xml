@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.33</title><pubDate>Sun, 22 Nov 2026 17:06:58 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.33 — Correcciones de Mostrar escritorio y del foco de Finder.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.34</title><pubDate>Sun, 22 Nov 2026 17:18:06 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.34 — Ventanas flotantes al usar Mostrar escritorio.
 
-- Las ventanas abiertas durante «Mostrar escritorio», incluida la esquina activa, quedan flotantes sin cambiar de tamaño ni posición. También se detectan llegadas escalonadas durante la salida; los mosaicos anteriores conservan su distribución.
-- Pulsar el escritorio ya no hace que AMSpace marque como enfocada una ventana de Finder solo porque Finder quedó en primer plano, incluso si esa ventana está en otra pantalla. No cambia la activación que haga macOS.
+- Se corrige la detección de «Mostrar escritorio» si un monitor secundario de distinta altura aparece antes del principal en la lista del sistema.
+- Las ventanas nuevas detectadas durante el regreso al mosaico conservan su estado flotante aunque macOS tarde en mostrarlas. No se mueven ni se redimensionan al incorporarlas.
 
 English
 
-- Windows opened during Show Desktop, including from a Hot Corner, stay floating without being moved or resized. Windows that appear in stages as Show Desktop ends are also kept out of the existing layout.
-- Clicking the desktop no longer makes AMSpace highlight a Finder window just because Finder became the frontmost app, even if that window is on another display. This does not change macOS activation behavior.
+- Show Desktop is detected correctly when a secondary display of a different height sorts before the main display.
+- New windows detected during the return to tiling stay floating even if macOS takes longer to show them. They are not moved or resized on admission.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.33/AMSpace-universal.zip" length="3243885" type="application/octet-stream" sparkle:version="88" sparkle:shortVersionString="0.9.33" sparkle:edSignature="e3Ae91HGQb7bb/bXg353x9lYueLBCi2Dd0FP8ZVJQPwVAy/t6PowdgxJbLMNd/hjArPhiwoTHVeKkH4Yagm8BQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: Asn+DcBq2feJUkCYB6qVraVO3FmjbnNlcLxt9VK6wzPrFmKxfZ232FC0EI1kslW1D5HA5M7CG8yEo7wgTnChBQ==
-length: 2321
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.34/AMSpace-universal.zip" length="3244089" type="application/octet-stream" sparkle:version="89" sparkle:shortVersionString="0.9.34" sparkle:edSignature="xrk7NIQTjdO9LB6UgSkGlg7hxI3Rsr/SMKE+M26NDccgDJTxCVSZ8UwX2oTkW21Z7cQCK8tBW/feIQtn2MybCQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: DFNhM5Iyto8ltch59StO1xXuB4m1hu9HDX8bdDSle609pr0VApSAdI9UQYTypD9b43laLd2yF1IlEafOTOC/Dw==
+length: 2016
 -->
