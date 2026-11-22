@@ -1,3 +1,8 @@
+## 0.9.39/build 94 — Ida y vuelta de escenas de trabajo
+
+- `--check-work-scenes` guardó un reparto asimétrico de tres ventanas AppKit de la misma app, intercambió sus puestos y volvió a revisar. El panel preseleccionó las ventanas originales y Accesibilidad confirmó que cada una recuperó exactamente su marco. El diagnóstico también comprobó que elegir solo una ventana en una escena ambigua no omite implícitamente las demás.
+- `scripts/check.sh`: formato, Clippy, plist y 298 pruebas correctas (nueve ignoradas), incluidas la conservación de las divisiones capturadas con rejilla y del ancho principal en una escena centrada parcial. Bundle universal; diagnóstico en Apple Silicon, sin comprobar Intel ni traslados físicos entre monitores.
+
 ## 0.9.38/build 93 — Aplicación parcial de escenas de trabajo
 
 - `--check-work-scenes` habilitó **Aplicar escena** con tres ventanas AppKit para cuatro puestos. Accesibilidad confirmó que las tres se recolocaron en el reparto asimétrico y que el puesto ausente se contrajo. También se mantuvieron el rechazo de duplicados, la omisión de una pantalla desconectada y el bloqueo durante la reentrada.

@@ -46,6 +46,7 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Aplicar escena" => "Apply scene",
         "Pantalla desconectada" => "Display disconnected",
         "Sin ventana compatible" => "No matching window",
+        "Elige una ventana…" => "Choose a window…",
         "Omitir puesto" => "Skip slot",
         "La revisión de ventanas aparecerá aquí." => "The window review will appear here.",
         "Guarda una escena para empezar." => "Save a scene to get started.",

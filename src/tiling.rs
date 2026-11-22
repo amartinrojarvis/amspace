@@ -1729,6 +1729,15 @@ impl Desktop {
     }
     pub fn save_distribution(&self, area: NSRect) -> Option<String> {
         let tree = self.effective_tree(area, 10.)?;
+        Some(self.encode_distribution(&tree))
+    }
+
+    pub(crate) fn save_scene_distribution(&self, area: NSRect) -> Option<String> {
+        let tree = self.frame_tree(area, 10.)?;
+        Some(self.encode_distribution(&tree))
+    }
+
+    fn encode_distribution(&self, tree: &Node) -> String {
         let mut tokens = vec![
             "2".into(),
             self.layout.index().to_string(),
@@ -1737,7 +1746,7 @@ impl Desktop {
             self.grid.map_or(0, |g| g.1).to_string(),
         ];
         tree.encode(&self.order, &mut tokens);
-        Some(tokens.join(" "))
+        tokens.join(" ")
     }
     pub fn restore_distribution(&mut self, text: &str) -> bool {
         let mut tokens = text.split_whitespace();
@@ -1806,9 +1815,10 @@ impl Desktop {
             return false;
         }
         self.resized = saved.resized.and_then(|(layout, old, tree)| {
-            // A changed membership needs fresh sidebars for centered layouts.
+            // Rebuild the sidebars but keep the saved outer ratios, as when
+            // dropping a leaf from a live centered layout.
             if order.len() != old.len() && layout.centered_axis().is_some() {
-                return None;
+                return Some((layout, old, tree));
             }
             tree.map_windows(&|ordinal| slots[ordinal as usize - 1])
                 .map(|tree| (layout, order.clone(), tree))
@@ -2468,6 +2478,47 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn scene_keeps_the_saved_divisions_when_the_grid_is_disabled() {
+        let area = rect(30., 40., 1470., 870.);
+        let mut saved = Desktop::configured(Layout::Spiral, Some((9, 7)));
+        saved.reconcile(&[1, 2, 3], area, 10.);
+        let snapped = saved.frames(area, 10.);
+        let distribution = saved.save_scene_distribution(area).unwrap();
+        saved.grid = None;
+        assert_ne!(saved.frames(area, 10.), snapped);
+
+        let mut restored = Desktop::default();
+        assert!(restored.restore_scene_distribution(&distribution, &[Some(1), Some(2), Some(3)]));
+        assert_eq!(restored.frames(area, 10.), snapped);
+    }
+
+    #[test]
+    fn partial_centered_scene_keeps_the_saved_main_width() {
+        let area = rect(0., 0., 1600., 900.);
+        let mut saved = Desktop::configured(Layout::Centered, None);
+        saved.order = vec![1, 2, 3, 4, 5];
+        let layout = saved.layout.index();
+        let distribution = format!("2 {layout} 5 0 0 v0.25 h0.5 w1 w3 v0.66 w0 h0.5 w2 w4");
+        assert!(saved.restore_distribution(&distribution));
+        let main = |desktop: &Desktop, id| {
+            desktop
+                .frames(area, 10.)
+                .into_iter()
+                .find(|(w, _)| *w == id)
+                .unwrap()
+                .1
+        };
+        let mut restored = Desktop::default();
+        assert!(restored.restore_scene_distribution(
+            &saved.save_scene_distribution(area).unwrap(),
+            &[Some(90), Some(91), Some(92), None, None],
+        ));
+        assert!((main(&restored, 90).size.width - main(&saved, 1).size.width).abs() < 1.);
+        assert_eq!(restored.frames(area, 10.).len(), 3);
+    }
+
     #[test]
     fn every_template_resizes_shared_edges_and_preserves_slot_sizes_when_swapped() {
         for layout in Layout::ALL {

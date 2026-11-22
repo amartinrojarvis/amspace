@@ -1,12 +1,14 @@
-AMSpace 0.9.38 — Aplica escenas aunque falten ventanas.
+AMSpace 0.9.39 — Guardado y recuperación más fieles de las escenas de trabajo.
 
-- **Aplicar escena** recoloca las ventanas asignadas aunque no estén abiertas todas las de la escena. Los puestos sin ventana se contraen para aprovechar el espacio.
-- **Omitir puesto** permite dejar una posición sin asignar. La revisión sigue mostrando las ventanas en mosaico de los escritorios visibles.
+- Las escenas guardan las divisiones ajustadas por la rejilla. Una escena centrada parcial conserva la proporción principal si el espacio lo permite.
+- Mientras AMSpace siga abierto, la revisión preselecciona las ventanas originales que sigan disponibles. Si hay varias candidatas y no puede distinguirlas, pide elegir una u omitir el puesto.
+- Si una escena antigua no refleja tu distribución, guárdala de nuevo.
 
 English
 
-- **Apply scene** moves assigned windows even when some are missing. Unfilled slots collapse so the other windows use the available space.
-- **Skip slot** lets you leave a position unassigned. Reviews still show tiled windows from visible desktops.
+- Scenes save grid-adjusted splits. Partial centered scenes preserve the main proportion when space permits.
+- While AMSpace stays open, review preselects the original windows that are still available. If the match is ambiguous, choose a window or explicitly skip the slot.
+- If an older scene does not match your layout, save it again.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

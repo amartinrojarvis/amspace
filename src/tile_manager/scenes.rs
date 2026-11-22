@@ -10,6 +10,27 @@ pub(crate) struct SceneDisplay {
     pub distribution: String,
     pub bundles: Vec<String>,
 }
+
+/// A live match for one ordinal slot; never written to preferences.
+pub(crate) struct SceneWindow {
+    id: u32,
+    pid: i32,
+    element: ax::Owned,
+}
+
+impl SceneWindow {
+    pub(crate) fn matches(&self, candidate: &SceneCandidate) -> bool {
+        self.id == candidate.id
+            && self.pid == candidate.pid
+            && unsafe { ax::CFEqual(self.element.0, candidate.element.0) }
+    }
+}
+
+pub(crate) struct SceneCapture {
+    pub displays: Vec<SceneDisplay>,
+    pub windows: Vec<SceneWindow>,
+}
+
 pub(crate) struct SceneCandidate {
     pub id: u32,
     pub label: String,
@@ -123,14 +144,17 @@ impl Manager {
         }
         Ok(())
     }
-    pub(crate) fn capture_scene(&mut self, defaults: Obj) -> Result<Vec<SceneDisplay>, String> {
+    pub(crate) fn capture_scene(&mut self, defaults: Obj) -> Result<SceneCapture, String> {
         // Saving reads the committed layout; it does not place windows. Verify
         // every member live instead of waiting for the global placement barrier.
         self.scene_guard(defaults)?;
         let screens = screens(defaults)?;
         let areas: Vec<_> = screens.iter().filter_map(|s| s.visible).collect();
         let identities = ws::all_window_ids().ok_or_else(stale)?;
-        let mut result = Vec::new();
+        let mut capture = SceneCapture {
+            displays: Vec::new(),
+            windows: Vec::new(),
+        };
         for s in screens {
             let Some((key, area)) = s.visible else {
                 continue;
@@ -148,18 +172,23 @@ impl Manager {
                     return Err(stale());
                 }
                 bundles.push(bundle(w.pid).ok_or_else(stale)?);
+                capture.windows.push(SceneWindow {
+                    id,
+                    pid: w.pid,
+                    element: w.element.clone(),
+                });
             }
-            result.push(SceneDisplay {
+            capture.displays.push(SceneDisplay {
                 uuid: s.uuid,
                 name: s.name,
-                distribution: d.save_distribution(area).ok_or_else(stale)?,
+                distribution: d.save_scene_distribution(area).ok_or_else(stale)?,
                 bundles,
             });
         }
-        if result.is_empty() {
+        if capture.displays.is_empty() {
             return Err(tr("No hay ventanas en mosaico para guardar.").into());
         }
-        Ok(result)
+        Ok(capture)
     }
     pub(crate) fn review_scene(
         &mut self,

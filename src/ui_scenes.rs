@@ -1,6 +1,14 @@
 //! Manual scene review; selecting a scene or a window never moves anything.
 use super::*;
-use crate::{i18n::tr, scene_library, tile_manager::scenes::SceneReview};
+use crate::{
+    i18n::tr,
+    scene_library,
+    tile_manager::scenes::{SceneReview, SceneWindow},
+};
+use std::collections::{HashMap, HashSet};
+
+const SKIP_SLOT: isize = 1;
+const FIRST_WINDOW: isize = 2;
 
 pub(super) struct Panel {
     pub(super) window: Retained<AnyObject>,
@@ -11,6 +19,7 @@ pub(super) struct Panel {
     status: Obj,
     apply: Obj,
     entries: Vec<scene_library::Entry>,
+    captured_windows: HashMap<String, Vec<SceneWindow>>,
     review: Option<SceneReview>,
     controls: Vec<Obj>,
     confirming: bool,
@@ -152,6 +161,7 @@ impl Panel {
                 status,
                 apply,
                 entries: Vec::new(),
+                captured_windows: HashMap::new(),
                 review: None,
                 controls: Vec::new(),
                 confirming: false,
@@ -185,7 +195,8 @@ impl Panel {
     ) -> Result<(), String> {
         let value: Retained<NSString> = unsafe { msg_send![self.name, stringValue] };
         let scene = manager.capture_scene(defaults)?;
-        let id = scene_library::save(defaults, &value.to_string(), &scene)?;
+        let id = scene_library::save(defaults, &value.to_string(), &scene.displays)?;
+        self.captured_windows.insert(id.clone(), scene.windows);
         self.reload(defaults, Some(&id));
         unsafe {
             text(self.name, "");
@@ -213,10 +224,28 @@ impl Panel {
             let root = Retained::as_ptr(&doc) as Obj;
             if let Some(review) = &self.review {
                 let slots = self.selected().map(slot_previews).unwrap_or_default();
-                let mut occurrences = std::collections::HashMap::new();
-                for row in &review.rows {
-                    for candidate in &row.candidates {
-                        *occurrences.entry(candidate.id).or_insert(0usize) += 1;
+                let remembered = self
+                    .selected()
+                    .and_then(|entry| self.captured_windows.get(&entry.id))
+                    .filter(|windows| windows.len() == review.rows.len());
+                let mut selected = vec![None; review.rows.len()];
+                let mut reserved = HashSet::new();
+                if let Some(windows) = remembered {
+                    for ((row, window), choice) in
+                        review.rows.iter().zip(windows).zip(&mut selected)
+                    {
+                        *choice = row.candidates.iter().position(|candidate| {
+                            window.matches(candidate) && reserved.insert(candidate.id)
+                        });
+                    }
+                }
+                let mut occurrences = HashMap::new();
+                for (row, choice) in review.rows.iter().zip(&selected) {
+                    if choice.is_none() {
+                        for candidate in row.candidates.iter().filter(|c| !reserved.contains(&c.id))
+                        {
+                            *occurrences.entry(candidate.id).or_insert(0usize) += 1;
+                        }
                     }
                 }
                 for (index, row) in review.rows.iter().enumerate() {
@@ -251,9 +280,15 @@ impl Panel {
                     } else if row.candidates.is_empty() {
                         tr("Sin ventana compatible")
                     } else {
-                        tr("Omitir puesto")
+                        tr("Elige una ventana…")
                     };
-                    let menu = popup(root, rect(236., y + 6., 315., 29.), &[first], target, 136);
+                    let items = [first, tr("Omitir puesto")];
+                    let items = if row.candidates.is_empty() {
+                        &items[..1]
+                    } else {
+                        &items[..]
+                    };
+                    let menu = popup(root, rect(236., y + 6., 315., 29.), items, target, 136);
                     let _: () = msg_send![menu, setAccessibilityLabel:&*NSString::from_str(&format!("{heading} · {}",row.bundle))];
                     let native_menu: Obj = msg_send![menu, menu];
                     for candidate in &row.candidates {
@@ -263,10 +298,19 @@ impl Panel {
                             msg_send![&item,setTitle:&*NSString::from_str(&candidate.label)];
                         let _: () = msg_send![native_menu,addItem:&*item];
                     }
-                    if let [only] = row.candidates.as_slice()
-                        && occurrences[&only.id] == 1
-                    {
-                        let _: () = msg_send![menu, selectItemAtIndex:1isize];
+                    let choice = selected[index].or_else(|| {
+                        let mut unmatched = row
+                            .candidates
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, c)| !reserved.contains(&c.id));
+                        let (choice, candidate) = unmatched.next()?;
+                        (unmatched.next().is_none() && occurrences.get(&candidate.id) == Some(&1))
+                            .then_some(choice)
+                    });
+                    if let Some(choice) = choice {
+                        let _: () =
+                            msg_send![menu, selectItemAtIndex:FIRST_WINDOW + choice as isize];
                     }
                     let _: () =
                         msg_send![menu, setEnabled:row.available && !row.candidates.is_empty()];
@@ -289,7 +333,7 @@ impl Panel {
     }
     fn choices(&self) -> Option<Vec<Option<u32>>> {
         let review = self.review.as_ref()?;
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         let mut choices = Vec::with_capacity(review.rows.len());
         for (row, menu) in review.rows.iter().zip(&self.controls) {
             if !row.available || row.candidates.is_empty() {
@@ -297,11 +341,13 @@ impl Panel {
                 continue;
             }
             let index: isize = unsafe { msg_send![*menu, indexOfSelectedItem] };
-            if index == 0 {
+            if index == SKIP_SLOT {
                 choices.push(None);
                 continue;
             }
-            let candidate = row.candidates.get(usize::try_from(index - 1).ok()?)?;
+            let candidate = row
+                .candidates
+                .get(usize::try_from(index - FIRST_WINDOW).ok()?)?;
             if !seen.insert(candidate.id) {
                 return None;
             }
@@ -370,8 +416,9 @@ impl App {
                     }
                     return Ok(());
                 }
-                if let Some(entry) = panel.selected() {
-                    scene_library::remove(defaults, &entry.id);
+                if let Some(id) = panel.selected().map(|entry| entry.id.clone()) {
+                    scene_library::remove(defaults, &id);
+                    panel.captured_windows.remove(&id);
                 }
                 panel.reload(defaults, None);
             }
@@ -398,9 +445,8 @@ impl App {
             if tag == 135 {
                 if let (Some(review), Some(choices)) = (&panel.review, panel.choices()) {
                     let partial = choices.iter().any(Option::is_none);
-                    let outcome = self.tile_manager.apply_scene(defaults, review, &choices);
+                    self.tile_manager.apply_scene(defaults, review, &choices)?;
                     panel.populate(None, target);
-                    outcome?;
                     unsafe {
                         text(
                             panel.status,
@@ -459,7 +505,7 @@ pub(crate) fn check_scene_fixture(
                 .copied()
                 .map(geometry)
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut displays = manager.capture_scene(defaults)?;
+            let mut displays = manager.capture_scene(defaults)?.displays;
             if displays.len() != 1 || displays[0].bundles.len() != ids.len() {
                 return Err("La captura no coincide con las ventanas desechables.".into());
             }
@@ -537,7 +583,10 @@ pub(crate) fn check_scene_fixture(
                     .iter()
                     .position(|c| c.id == wanted)
                     .ok_or("Falta la ventana elegida en el selector nativo.")?;
-                let _: () = msg_send![*control, selectItemAtIndex:(index+1) as isize];
+                let _: () = msg_send![*control, selectItemAtIndex:FIRST_WINDOW + index as isize];
+                if occupied == 0 && panel.choices().is_some() {
+                    return Err("Un puesto pendiente se omitió sin confirmación.".into());
+                }
                 occupied += 1;
             }
             panel.update_status();
@@ -617,7 +666,7 @@ pub(crate) fn check_scene_fixture(
                     .iter()
                     .position(|c| c.id == id)
                     .ok_or("Falta una ventana abierta en la revisión parcial.")?;
-                let _: () = msg_send![panel.controls[index], selectItemAtIndex:(item+1) as isize];
+                let _: () = msg_send![panel.controls[index], selectItemAtIndex:FIRST_WINDOW + item as isize];
             }
             panel.update_status();
             let enabled: bool = msg_send![panel.apply, isEnabled];
@@ -644,6 +693,46 @@ pub(crate) fn check_scene_fixture(
                 }
             }
             println!("PASS: la escena parcial recoloca tres ventanas y contrae el puesto ausente.");
+
+            let saved_frames = ids
+                .iter()
+                .copied()
+                .map(geometry)
+                .collect::<Result<Vec<_>, _>>()?;
+            text(panel.name, "Ida y vuelta");
+            panel.save_scene(defaults, &mut manager)?;
+            let saved = panel.selected().ok_or("Falta la escena de ida y vuelta.")?;
+            let original = manager.review_scene(defaults, &saved.displays)?;
+            let reordered: Vec<_> = ids
+                .iter()
+                .cycle()
+                .skip(1)
+                .take(ids.len())
+                .copied()
+                .map(Some)
+                .collect();
+            manager.apply_scene(defaults, &original, &reordered)?;
+            if geometry(ids[0])? == saved_frames[0] {
+                return Err("La distribución intermedia no cambió la posición de prueba.".into());
+            }
+            let review = manager.review_scene(defaults, &saved.displays)?;
+            panel.populate(Some(review), target);
+            let choices = panel
+                .choices()
+                .filter(|choices| choices.iter().copied().eq(ids.iter().copied().map(Some)))
+                .ok_or("La revisión no recuperó la identidad de cada ventana guardada.")?;
+            manager.apply_scene(defaults, panel.review.as_ref().unwrap(), &choices)?;
+            for (&id, frame) in ids.iter().zip(saved_frames) {
+                let actual = geometry(id)?;
+                if actual != frame {
+                    return Err(format!(
+                        "La escena no recuperó el marco guardado de {id}: {actual:?} ≠ {frame:?}"
+                    ));
+                }
+            }
+            println!(
+                "PASS: guardar y recuperar restaura la posición de cada ventana de la misma app tras intercambiar sus puestos."
+            );
             let settled = ids
                 .iter()
                 .copied()
