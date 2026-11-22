@@ -1,3 +1,11 @@
+## 0.9.42/build 97 — Posición y tamaño al recuperar una escena
+
+- `--check-work-scenes` guardó tres ventanas desechables, permutó sus puestos y verificó los cuatro componentes de sus marcos AX al cargar. Volvió a cargar tras desplazar una ventana un punto en cada eje y reducirla dos puntos por dimensión: recuperó el marco exacto.
+- Sin preferencia guardada, el aviso de apertura apareció para una app instalada y cerrada. Rechazar no la abrió; aceptar abrió una vez el bundle con tres puestos. Un `0` explícito también evitó la apertura. El fixture no ejercitó la admisión de las ventanas de la app lanzada en el mosaico global.
+- `scripts/check.sh`: formato, Clippy, 298 pruebas correctas (nueve ignoradas) y plist. Bundle universal; prueba AX en Apple Silicon, sin verificar ejecución en Intel ni traslados entre monitores.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45066115980) para `0ed92f9`.
+- Los cinco archivos de [v0.9.42](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.42) coincidieron con las descargas públicas. Montado en solo lectura, el DMG contenía guía, disposición, enlace a Aplicaciones y bundle firmado build 97. El ZIP inmutable (`962e752`) coincidió byte a byte; el catálogo de `a3c5180` se verificó con y sin gzip. No se probó la instalación desde Sparkle ni una primera instalación en otra cuenta.
+
 ## 0.9.41/build 96 — Carga rápida de escenas de trabajo
 
 - `--check-work-scenes` guardó mediante la acción del campo nativo y recuperó exactamente los marcos AX de tres ventanas tras permutarlas. La tarjeta aplicó con un clic, sin abrir la revisión; **Cargar** omitió un puesto ausente y conservó la distribución parcial. La revisión manual no movió ventanas y rechazó un ID duplicado. El diagnóstico confirmó guardado y revisión durante la reentrada, sin aplicar hasta que termine.
