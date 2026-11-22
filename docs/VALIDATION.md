@@ -1,8 +1,10 @@
-## Correcciones del escritorio posteriores a 0.9.32
+## 0.9.33/build 88 — correcciones del escritorio
 
 - `scripts/check.sh`: formato, Clippy, plist y 294 pruebas correctas (nueve ignoradas), en una copia aislada sin los cambios preexistentes de `src/tiling.rs`. La regresión del mosaico comprueba una primera lectura sin ventanas nuevas, dos llegadas escalonadas, preservación de geometría y árboles, respeto del retorno explícito a mosaico y caducidad de la captura. La prueba AX verifica que `AXDesktop` no acepta foco bajo el cursor.
 - Bundle universal `arm64`/`x86_64` compilado; `--check-tab-controls` pasó en Apple Silicon. Su escenario AppKit entrega entrada y salida durante una reentrada simulada y comprueba que la transición obsoleta no reinicie el reloj.
-- Pendiente la comprobación física del clic con una ventana de Finder en otro monitor y de la esquina activa seguida de una apertura. No se ha instalado ni publicado este cambio.
+- Publicada [v0.9.33](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.33) desde `010c521`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/45047496969). Pasaron las 294 pruebas y el diagnóstico AppKit sobre ese commit. Los cinco archivos públicos coinciden con los preparados localmente. Se montó el DMG descargado en solo lectura y `codesign` verificó su bundle.
+- El ZIP público inmutable (`63944d9`) tiene SHA-256 `aa68e7274a3c1112bfda7c44d9602459b381215b87f960c39a038f466967a4a2`. El catálogo anunciado en `f927492` devolvió los bytes firmados con y sin compresión (gzip con las cabeceras de Sparkle).
+- Pendientes la comprobación física del clic con una ventana de Finder en otro monitor y de la esquina activa seguida de una apertura, la primera instalación en otra cuenta y la instalación desde el cliente de actualización. No se sustituyó AMSpace en la cuenta habitual.
 
 ## 0.9.32/build 87 — escenas de trabajo y superposiciones
 
