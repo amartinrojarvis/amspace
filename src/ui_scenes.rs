@@ -891,7 +891,13 @@ pub(crate) fn check_scene_fixture(
             let initial = manager
                 .review_scene(defaults, &displays)
                 .map_err(|e| format!("Preparación de la tarjeta: {e}"))?;
-            let reordered: Vec<_> = ids.iter().rev().copied().map(Some).collect();
+            let reordered: Vec<_> = ids
+                .iter()
+                .rev()
+                .copied()
+                .map(Some)
+                .chain(std::iter::repeat_n(None, ids.len()))
+                .collect();
             manager
                 .apply_scene(defaults, &initial, &reordered)
                 .map_err(|e| format!("Permutación del fixture: {e}"))?;
@@ -1148,8 +1154,19 @@ pub(crate) fn check_scene_fixture(
                 .map(geometry)
                 .collect::<Result<Vec<_>, _>>()?;
             text(panel.name, "Ida y vuelta");
-            panel.save_scene(defaults, &mut manager)?;
-            let saved = panel.selected().ok_or("Falta la escena de ida y vuelta.")?;
+            let name = panel.name;
+            let mut app = App::build(controller.clone(), prefs.clone());
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            APP.with(|cell| *cell.borrow_mut() = Some(app));
+            let sent: bool = msg_send![name, sendAction:sel!(change:), to:target];
+            let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
+            let saved = panel
+                .selected()
+                .filter(|entry| sent && entry.name == "Ida y vuelta")
+                .ok_or("La acción nativa no guardó ni seleccionó la escena de ida y vuelta.")?;
             let original = manager.review_scene(defaults, &saved.displays)?;
             let reordered: Vec<_> = ids
                 .iter()
