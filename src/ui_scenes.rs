@@ -1168,14 +1168,11 @@ pub(crate) fn check_scene_fixture(
                 .filter(|entry| sent && entry.name == "Ida y vuelta")
                 .ok_or("La acción nativa no guardó ni seleccionó la escena de ida y vuelta.")?;
             let original = manager.review_scene(defaults, &saved.displays)?;
-            let reordered: Vec<_> = ids
-                .iter()
-                .cycle()
-                .skip(1)
-                .take(ids.len())
-                .copied()
-                .map(Some)
-                .collect();
+            let mut reordered = quick_choices(
+                &original,
+                panel.captured_windows.get(&saved.id).map(Vec::as_slice),
+            );
+            reordered.rotate_left(1);
             manager.apply_scene(defaults, &original, &reordered)?;
             if geometry(ids[0])? == saved_frames[0] {
                 return Err("La distribución intermedia no cambió la posición de prueba.".into());
