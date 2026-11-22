@@ -2267,6 +2267,25 @@ impl Manager {
         }
     }
     fn finish_desktop_reentry(&mut self, candidates: &[(i32, u32, NSRect)], now: Instant) {
+        self.remember_desktop_arrivals(now, || candidates.iter().map(|&(pid, id, _)| (pid, id)));
+    }
+
+    fn observe_desktop_reentry_windows(&mut self, snapshot: &[ws::TransitionWindow], now: Instant) {
+        // Capture IDs while the Space barrier still blocks placement. Even a
+        // window not yet onscreen can be published during the grace period.
+        self.remember_desktop_arrivals(now, || {
+            snapshot
+                .iter()
+                .filter(|w| w.layer == 0 && w.pid != std::process::id() as i32)
+                .map(|w| (w.pid, w.id))
+        });
+    }
+
+    fn remember_desktop_arrivals<I: Iterator<Item = (i32, u32)>>(
+        &mut self,
+        now: Instant,
+        identities: impl FnOnce() -> I,
+    ) {
         // A valid scan may still precede a slow window's publication (or one
         // of several windows from the same launch). Use the existing bounded
         // grace period, without adding a scan or holding off normal placement.
@@ -2276,12 +2295,8 @@ impl Manager {
             return;
         }
         if let Some(before) = &mut self.desktop_baseline {
-            self.desktop_floating.extend(
-                candidates
-                    .iter()
-                    .map(|(pid, id, _)| (*pid, *id))
-                    .filter(|&key| before.insert(key)),
-            );
+            self.desktop_floating
+                .extend(identities().filter(|&key| before.insert(key)));
         }
     }
     fn apply_desktop_float(&mut self, pid: i32, id: u32) {
@@ -2436,11 +2451,12 @@ impl Manager {
             .is_some_and(|until| Instant::now() < until)
     }
     fn reentry_sample(
-        &self,
+        &mut self,
         defaults: Obj,
         active: &[(Workspace, NSRect)],
     ) -> Option<ReentrySample> {
         let snapshot = ws::transition_windows()?;
+        self.observe_desktop_reentry_windows(&snapshot, Instant::now());
         let candidates: Vec<_> = snapshot
             .iter()
             .filter(|w| w.layer == 0 && w.onscreen && w.pid != std::process::id() as i32)
@@ -2456,7 +2472,11 @@ impl Manager {
             .filter(|(key, _)| active.iter().any(|(s, _)| s == *key))
             .flat_map(|(_, d)| d.order.iter())
             .filter_map(|id| self.windows.get(id).map(|w| (*id, w)))
-            .filter(|(id, _)| !self.floating.contains(id) && !self.inactive_tabs.contains(id))
+            .filter(|(id, w)| {
+                !self.floating.contains(id)
+                    && !self.inactive_tabs.contains(id)
+                    && !self.desktop_floating.contains(&(w.pid, *id))
+            })
             .collect();
         let all: HashSet<_> = snapshot.iter().map(|w| (w.pid, w.id)).collect();
         let mut absent = Vec::new();
@@ -2533,6 +2553,7 @@ impl Manager {
         }) {
             if expected_ids.contains(&(entry.pid, entry.id))
                 || self.floating.contains(&entry.id)
+                || self.desktop_floating.contains(&(entry.pid, entry.id))
                 || self.inactive_tabs.contains(&entry.id)
                 || *floating_apps
                     .entry(entry.pid)
@@ -2561,6 +2582,7 @@ impl Manager {
         }
         for (pid, id, cg) in candidates {
             if self.floating.contains(&id)
+                || self.desktop_floating.contains(&(pid, id))
                 || *floating_apps
                     .entry(pid)
                     .or_insert_with(|| crate::tile_rules::floats(defaults, pid))
@@ -7987,6 +8009,35 @@ mod tests {
         manager.apply_desktop_float(7, 3);
         assert!(manager.floating.contains(&2)); // Observed during Desktop: no expiry of its state.
         assert!(!manager.floating.contains(&3)); // Opened during a later manual pause.
+    }
+
+    #[test]
+    fn desktop_arrival_seen_offscreen_survives_a_long_space_barrier() {
+        use crate::desktop_mode::Mode;
+        let mut manager = Manager::default();
+        let now = Instant::now();
+        let existing = HashSet::from([(7, 1)]);
+        manager.set_presentation_at(Mode::Desktop, now, Some(existing.clone()));
+        manager.set_presentation_at(Mode::Normal, now, Some(existing));
+        manager.observe_desktop_reentry_windows(
+            &[ws::TransitionWindow {
+                pid: 7,
+                id: 2,
+                layer: 0,
+                onscreen: false,
+                frame: None,
+            }],
+            now + Duration::from_secs(1),
+        );
+        let frame = rect(0., 30., 800., 600.);
+        manager.finish_desktop_reentry(
+            &[(7, 1, frame), (7, 2, frame), (7, 3, frame)],
+            now + Duration::from_secs(3),
+        );
+        for id in [1, 2, 3] {
+            manager.apply_desktop_float(7, id);
+        }
+        assert_eq!(manager.floating, HashSet::from([2]));
     }
 
     #[test]

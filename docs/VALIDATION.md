@@ -1,3 +1,10 @@
+## 0.9.34/build 89 — Mostrar escritorio con monitores de distinta altura
+
+- La configuración física leída en macOS 27.2.1 tiene un monitor principal de 2560 × 1440 puntos (ID 5) y un secundario vertical de 1080 × 1920 (ID 2). `screen_configuration` los ordena por ID. Usar la altura del primero de la lista desplazaba los rectángulos en 480 puntos: en esa topología una capa 18 de pantalla completa no alcanzaba el 90 % de solapamiento en ninguno de los monitores. La conversión usa ahora la altura del ID principal de CoreGraphics.
+- La regresión evalúa las capas de «Mostrar escritorio» de ambos monitores con esa topología y orden reales. La captura pasiva solo observó el escritorio normal; no se completó la prueba física de la esquina y apertura de ventana con el bundle corregido. No se sustituyó la app instalada.
+- `scripts/check.sh`: formato, Clippy, plist, 295 pruebas correctas y nueve ignoradas. Pasaron la regresión de detección multipantalla y la de admisión flotante al salir. Bundle universal compilado para arm64 y x86_64; no se ejecutó en Intel.
+- La regresión de reentrada descubre una nueva identidad aún fuera de pantalla durante la barrera de Spaces. Tras vencer el plazo de captura, solo esa ventana conserva la admisión flotante: ni la anterior al gesto ni otra publicada después del plazo la heredan.
+
 ## 0.9.33/build 88 — correcciones del escritorio
 
 - `scripts/check.sh`: formato, Clippy, plist y 294 pruebas correctas (nueve ignoradas), en una copia aislada sin los cambios preexistentes de `src/tiling.rs`. La regresión del mosaico comprueba una primera lectura sin ventanas nuevas, dos llegadas escalonadas, preservación de geometría y árboles, respeto del retorno explícito a mosaico y caducidad de la captura. La prueba AX verifica que `AXDesktop` no acepta foco bajo el cursor.

@@ -6,7 +6,7 @@ Esta guía recoge decisiones de implementación y fallos observados hasta 0.7.0.
 
 - Comprueba PID e ID antes de escribir a una ventana. Los IDs pueden reutilizarse; un título no es una identidad.
 - El mosaico pertenece a `(DisplayID, SpaceID)`. Con Spaces compartidos, el mismo ID nativo existe en varios monitores: la geometría y el solapamiento determinan el propietario físico.
-- WindowServer usa coordenadas globales con origen superior izquierdo; AppKit usa origen inferior izquierdo. Convierte respecto a la pantalla principal, no a la secundaria. No interpretes un desplazamiento de la animación de Space como un arrastre real de la app.
+- WindowServer usa coordenadas globales con origen superior izquierdo; AppKit usa origen inferior izquierdo. Para detectar «Mostrar escritorio», identifica la pantalla principal con `CGMainDisplayID` antes de convertir: el primer elemento de `screen_configuration` tiene el menor ID, no necesariamente el origen global. No interpretes un desplazamiento de la animación de Space como un arrastre real de la app.
 - Un fallo al consultar ventanas no significa que el escritorio esté vacío. Una entrada nativa de capa cero tampoco demuestra que sea una ventana estándar redimensionable.
 - `CGWindowIsOnscreen` y una lista de ventanas visibles no confirman por sí solos que la presentación real haya cambiado. Pueden conservar entradas de otro Space. La confirmación del traslado usa identidad y pertenencia nativa; la prueba visual sigue teniendo un alcance distinto.
 

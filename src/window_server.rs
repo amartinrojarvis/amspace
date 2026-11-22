@@ -17,6 +17,7 @@ unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative: u32) -> Cf;
     fn CGRectMakeWithDictionaryRepresentation(dict: Cf, result: *mut NSRect) -> bool;
     fn CGWindowLevelForKey(key: i32) -> i32;
+    fn CGMainDisplayID() -> u32;
 }
 unsafe extern "C" {
     static _dispatch_main_q: c_void;
@@ -667,6 +668,21 @@ fn presentation_window(
         _ => Mode::Normal,
     }
 }
+fn presentation_screen_bounds(
+    screens: &[crate::native::ScreenGeometry],
+    main_display: u32,
+) -> Vec<NSRect> {
+    // screen_configuration is sorted by display ID, not by which display
+    // defines the global origin shared by CGWindowList and AX.
+    let Some(main) = screens.iter().find(|screen| screen.id == main_display) else {
+        return Vec::new();
+    };
+    screens
+        .iter()
+        .map(|screen| crate::tiling::ax_screen_rect(screen.frame, main.frame.size.height))
+        .collect()
+}
+
 fn presentation_from_list(list: Cf) -> crate::desktop_mode::Mode {
     use crate::desktop_mode::Mode;
     let mut screens = None;
@@ -692,12 +708,9 @@ fn presentation_from_list(list: Cf) -> crate::desktop_mode::Mode {
             continue;
         }
         let screens = screens.get_or_insert_with(|| {
-            let configuration = crate::native::screen_configuration();
-            let height = configuration.first().map_or(0., |s| s.frame.size.height);
-            configuration
-                .iter()
-                .map(|s| crate::tiling::ax_screen_rect(s.frame, height))
-                .collect::<Vec<_>>()
+            presentation_screen_bounds(&crate::native::screen_configuration(), unsafe {
+                CGMainDisplayID()
+            })
         });
         let candidate = presentation_window(
             owner,
@@ -800,6 +813,39 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn show_desktop_is_detected_when_the_portrait_display_sorts_before_the_main_display() {
+        use super::*;
+        use crate::{
+            desktop_mode::Mode,
+            native::{ScreenGeometry, rect},
+        };
+        let portrait = rect(2560., -252., 1080., 1920.);
+        let main = rect(0., 0., 2560., 1440.);
+        let screens = [
+            ScreenGeometry {
+                id: 2,
+                frame: portrait,
+                visible: portrait,
+                scale: 1.,
+            },
+            ScreenGeometry {
+                id: 5,
+                frame: main,
+                visible: main,
+                scale: 2.,
+            },
+        ];
+        let bounds = presentation_screen_bounds(&screens, 5);
+        let wm = ns_string!("WindowManager") as *const _ as Cf;
+        for overlay in [main, rect(2560., -228., 1080., 1920.)] {
+            assert_eq!(
+                presentation_window(wm, 18, Some(1.), overlay, &bounds),
+                Mode::Desktop
+            );
+        }
+    }
+
     #[test]
     fn native_windowmanager_desktop_overlay_is_distinct_from_dock_and_small_panels() {
         use super::*;
