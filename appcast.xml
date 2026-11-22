@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.36</title><pubDate>Sun, 22 Nov 2026 17:59:26 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.36 — Escenas de trabajo en el selector de plantillas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.37</title><pubDate>Sun, 22 Nov 2026 18:54:34 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.37 — Tarjetas gráficas para las escenas de trabajo.
 
-- Abre **Escenas de trabajo** desde el selector emergente o pulsando **S**. Elige una escena para abrir su revisión; las ventanas solo se mueven al pulsar **Aplicar escena**.
-- **Gestionar escenas…** abre la biblioteca para guardar o borrar escenas.
+- Las escenas aparecen encima de las plantillas, en la misma ventana, con su nombre y un esquema simplificado del reparto por monitor.
+- Solo se muestran las tarjetas que caben completas. **Ver todas…** abre la biblioteca. Elegir una tarjeta abre la revisión sin mover ventanas.
 
 English
 
-- Open **Work scenes** from the layout picker or press **S**. Choose a scene to review it; windows only move when you click **Apply scene**.
-- **Manage scenes…** opens the library to save or delete scenes.
+- Work scenes appear as cards above the layouts in the same window, with their names and simplified per-display previews.
+- Only cards that fit are shown. **View all…** opens the library. Choosing a card opens its review without moving windows.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.36/AMSpace-universal.zip" length="3256311" type="application/octet-stream" sparkle:version="91" sparkle:shortVersionString="0.9.36" sparkle:edSignature="PhMotDeeOYKdK4X+HB/xqb02rGqJw4f3Njl47Nv4Kkm5DRPj5Jr85hH6OOqRBsqZu3HqlhtZccf8MXYCQgnADA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: Y4xwzxvvUckt+yBDMTu9ScfSaII3p6hV3JZs9Enf1qwhAOg67/YWQ93QYmQqnsNRZXb+0HC0lVzPCyyeYgIgDg==
-length: 1887
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.37/AMSpace-universal.zip" length="3258168" type="application/octet-stream" sparkle:version="92" sparkle:shortVersionString="0.9.37" sparkle:edSignature="TocDx67AlLPAqiLzWbm1RqX2Uqcx/IVz5q3U1hVWvVFBkmQLOSBppcXQtKxF7ZlkyfgSusV4hTQOIUW5dfYwAg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: QHIUeDepWN5QY/Cr27nuRbHNwRgl4SYoltjZeVfyzYq4PgyUPVdnrbxaVVpnPxj75rSy8ETZkDGZ0pEj/DFvDA==
+length: 1954
 -->
