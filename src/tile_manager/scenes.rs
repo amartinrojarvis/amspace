@@ -393,17 +393,18 @@ impl Manager {
         }
         let mut touched = Vec::with_capacity(writes.len());
         for &(id, old, target, key) in &writes {
+            let target = ax::integral_frame(target);
             let w = &self.windows[&id];
-            let ok = live_frame(w, id, &areas).is_some_and(|current| near(current, old))
+            let ok = live_frame(w, id, &areas) == Some(old)
                 && spaces::visible_desktops().contains(&key)
-                && (near(old, target) || {
+                && (old == target || {
                     // AX may resize successfully before refusing the position.
                     touched.push((id, old, key));
                     ax::set_frame(w.element.0, target)
                 })
                 && ax::geometry(w.element.0).is_some_and(|(p, s)| {
                     let frame = NSRect::new(p, s);
-                    near(frame, target)
+                    frame == target
                         && spaces::window_space(id)
                             .and_then(|space| workspace_at_frame(space, frame, &areas))
                             == Some(key)

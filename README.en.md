@@ -255,7 +255,7 @@ In **Mosaic → Grid and layout…** you can enable snapping to a virtual grid. 
 
 In **Settings → Tiling → Work scenes…**, name the visible arrangement and click **Save current scene**, or press Return. Click a scene’s card in the layout picker to load it immediately using available tiled windows. **View all…** opens the library, where **Load** reapplies the selected scene and **Review** allows manual window assignment. Missing windows and disconnected displays are skipped.
 
-**Settings → Tiling → Open missing apps** is off by default. Enable it to get a single confirmation before opening installed apps that are not running. If you accept, AMSpace waits up to ten seconds for compatible windows, then loads the scene without a second confirmation. It does not reopen specific documents.
+**Settings → Tiling → Open missing apps** is on by default. AMSpace asks once before opening installed apps that are not running. You can disable the setting or load without opening them. If you accept, AMSpace waits up to ten seconds for compatible windows and loads the scene without a second confirmation. It does not reopen specific documents.
 
 The review lists tiled windows on visible desktops. Tab groups keep their members on the same display. If a destination has extra windows, none are evicted: float the extras and click **Review**. An application can refuse a size or a move; AMSpace checks the resulting geometry before reporting success.
 

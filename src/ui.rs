@@ -2785,7 +2785,7 @@ impl App {
                 open_missing,
                 target,
                 137,
-                crate::tile_manager::pref(defaults, scenes::OPEN_MISSING) == 1,
+                scenes::open_missing(defaults),
             );
             let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
             button(

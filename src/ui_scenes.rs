@@ -13,6 +13,10 @@ const SKIP_SLOT: isize = 1;
 const FIRST_WINDOW: isize = 2;
 pub(super) const OPEN_MISSING: &str = "tile.scenes.openMissing";
 
+pub(super) fn open_missing(defaults: Obj) -> bool {
+    crate::tile_manager::pref_or(defaults, OPEN_MISSING, 1) == 1
+}
+
 pub(super) struct Restore {
     entry: scene_library::Entry,
     origin: SceneReview,
@@ -555,7 +559,7 @@ impl App {
             let entry = scene_library::entry(defaults, id)
                 .ok_or_else(|| tr("Esta escena ya no está guardada. Elige otra.").to_owned())?;
             let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
-            if crate::tile_manager::pref(defaults, OPEN_MISSING) == 1 {
+            if open_missing(defaults) {
                 let apps: Vec<_> = stopped_apps(&review)
                     .filter_map(|id| Some((id.to_owned(), installed_app(id)?)))
                     .collect();
@@ -615,7 +619,7 @@ impl App {
     ) -> Result<(), String> {
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
         let review = self.scene_after_wait(defaults, &entry, origin)?;
-        if open && crate::tile_manager::pref(defaults, OPEN_MISSING) == 1 {
+        if open && open_missing(defaults) {
             let stopped: HashSet<_> = stopped_apps(&review).collect();
             let pending: Vec<_> = apps
                 .into_iter()
@@ -1053,7 +1057,7 @@ pub(crate) fn check_scene_fixture(
             std::mem::swap(&mut app.tile_manager, &mut manager);
             panel = app.scenes.take().unwrap();
             if app.scene_restore.is_some() {
-                return Err("Con la opción desactivada quedó una apertura pendiente.".into());
+                return Err("Una app no instalada generó una solicitud de apertura.".into());
             }
             for (ordinal, target) in expected.window_frames(area, 10.) {
                 let id = choices[ordinal as usize - 1].unwrap();
@@ -1090,14 +1094,13 @@ pub(crate) fn check_scene_fixture(
                 {
                     return Err("El fixture de lanzamiento debe estar instalado y cerrado.".into());
                 }
+                crate::tile_manager::save(defaults, OPEN_MISSING, 0);
                 app.restore_scene(&id);
                 if app.scene_restore.is_some() || stopped_apps(&review).next().is_none() {
-                    return Err(
-                        "La configuración por defecto inició la apertura de una app cerrada."
-                            .into(),
-                    );
+                    return Err("La opción desactivada solicitó abrir una app cerrada.".into());
                 }
-                crate::tile_manager::save(defaults, OPEN_MISSING, 1);
+                let _: () =
+                    msg_send![&prefs, removeObjectForKey:&*NSString::from_str(OPEN_MISSING)];
                 APP.with(|cell| *cell.borrow_mut() = Some(app));
                 let answer = |response: isize| {
                     with_app(|app| app.restore_scene(&id));
@@ -1137,14 +1140,16 @@ pub(crate) fn check_scene_fixture(
                 };
                 let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
                 std::mem::swap(&mut app.tile_manager, &mut manager);
-                crate::tile_manager::save(defaults, OPEN_MISSING, 0);
+                if !open_missing(defaults) {
+                    return Err("La apertura de apps no está habilitada por defecto.".into());
+                }
                 if !declined || !accepted || !opened {
                     return Err(
                         "El aviso nativo no respetó el rechazo o la apertura confirmada.".into(),
                     );
                 }
                 println!(
-                    "PASS: por defecto no abre; la opción pregunta; rechazar no abre; confirmar abre una sola app para tres puestos."
+                    "PASS: la opción desactivada no abre; por defecto pregunta; confirmar abre una sola app para tres puestos."
                 );
             }
 
@@ -1184,6 +1189,28 @@ pub(crate) fn check_scene_fixture(
             app.restore_scene(&saved_id);
             std::mem::swap(&mut app.tile_manager, &mut manager);
             panel = app.scenes.take().unwrap();
+            for (&id, &frame) in ids.iter().zip(&saved_frames) {
+                if geometry(id)? != frame {
+                    return Err("La escena no recuperó la distribución guardada.".into());
+                }
+            }
+            // Offsets inside the general layout tolerance must still be fixed.
+            let window = ax::window_for_id(fixture_pid, ids[0]).ok_or("Sin ventana AX")?;
+            let frame = saved_frames[0];
+            let drifted = rect(
+                frame.origin.x + 1.,
+                frame.origin.y + 1.,
+                frame.size.width - 2.,
+                frame.size.height - 2.,
+            );
+            if !ax::set_frame(window.0, drifted) || geometry(ids[0])? != drifted {
+                return Err("No se pudo preparar la deriva de posición y tamaño.".into());
+            }
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            app.restore_scene(&saved_id);
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
             for (&id, frame) in ids.iter().zip(saved_frames) {
                 let actual = geometry(id)?;
                 if actual != frame {
@@ -1193,7 +1220,7 @@ pub(crate) fn check_scene_fixture(
                 }
             }
             println!(
-                "PASS: guardar y recuperar restaura la posición de cada ventana de la misma app tras intercambiar sus puestos."
+                "PASS: la escena recupera posición y tamaño exactos, incluso con uno o dos puntos de deriva."
             );
             let settled = ids
                 .iter()

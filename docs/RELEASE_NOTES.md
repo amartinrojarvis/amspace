@@ -1,14 +1,12 @@
-AMSpace 0.9.41 — Escenas de trabajo en un clic.
+AMSpace 0.9.42 — Recuperación precisa de escenas.
 
-- Selecciona una escena para recolocar directamente las ventanas disponibles, sin pasar por la revisión. Si faltan ventanas, se omiten sus puestos.
-- **Ajustes → Mosaico → Abrir apps faltantes**, desactivado por defecto, permite confirmar la apertura de las apps instaladas que estén cerradas. La escena se aplica después sin pedir otra confirmación.
-- La biblioteca conserva **Revisar** para elegir ventanas manualmente. Las escenas no reabren documentos concretos.
+- Al cargar una escena, AMSpace restablece y verifica tanto la posición como el tamaño de las ventanas, incluso si se han desviado solo uno o dos puntos.
+- **Abrir apps faltantes** está activado por defecto. Si falta una app instalada, AMSpace pregunta antes de abrirla. Puedes desactivar el ajuste en **Ajustes → Mosaico**.
 
 English
 
-- Select a scene to rearrange the available windows immediately, without a review. Missing windows are skipped.
-- **Settings → Tiling → Open missing apps** is off by default. Enable it to confirm before launching installed apps that are not running. The scene then loads without a second confirmation.
-- **Review** remains available in the library for manual assignment. Scenes do not reopen specific documents.
+- Loading a scene restores and verifies both window position and size, even when they differ by just one or two points.
+- **Open missing apps** is on by default. AMSpace asks before launching missing installed apps. You can turn it off in **Settings → Tiling**.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

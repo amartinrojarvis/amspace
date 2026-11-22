@@ -258,9 +258,9 @@ En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rej
 
 Para guardar una escena, abre **Ajustes → Mosaico → Escenas de trabajo…**, escribe un nombre y pulsa **Guardar escena actual** (o **Intro**). Guarda la distribución visible por monitor y aplicación, incluidas las divisiones ajustadas por la rejilla.
 
-Para cargarla, pulsa su tarjeta en el selector de plantillas, o usa **S** para seleccionar la primera escena y **Intro** para cargarla. **Ver todas…** abre la biblioteca: elige una escena o pulsa **Cargar** para volver a aplicar la seleccionada. Por defecto no se abren apps ni aparece una confirmación. Si falta una ventana, su puesto se contrae; si falta una pantalla, sus ventanas no se redirigen a otra.
+Para cargarla, pulsa su tarjeta en el selector de plantillas, o usa **S** para seleccionar la primera escena y **Intro** para cargarla. **Ver todas…** abre la biblioteca: elige una escena o pulsa **Cargar** para volver a aplicar la seleccionada. Si no faltan apps que se puedan abrir, no aparece ninguna confirmación. Si falta una ventana, su puesto se contrae; si falta una pantalla, sus ventanas no se redirigen a otra.
 
-**Ajustes → Mosaico → Abrir apps faltantes** está desactivado por defecto. Si lo activas, AMSpace pregunta una vez antes de iniciar apps instaladas que estén cerradas. Puedes cargar sin abrirlas. Si aceptas, espera hasta diez segundos a que aparezcan ventanas compatibles y carga la escena sin otro clic. No vuelve a abrir documentos concretos.
+**Ajustes → Mosaico → Abrir apps faltantes** está activado por defecto. AMSpace pregunta una vez antes de iniciar apps instaladas que estén cerradas. Puedes desactivar el ajuste o cargar sin abrirlas. Si aceptas, espera hasta diez segundos a que aparezcan ventanas compatibles y carga la escena sin otro clic. No vuelve a abrir documentos concretos.
 
 Mientras AMSpace siga abierto, recupera las ventanas originales que continúen disponibles; si no puede identificarlas, usa las ventanas en el orden del mosaico. **Revisar** permite elegir manualmente las ventanas. No se expulsan ventanas ajenas a la escena: si sobran en un mosaico de destino, déjalas flotantes y vuelve a cargar. Si macOS rechaza el tamaño o traslado, AMSpace no da la aplicación por hecha.
 
