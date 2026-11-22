@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.31</title><pubDate>Fri, 20 Nov 2026 06:31:40 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.31 — Borde, pestañas e indicador más ligeros.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.32</title><pubDate>Sun, 22 Nov 2026 16:50:41 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.32 — Escenas de trabajo y superposiciones rediseñadas.
 
-- El borde evita consultas al sistema para ventanas que no pueden taparlo. El mosaico reutiliza los botones de pestaña cuando no cambian y evita copiar la distribución. El indicador deja de preparar el texto de Ajustes antes de abrir esta vista.
-- Las lecturas de posición y tamaño de las ventanas se agrupan para reducir las llamadas de Accesibilidad. Se conserva la frecuencia de actualización y el gesto de retorno de flotantes al mosaico.
+- En Ajustes → Mosaico → Escenas de trabajo, guarda con nombre el reparto visible por monitor y aplicación. Revisa qué ventana ocupa cada puesto antes de aplicar. Las pantallas desconectadas se omiten y no se abren aplicaciones.
+- El selector de plantillas muestra atajos y distribuciones que no caben. Las zonas de arrastre distinguen mejor apilar como pestaña, intercambiar, hacer flotante y volver al mosaico.
+- Mejoras de estabilidad: dormir y despertar ya no dejan que una entrega antigua vuelva a suspender la interfaz; el borde recupera la geometría si falla su suscripción al sistema y Ajustes evita recalcular el mosaico mientras está cerrado.
 
 English
 
-- The active border skips system queries for windows that cannot cover it. Tiling reuses unchanged tab controls without copying the layout. The menu bar indicator skips preparing Settings text until the view is opened.
-- Window position and size reads are batched to reduce Accessibility calls. Update frequency and the gesture for returning floating windows to tiling are unchanged.
+- In Settings → Tiling → Work scenes, save a named arrangement by display and application. Review which window fills each slot before applying. Disconnected displays are skipped and apps are not launched.
+- The layout picker shows keyboard shortcuts and layouts that do not fit. Drag overlays better distinguish stacking, swapping, floating and returning to tiling.
+- Stability improvements: stale sleep callbacks no longer suspend the interface after wake; the border falls back to window geometry if its system subscription fails, and closed Settings no longer recomputes tiling controls.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.31/AMSpace-universal.zip" length="3179510" type="application/octet-stream" sparkle:version="86" sparkle:shortVersionString="0.9.31" sparkle:edSignature="KgPWZ/iSc4Wxaozm9vdSjmildvd3UqIB5GE2lTEl0/qLZsJ81ju+DDG4IMs65PPt3O6xCZ7Vc/ANSbypuxzmCA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: 4cphsvGz7p9L8ZvfKlVdPZmYk4NmTLkQhvgzyemAx39TME80o8sjsh38eb3pfVt4mLkJwRbnV4qfOPXhieOVBg==
-length: 2252
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.32/AMSpace-universal.zip" length="3241052" type="application/octet-stream" sparkle:version="87" sparkle:shortVersionString="0.9.32" sparkle:edSignature="5jGQ7KEg0XV/wdeZiy6QQLdO1gozFHtE5lgVPD1QLDr9elU1HqsfvtPWqmvPIWAx3NMIHw/nEqySG7mI3b7TAA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: rLn1vu7Z6685ecQU/56yELAn2K4+qNrneO8m4A4rorqYSXxcXxWRl/Lxb2YZl6SaechN0/lnXn047lhm4RkvBQ==
+length: 2686
 -->
