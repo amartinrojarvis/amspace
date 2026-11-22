@@ -2,6 +2,8 @@
 
 - `--check-work-scenes` mostró dos tarjetas en la misma ventana que las plantillas, con esquemas de uno y dos monitores. El botón AppKit de «Estudio» abrió su revisión y las tres ventanas conservaron su geometría hasta aplicar explícitamente. La captura verificó la composición en Apple Silicon; no se comprobó el teclado físico.
 - `scripts/check.sh`: 296 pruebas correctas y nueve ignoradas. Bundle universal arm64/x86_64, sin ejecución en Intel.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45057622456) para `41ca28c`. Los cinco archivos de [v0.9.37](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.37) se descargaron sin autenticación y coincidieron con los preparados. Se montó el DMG público en solo lectura y se comprobaron la guía, el enlace a Aplicaciones, los archivos de disposición y la firma del bundle. El ZIP inmutable (`7bb1127`) tiene SHA-256 `7ac4d115556ff2e5d81656468fbf531ca0a600a21061ac220ca9a22dcdfbbeb2`.
+- El catálogo de `43c627e` devolvió los bytes firmados tanto sin compresión como con las cabeceras de Sparkle (gzip). No se probó instalar desde Sparkle ni una primera instalación en otra cuenta; no se sustituyó la instalación habitual.
 
 ## 0.9.36/build 91 — Escenas de trabajo en el selector de plantillas
 
