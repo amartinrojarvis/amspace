@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.38</title><pubDate>Sun, 22 Nov 2026 19:06:21 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.38 — Aplica escenas aunque falten ventanas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.39</title><pubDate>Sun, 22 Nov 2026 19:19:07 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.39 — Guardado y recuperación más fieles de las escenas de trabajo.
 
-- **Aplicar escena** recoloca las ventanas asignadas aunque no estén abiertas todas las de la escena. Los puestos sin ventana se contraen para aprovechar el espacio.
-- **Omitir puesto** permite dejar una posición sin asignar. La revisión sigue mostrando las ventanas en mosaico de los escritorios visibles.
+- Las escenas guardan las divisiones ajustadas por la rejilla. Una escena centrada parcial conserva la proporción principal si el espacio lo permite.
+- Mientras AMSpace siga abierto, la revisión preselecciona las ventanas originales que sigan disponibles. Si hay varias candidatas y no puede distinguirlas, pide elegir una u omitir el puesto.
+- Si una escena antigua no refleja tu distribución, guárdala de nuevo.
 
 English
 
-- **Apply scene** moves assigned windows even when some are missing. Unfilled slots collapse so the other windows use the available space.
-- **Skip slot** lets you leave a position unassigned. Reviews still show tiled windows from visible desktops.
+- Scenes save grid-adjusted splits. Partial centered scenes preserve the main proportion when space permits.
+- While AMSpace stays open, review preselects the original windows that are still available. If the match is ambiguous, choose a window or explicitly skip the slot.
+- If an older scene does not match your layout, save it again.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.38/AMSpace-universal.zip" length="3263436" type="application/octet-stream" sparkle:version="93" sparkle:shortVersionString="0.9.38" sparkle:edSignature="GJjYpoOjbYFn8NT1ay2vbqVl8nZ7gmptv9bCPhvN11HNLECHJqDG1eUMPTOxY1BML61MZs7rBhrD+RpQtu+BBw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: mlr7HqhkUnV1fyGCQ9QyR4vj48Qb9pBwVhruByOnPgIHW1J6uCYW0bEA5zuOriskvoeCbEyL/g/VnmO7NFdvBQ==
-length: 1975
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.39/AMSpace-universal.zip" length="3272860" type="application/octet-stream" sparkle:version="94" sparkle:shortVersionString="0.9.39" sparkle:edSignature="XIXaHVzS1vXC9xfEpaJ/pAgDp7eGU7hoplkIzSIQ3V56HajzcxTD5HQMWks+DRPBFWbWuVIYg7FZOueVzY9vCw=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: D0g6bH/4jwlYQAfyo2KfUochO5QnvHarALx5RCJTfLK6NmqKZJJav3dnTrlJQ05DkJJGWjXN/69TK5ZER1gTCg==
+length: 2196
 -->
