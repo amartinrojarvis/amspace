@@ -1,10 +1,12 @@
-## Escenas de trabajo y superposiciones — sin publicar
+## 0.9.32/build 87 — escenas de trabajo y superposiciones
 
 - `--check-work-scenes`, en el bundle sobre arm64: tres ventanas AX desechables del mismo proceso. Revisar y rechazar una asignación duplicada dejaron intactos sus tres frames. Tras elegir una permutación, cada ID ocupó el rectángulo de su puesto (tolerancia inferior a 3 puntos por componente). Se omitieron tres puestos de un UUID ausente simulado. Suite de preferencias aislada, sin iniciar el mosaico global.
 - `--check-tab-controls`: las cuatro combinaciones de flotante/mosaico y reposo/activo conservaron el mismo panel pasivo; cancelar lo ocultó. Se renderizaron las zonas de pestaña e intercambio y la galería con 72 plantillas; la última tarjeta seguía siendo accesible sin reducir su tamaño. El botón de escenas de Mosaico abrió el panel con **Aplicar** deshabilitado sin una revisión válida. `--check-localizations -app.language en` pasó los cuatro tamaños de Ajustes.
 - `scripts/check.sh`, en copia aislada sin la edición preexistente de `src/tiling.rs`: formato, Clippy, 294 pruebas correctas, nueve ignoradas y plist válido. Bundle universal arm64/x86_64. No se probó en hardware Intel, no se desconectó físicamente un monitor ni se comprobó una sesión de varios días con las escenas.
+- Publicada [v0.9.32](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.32) desde `278856d`, con [CI correcta](https://github.com/amartinrojarvis/amspace/actions/runs/45046119126). La prueba de escenas pasó también en el bundle exacto de publicación. Los cinco archivos públicos coinciden con los preparados localmente. El DMG público montado en solo lectura contenía la guía, el fondo, la disposición de Finder, el enlace a `/Applications` y el mismo ejecutable universal; su bundle pasó `codesign`.
+- El ZIP inmutable de `updates/0.9.32/` (`38462e0`) coincide con SHA-256 `d4ba04eefdf581228fce7818b449184f4011028156b13e3a42f243f29a2f7fb5`. El catálogo anunciado en `ff72ce8` devolvió los bytes firmados tanto sin compresión como con las cabeceras de Sparkle (gzip). No se sustituyó la app instalada ni se probó la instalación desde el cliente de actualización.
 
-## Sesiones largas — cambios sin publicar
+## 0.9.32/build 87 — sesiones largas
 
 - En la instancia que ya llevaba más de 32 horas abierta, `scripts/benchmark.py` midió 30,78 s: CPU media del 3,411 % de un núcleo y RSS entre 56,05 y 56,06 MiB. Muestra anterior a estos cambios, sin controlar la actividad del escritorio. No demuestra ni descarta una fuga a lo largo de días.
 - Sobre la misma instancia, `leaks --forkCorpse --noContent --nostacks` informó de **0 bloques perdidos**, huella física de 52,5 MiB y máximo de 60,0 MiB. No se recogió contenido de las asignaciones. `leaks` no descarta un caché que crece pero sigue referenciado.
