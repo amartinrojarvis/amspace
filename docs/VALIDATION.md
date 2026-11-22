@@ -1,3 +1,11 @@
+## 0.9.41/build 96 — Carga rápida de escenas de trabajo
+
+- `--check-work-scenes` guardó mediante la acción del campo nativo y recuperó exactamente los marcos AX de tres ventanas tras permutarlas. La tarjeta aplicó con un clic, sin abrir la revisión; **Cargar** omitió un puesto ausente y conservó la distribución parcial. La revisión manual no movió ventanas y rechazó un ID duplicado. El diagnóstico confirmó guardado y revisión durante la reentrada, sin aplicar hasta que termine.
+- Con una app desechable cerrada, el diagnóstico comprobó que por defecto no se abre y que el aviso nativo solo abre la app al aceptar, una vez para tres puestos. No arrancó el mosaico global ni verificó la admisión de las ventanas de esa app. `--check-localizations` recorrió cuatro tamaños de Ajustes y se verificó visualmente **Abrir apps faltantes** desactivado.
+- `scripts/check.sh`: formato, Clippy, 298 pruebas correctas (nueve ignoradas) y plist. Bundle con `arm64` y `x86_64`; la prueba nativa se ejecutó en Apple Silicon, sin mover ventanas entre monitores ni ejecutar en Intel. [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45063403693) para `52dc16b`.
+- Los cinco archivos de [v0.9.41](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.41) se descargaron sin autenticación y coincidieron con los preparados. El DMG se montó en solo lectura: se comprobaron guía, archivos de disposición, enlace a Aplicaciones, firma y build 96.
+- El ZIP inmutable (`dcb1252`) devolvió el SHA-256 `4af54b734a0e5b48899a9789048d4d34d76ac66d132823f1617d6cc304b18ce9`. El catálogo de `4f23754` sirvió los bytes Ed25519 verificados tanto con `identity` como con las cabeceras de Sparkle (`gzip`). No se sustituyó la instalación habitual ni se probó instalar desde Sparkle o hacer una primera instalación desde otra cuenta.
+
 ## 0.9.40/build 95 — Apertura de aplicaciones de una escena
 
 - `--check-work-scenes` pulsó **Abrir apps que faltan** en una escena con tres puestos de una misma app desechable cerrada. Launch Services confirmó una única solicitud exitosa. El escenario no arranca el mosaico global: valida la apertura, no la admisión automática de las ventanas de esa app ni sus documentos.
