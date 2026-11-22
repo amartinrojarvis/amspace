@@ -2,6 +2,8 @@
 
 - `--check-work-scenes` habilitó **Aplicar escena** con tres ventanas AppKit para cuatro puestos. Accesibilidad confirmó que las tres se recolocaron en el reparto asimétrico y que el puesto ausente se contrajo. También se mantuvieron el rechazo de duplicados, la omisión de una pantalla desconectada y el bloqueo durante la reentrada.
 - `scripts/check.sh`: formato, Clippy, plist y 296 pruebas correctas (nueve ignoradas). Bundle universal arm64/x86_64; el diagnóstico se ejecutó en Apple Silicon, sin probar Intel ni traslados físicos entre monitores. Comprobaciones en una copia sin cambios ajenos ni sustitución de la app instalada.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45058740469) para `63175b8`. Los cinco archivos de [v0.9.38](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.38) se descargaron sin autenticación y coincidieron con los preparados. Se montó el DMG público en solo lectura y se comprobaron la guía, el enlace a Aplicaciones, los archivos de disposición, el build 93 y la firma del bundle. El ZIP inmutable (`b0d3e19`) tiene SHA-256 `93009783badc5def4b50f4fccf594a8a3d5d00d2842ab2abad867125e118961d`.
+- El catálogo de `add4fb4` devolvió los bytes firmados tanto sin compresión como al solicitarlo con las cabeceras de Sparkle. No se probó instalar desde Sparkle ni una primera instalación en otra cuenta.
 
 ## 0.9.37/build 92 — Selector gráfico de escenas de trabajo
 
