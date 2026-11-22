@@ -2,6 +2,8 @@
 
 - `--check-work-scenes` envió la acción AppKit del elemento «Estudio», segundo de dos escenas, desde el menú de la galería. El selector se cerró y abrió la revisión de esa escena por UUID. Las tres ventanas conservaron su geometría hasta la aplicación explícita. Se comprobó visualmente el menú en la cabecera; el diagnóstico no simula la pulsación física de **S**.
 - `scripts/check.sh`: 296 pruebas correctas, nueve ignoradas. Bundle universal arm64/x86_64; diagnóstico ejecutado en Apple Silicon.
+- [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45052399453) para `11d55b1`. Se descargaron los cinco archivos de [v0.9.36](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.36) sin autenticación y coincidieron con los preparados. Se montó el DMG público en solo lectura y se verificaron los archivos de disposición, la guía, el enlace a Aplicaciones y la firma del bundle. El ZIP inmutable (`d37d743`) tiene SHA-256 `bcdff56fe84d2b786f338237cc3bd2793631f9bebac356f5fcc485ebc342ca18`.
+- El catálogo de `77ab432` devolvió los bytes firmados sin compresión y con las cabeceras de Sparkle (gzip). No se probó la instalación desde Sparkle ni una primera instalación en otra cuenta; no se sustituyó la instalación habitual.
 
 ## 0.9.35/build 90 — Guardado de escenas durante la reentrada
 
