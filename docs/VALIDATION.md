@@ -2,6 +2,9 @@
 
 - `--check-work-scenes` usa tres ventanas AppKit desechables y preferencias aisladas. Tras simular una notificación de pantalla sin cambiar el Space físico, guardar y revisar funcionan durante la reentrada; aplicar sigue bloqueado y no cambia ningún marco.
 - La simulación no reproduce la animación de un cambio físico de Space. No se sustituyó la aplicación instalada.
+- `scripts/check.sh` en `eb1fb23`: formato, Clippy, plist, 296 pruebas correctas y nueve ignoradas. Bundle universal arm64/x86_64; diagnóstico AppKit en Apple Silicon, sin ejecución en Intel. [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/45050750705).
+- Las descargas públicas de [v0.9.35](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.35) coinciden byte por byte con los archivos preparados y firmados. El DMG se montó en solo lectura y se comprobaron guía, enlace a Aplicaciones, archivos de disposición y firma del bundle. El ZIP inmutable (`bcbd80f`) tiene SHA-256 `a3e4320d5408910704f6abd3fdf1aa5d4d3295ac606d0b091678c799409b03e0`. No se probó la instalación desde Sparkle ni una primera instalación en otra cuenta.
+- El catálogo de `c55b666` devolvió los bytes firmados tanto sin compresión como con las cabeceras de Sparkle (gzip).
 
 ## 0.9.34/build 89 — Mostrar escritorio con monitores de distinta altura
 
