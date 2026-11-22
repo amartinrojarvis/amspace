@@ -31,8 +31,8 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Escenas de trabajo…" => "Work scenes…",
         "Escenas de trabajo" => "Work scenes",
         "Plantillas" => "Layouts",
-        "Gestionar escenas…" => "Manage scenes…",
-        "S: abrir el menú de escenas" => "S: open the scenes menu",
+        "Ver todas…" => "View all…",
+        "Intro: revisar escena · Esc: cancelar" => "Return: review scene · Esc: cancel",
         "Esta escena ya no está guardada. Elige otra." => {
             "This scene is no longer saved. Choose another."
         }

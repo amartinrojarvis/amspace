@@ -1,3 +1,8 @@
+## 0.9.37/build 92 — Selector gráfico de escenas de trabajo
+
+- `--check-work-scenes` mostró dos tarjetas en la misma ventana que las plantillas, con esquemas de uno y dos monitores. El botón AppKit de «Estudio» abrió su revisión y las tres ventanas conservaron su geometría hasta aplicar explícitamente. La captura verificó la composición en Apple Silicon; no se comprobó el teclado físico.
+- `scripts/check.sh`: 296 pruebas correctas y nueve ignoradas. Bundle universal arm64/x86_64, sin ejecución en Intel.
+
 ## 0.9.36/build 91 — Escenas de trabajo en el selector de plantillas
 
 - `--check-work-scenes` envió la acción AppKit del elemento «Estudio», segundo de dos escenas, desde el menú de la galería. El selector se cerró y abrió la revisión de esa escena por UUID. Las tres ventanas conservaron su geometría hasta la aplicación explícita. Se comprobó visualmente el menú en la cabecera; el diagnóstico no simula la pulsación física de **S**.

@@ -459,21 +459,21 @@ pub(crate) fn check_scene_fixture(
             let gallery: Option<Retained<AnyObject>> = msg_send![native_app, keyWindow];
             let gallery = gallery.ok_or("El selector no recibió su ventana nativa.")?;
             let root: Obj = msg_send![&gallery, contentView];
-            let popup: Obj = msg_send![root, viewWithTag:crate::tile_picker::SCENES_MENU_TAG];
-            let menu: Obj = msg_send![popup, menu];
-            let item: Option<Retained<AnyObject>> =
-                msg_send![menu, itemWithTitle:ns_string!("Estudio")];
-            let item = item.ok_or("Falta la escena Estudio en el menú de plantillas.")?;
+            let tag = (crate::tiling::Layout::ALL.len() + 1) as isize;
+            let card: Option<Retained<AnyObject>> = msg_send![root, viewWithTag:tag];
+            let card = card.ok_or("Falta la tarjeta gráfica «Estudio».")?;
+            let caption: Retained<NSString> = msg_send![&card, accessibilityLabel];
+            if !caption.to_string().contains("Estudio") {
+                return Err("La tarjeta de la escena no tiene su nombre accesible.".into());
+            }
             super::diagnostics::capture_window(&gallery, ".cache/work-scenes-picker.png")?;
             std::mem::swap(&mut app.tile_manager, &mut manager);
             APP.with(|cell| *cell.borrow_mut() = Some(app));
-            let action: Sel = msg_send![&item, action];
-            let recipient: Obj = msg_send![&item, target];
-            let sent: bool = msg_send![native_app, sendAction:action, to:recipient, from:&*item];
+            let _: () = msg_send![&card, performClick:ptr::null::<AnyObject>()];
             let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
             std::mem::swap(&mut app.tile_manager, &mut manager);
             let visible: bool = msg_send![&gallery, isVisible];
-            if !sent || visible || app.layout_picker.is_some() {
+            if visible || app.layout_picker.is_some() {
                 return Err("Elegir una escena no cerró el selector de plantillas.".into());
             }
             panel = app
@@ -487,7 +487,7 @@ pub(crate) fn check_scene_fixture(
             {
                 return Err("La galería no abrió la revisión de la escena elegida.".into());
             }
-            println!("PASS: el menú de plantillas abre la revisión de la escena elegida.");
+            println!("PASS: la tarjeta gráfica abre la revisión de la escena elegida.");
             if panel.choices().is_some() {
                 return Err("Se eligieron automáticamente ventanas ambiguas.".into());
             }

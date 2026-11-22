@@ -13,18 +13,12 @@ use objc2::{
 use objc2_foundation::{NSRect, NSString};
 use std::{ptr, sync::OnceLock};
 
-pub(crate) const SCENES_MENU_TAG: isize = 137;
-
-pub(crate) enum SceneChoice {
-    Review(String),
-    Manage,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     Select(usize),
     Move(isize),
     Confirm,
+    FirstScene,
     Cancel,
 }
 
@@ -33,6 +27,7 @@ pub enum Input {
 pub enum Selection {
     Layout(Layout),
     Custom(String),
+    Scene(String),
 }
 /// Mirror of the acceptance test used by `apply_custom_distribution`.
 fn fits_area(desktop: &Desktop, area: NSRect) -> bool {
@@ -79,6 +74,7 @@ pub fn key_input(key: u16, columns: usize, shift: bool) -> Option<Input> {
         28 => Input::Select(7),
         25 => Input::Select(8),
         29 => Input::Select(9),
+        1 => Input::FirstScene,
         123 => Input::Move(-1),
         124 => Input::Move(1),
         125 => Input::Move(columns as isize),
@@ -97,7 +93,20 @@ struct Gallery {
     columns: usize,
 }
 
+const SCENE_HEIGHT: f64 = 96.;
+const SCENE_WIDTH: f64 = 160.;
+const SCENE_GAP: f64 = 10.;
+
+fn scene_capacity(width: f64) -> usize {
+    ((width + SCENE_GAP) / (SCENE_WIDTH + SCENE_GAP)) as usize
+}
+
+#[cfg(test)]
 fn gallery_geometry(area: NSRect, count: usize) -> Gallery {
+    gallery_with_scenes(area, count, false)
+}
+
+fn gallery_with_scenes(area: NSRect, count: usize, scenes: bool) -> Gallery {
     let portrait = area.size.height > area.size.width;
     let columns = if portrait { 2 } else { 4 };
     let rows = count.div_ceil(columns);
@@ -110,7 +119,8 @@ fn gallery_geometry(area: NSRect, count: usize) -> Gallery {
     // Keep a gutter even when macOS uses non-overlay scrollbars.
     let width = natural_width * scale + 16.;
     let content_height = rows as f64 * ch + rows.saturating_sub(1) as f64 * gap;
-    let height = (content_height + 130.).min(area.size.height - 32.);
+    let scene_height = if scenes { SCENE_HEIGHT } else { 0. };
+    let height = (content_height + 130. + scene_height).min(area.size.height - 32.);
     let frame = rect(
         (area.size.width - width) / 2.,
         (area.size.height - height) / 2.,
@@ -121,7 +131,7 @@ fn gallery_geometry(area: NSRect, count: usize) -> Gallery {
         frame.origin.x + margin,
         frame.origin.y + 48.,
         width - 2. * margin,
-        height - 130.,
+        height - 130. - scene_height,
     );
     let document = rect(0., 0., viewport.size.width, content_height);
     let cards = (0..count)
@@ -270,14 +280,7 @@ extern "C-unwind" fn send_event(panel: Obj, _: Sel, event: Obj) {
         let flags: usize = msg_send![event, modifierFlags];
         if kind == 10 && flags & ((1 << 18) | (1 << 19) | (1 << 20)) == 0 {
             let key: u16 = msg_send![event, keyCode];
-            if key == 1 {
-                // Let AppKit track the menu outside the mutable App borrow.
-                let root: Obj = msg_send![panel, contentView];
-                let scenes: Obj = msg_send![root, viewWithTag:SCENES_MENU_TAG];
-                let _: () = msg_send![scenes, performClick:ptr::null::<AnyObject>()];
-            } else {
-                crate::ui::layout_picker_key(key, flags & (1 << 17) != 0);
-            }
+            crate::ui::layout_picker_key(key, flags & (1 << 17) != 0);
         } else {
             let _: () = msg_send![super(panel, class!(NSPanel)), sendEvent:event];
         }
@@ -334,45 +337,72 @@ unsafe fn choice(
     }
 }
 
-unsafe fn scene_menu(parent: Obj, frame: NSRect, target: Obj, defaults: Obj) -> Obj {
-    use crate::i18n::tr;
+unsafe fn scene_thumbnail(root: Obj, card: NSRect, entry: &crate::scene_library::Entry) {
     unsafe {
-        let button: Allocated<AnyObject> = msg_send![class!(NSPopUpButton), alloc];
-        let button: Retained<AnyObject> = msg_send![button, initWithFrame:frame, pullsDown:true];
-        let title = NSString::from_str(tr("Escenas de trabajo"));
-        let _: () = msg_send![&button, setTag:SCENES_MENU_TAG];
-        let _: () = msg_send![&button, setAccessibilityLabel:&*title];
-        let hint = NSString::from_str(tr("S: abrir el menú de escenas"));
-        let _: () = msg_send![&button, setToolTip:&*hint];
-        let _: () = msg_send![&button, addItemWithTitle:&*title];
-        let menu: Obj = msg_send![&button, menu];
-        let add = |title: &str, id: Option<&str>| {
-            let item: Retained<AnyObject> = msg_send![class!(NSMenuItem), new];
-            let _: () = msg_send![&item, setTitle:&*NSString::from_str(title)];
-            let _: () = msg_send![&item, setTarget:target];
-            let _: () = msg_send![&item, setAction:sel!(layoutSceneChoice:)];
-            if let Some(id) = id {
-                let _: () = msg_send![&item, setRepresentedObject:&*NSString::from_str(id)];
+        let count = entry.displays.len();
+        let shown = count.min(3);
+        let monitor_width = 39.;
+        let gap = 5.;
+        let extra = if count > shown { 22. } else { 0. };
+        let width = shown as f64 * (monitor_width + gap) - gap + extra;
+        let x = card.origin.x + (card.size.width - width) / 2.;
+        let y = card.origin.y + 32.;
+        for (index, display) in entry.displays.iter().take(shown).enumerate() {
+            let monitor = rect(
+                x + index as f64 * (monitor_width + gap),
+                y,
+                monitor_width,
+                26.,
+            );
+            plate(root, monitor, 0.9, false, 4.);
+            if let Some(desktop) = crate::scene_library::ordinal_desktop(display) {
+                let art = rect(0., 0., 1200., 800.);
+                let sx = (monitor_width - 4.) / art.size.width;
+                let sy = 22. / art.size.height;
+                for (_, slot) in desktop.frames(art, 14.) {
+                    plate(
+                        root,
+                        rect(
+                            monitor.origin.x + 2. + slot.origin.x * sx,
+                            monitor.origin.y + 24. - (slot.origin.y + slot.size.height) * sy,
+                            slot.size.width * sx,
+                            slot.size.height * sy,
+                        ),
+                        0.64,
+                        true,
+                        1.5,
+                    );
+                }
             }
-            let _: () = msg_send![menu, addItem:&*item];
-        };
-        let entries = crate::scene_library::entries(defaults);
-        if !entries.is_empty() {
-            for entry in &entries {
-                add(&entry.name, Some(&entry.id));
-            }
-            let separator: Retained<AnyObject> = msg_send![class!(NSMenuItem), separatorItem];
-            let _: () = msg_send![menu, addItem:&*separator];
         }
-        add(tr("Gestionar escenas…"), None);
-        let _: () = msg_send![parent, addSubview:&*button];
-        menu
+        if extra > 0. {
+            light_label(
+                root,
+                rect(x + width - extra, y + 2., extra, 20.),
+                &format!("+{}", count - shown),
+                10.,
+                true,
+            );
+        }
+        let caption = light_label(
+            root,
+            rect(
+                card.origin.x + 8.,
+                card.origin.y + 5.,
+                card.size.width - 16.,
+                22.,
+            ),
+            &entry.name,
+            12.,
+            true,
+        );
+        let _: () = msg_send![caption, setLineBreakMode:4usize];
     }
 }
 
 pub struct Picker {
     panel: Retained<AnyObject>,
-    scene_menu: Obj,
+    scenes: Vec<String>,
     pub context: PickerContext,
     pub selected: usize,
     pub columns: usize,
@@ -425,6 +455,7 @@ impl Picker {
             );
             let _: () = msg_send![root,addSubview:&*ghost];
             let custom = crate::custom_templates::entries(defaults);
+            let scene_entries = crate::scene_library::entries(defaults);
             let total = Layout::ALL.len() + custom.len();
             let Gallery {
                 frame: gallery,
@@ -432,28 +463,16 @@ impl Picker {
                 document,
                 cards,
                 columns,
-            } = gallery_geometry(area, total);
+            } = gallery_with_scenes(area, total, !scene_entries.is_empty());
             let backdrop = plate(root, gallery, 0.96, false, 22.);
             crate::native::hud_surface(backdrop, false, 0.95);
-            let header_width = gallery.size.width - 48.;
-            let menu_width = (header_width * 0.43).min(204.);
-            let scene_menu = scene_menu(
-                root,
-                rect(
-                    gallery.origin.x + gallery.size.width - 24. - menu_width,
-                    gallery.origin.y + gallery.size.height - 43.,
-                    menu_width,
-                    28.,
-                ),
-                target,
-                defaults,
-            );
+            let scene_count = scene_capacity(viewport.size.width).min(scene_entries.len());
             light_label(
                 root,
                 rect(
                     gallery.origin.x + 24.,
                     gallery.origin.y + gallery.size.height - 40.,
-                    (header_width - menu_width - 12.).max(1.),
+                    gallery.size.width - 48.,
                     26.,
                 ),
                 crate::i18n::tr("Plantillas"),
@@ -591,6 +610,59 @@ impl Picker {
                     fits,
                 ));
             }
+            let mut scenes = Vec::with_capacity(scene_count);
+            if !scene_entries.is_empty() {
+                let root: Obj = msg_send![&panel, contentView];
+                let y = viewport.origin.y + viewport.size.height;
+                let title = crate::i18n::tr("Escenas de trabajo");
+                light_label(
+                    root,
+                    rect(viewport.origin.x, y + 67., viewport.size.width - 112., 23.),
+                    title,
+                    14.,
+                    true,
+                );
+                let library = crate::i18n::tr("Ver todas…");
+                let link = rect(
+                    viewport.origin.x + viewport.size.width - 104.,
+                    y + 67.,
+                    96.,
+                    23.,
+                );
+                plate(root, link, 0.2, true, 6.);
+                let label = light_label(root, link, library, 11., true);
+                let _: () = msg_send![label, setAlignment:1isize];
+                choice(
+                    root,
+                    link,
+                    target,
+                    -2,
+                    crate::i18n::tr("Escenas de trabajo…"),
+                    true,
+                );
+                for (offset, entry) in scene_entries.into_iter().take(scene_count).enumerate() {
+                    let card = rect(
+                        viewport.origin.x + offset as f64 * (SCENE_WIDTH + SCENE_GAP),
+                        y + 4.,
+                        SCENE_WIDTH,
+                        61.,
+                    );
+                    card_views.push(plate(root, card, 0.10, true, 9.));
+                    scene_thumbnail(root, card, &entry);
+                    let name = format!("{title} · {}", entry.name);
+                    buttons.push(choice(
+                        root,
+                        card,
+                        target,
+                        (total + offset) as isize,
+                        &name,
+                        true,
+                    ));
+                    titles.push(name);
+                    valid.push(true);
+                    scenes.push(entry.id);
+                }
+            }
             let root: Obj = msg_send![&panel, contentView];
             let status = light_label(
                 root,
@@ -607,7 +679,7 @@ impl Picker {
             let selected = context.desktop.layout.selection_index() as usize;
             let mut picker = Self {
                 panel,
-                scene_menu,
+                scenes,
                 context,
                 selected,
                 columns,
@@ -628,17 +700,18 @@ impl Picker {
             let _: () = msg_send![&self.panel,makeKeyAndOrderFront:ptr::null::<AnyObject>()];
         }
     }
-    pub(crate) fn scene_choice(&self, item: Obj) -> Option<SceneChoice> {
-        unsafe {
-            let menu: Obj = msg_send![item, menu];
-            if menu != self.scene_menu {
-                return None;
-            }
-            let id: Option<Retained<NSString>> = msg_send![item, representedObject];
-            Some(id.map_or(SceneChoice::Manage, |id| {
-                SceneChoice::Review(id.to_string())
-            }))
+    pub(crate) fn select_number(&mut self, index: usize) {
+        if index < self.template_count() {
+            self.select(index);
         }
+    }
+
+    pub(crate) fn select_first_scene(&mut self) {
+        self.select(self.template_count());
+    }
+
+    fn template_count(&self) -> usize {
+        Layout::ALL.len() + self.custom.len()
     }
     pub fn select(&mut self, index: usize) {
         if index < self.valid.len() && self.valid[index] && index != self.selected {
@@ -664,6 +737,9 @@ impl Picker {
         if let Some(layout) = Layout::ALL.get(self.selected) {
             return Some(Selection::Layout(*layout));
         }
+        if let Some(index) = self.selected.checked_sub(self.template_count()) {
+            return self.scenes.get(index).cloned().map(Selection::Scene);
+        }
         self.custom
             .get(self.selected - Layout::ALL.len())
             .map(|template| Selection::Custom(template.distribution.clone()))
@@ -674,18 +750,18 @@ impl Picker {
                 if previous.is_some_and(|old| old != index && index != self.selected) {
                     continue;
                 }
-                let title = format!(
-                    "{} · {}{}",
-                    index + 1,
-                    self.titles[index],
-                    if !self.valid[index] {
-                        crate::i18n::tr(" · no cabe")
-                    } else if index == self.selected {
-                        crate::i18n::tr(" · seleccionada")
-                    } else {
-                        ""
-                    }
-                );
+                let suffix = if !self.valid[index] {
+                    crate::i18n::tr(" · no cabe")
+                } else if index == self.selected {
+                    crate::i18n::tr(" · seleccionada")
+                } else {
+                    ""
+                };
+                let title = if index < self.template_count() {
+                    format!("{} · {}{suffix}", index + 1, self.titles[index])
+                } else {
+                    format!("{}{suffix}", self.titles[index])
+                };
                 let _: () = msg_send![self.buttons[index],setAccessibilityLabel:&*NSString::from_str(&title)];
                 crate::native::hud_surface(
                     *view,
@@ -729,7 +805,9 @@ impl Picker {
             }
             crate::native::text(
                 self.status,
-                if self.valid[self.selected] {
+                if self.selected >= self.template_count() {
+                    crate::i18n::tr("Intro: revisar escena · Esc: cancelar")
+                } else if self.valid[self.selected] {
                     crate::i18n::tr("Ratón o teclas · Flechas · Intro: aplicar · Esc: cancelar")
                 } else {
                     crate::i18n::tr("Esta distribución no cabe. Elige otra plantilla.")

@@ -2991,6 +2991,12 @@ impl App {
             self.layout_picker = Some(picker);
             return;
         };
+        if let crate::tile_picker::Selection::Scene(id) = selection {
+            drop(picker);
+            self.dismiss_layout_picker();
+            self.scene_action(130, Some(&id));
+            return;
+        }
         let context = picker.context.clone();
         drop(picker);
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
@@ -3002,6 +3008,7 @@ impl App {
             crate::tile_picker::Selection::Custom(distribution) => self
                 .tile_manager
                 .apply_custom_distribution(defaults, &context, &distribution),
+            crate::tile_picker::Selection::Scene(_) => unreachable!(),
         };
         if applied {
             self.tile_manager.tick(defaults);
@@ -5112,8 +5119,9 @@ pub fn layout_picker_key(key: u16, shift: bool) {
             return;
         };
         match crate::tile_picker::key_input(key, picker.columns, shift) {
-            Some(crate::tile_picker::Input::Select(index)) => picker.select(index),
+            Some(crate::tile_picker::Input::Select(index)) => picker.select_number(index),
             Some(crate::tile_picker::Input::Move(offset)) => picker.move_selection(offset),
+            Some(crate::tile_picker::Input::FirstScene) => picker.select_first_scene(),
             Some(crate::tile_picker::Input::Confirm) => a.commit_picker(),
             Some(crate::tile_picker::Input::Cancel) => a.layout_picker = None,
             None => {}
@@ -5123,29 +5131,15 @@ pub fn layout_picker_key(key: u16, shift: bool) {
 extern "C-unwind" fn layout_choice(_: Obj, _: Sel, sender: Obj) {
     let index: isize = unsafe { msg_send![sender, tag] };
     with_app(|a| {
-        if index < 0 {
+        if index == -2 && a.layout_picker.is_some() {
+            a.dismiss_layout_picker();
+            a.scene_action(130, None);
+        } else if index < 0 {
             a.layout_picker = None;
         } else if let Some(picker) = &mut a.layout_picker {
             picker.select(index as usize);
             a.commit_picker();
         }
-    });
-}
-extern "C-unwind" fn layout_scene_choice(_: Obj, _: Sel, sender: Obj) {
-    with_app(|app| {
-        let Some(choice) = app
-            .layout_picker
-            .as_ref()
-            .and_then(|picker| picker.scene_choice(sender))
-        else {
-            return;
-        };
-        app.dismiss_layout_picker();
-        let id = match &choice {
-            crate::tile_picker::SceneChoice::Review(id) => Some(id.as_str()),
-            crate::tile_picker::SceneChoice::Manage => None,
-        };
-        app.scene_action(130, id);
     });
 }
 pub fn desktop_presentation_changed(mode: crate::desktop_mode::Mode) -> bool {
@@ -5823,7 +5817,6 @@ unsafe fn controller() -> Retained<AnyObject> {
                 (sel!(tileTabClick:), tab_delivery::drain),
                 (sel!(dragTileTab:), drag_tile_tab),
                 (sel!(layoutChoice:), layout_choice),
-                (sel!(layoutSceneChoice:), layout_scene_choice),
                 (sel!(screensChanged:), screens_changed),
                 (sel!(desktopLifecycle:), desktop_lifecycle),
                 (sel!(desktopDistributed:), desktop_distributed),
