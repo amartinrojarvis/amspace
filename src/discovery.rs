@@ -485,11 +485,7 @@ impl Notice {
                 .map(|value| value.to_string())
                 .unwrap_or_default();
             // The image view keeps the exact symbol authored for this kind.
-            let symbol = self
-                .kind
-                .unwrap_or(NoticeKind::Info)
-                .symbol()
-                .to_string();
+            let symbol = self.kind.unwrap_or(NoticeKind::Info).symbol().to_string();
             let key: bool = msg_send![&self.window, isKeyWindow];
             let visible: bool = msg_send![&self.window, isVisible];
             NoticeState {

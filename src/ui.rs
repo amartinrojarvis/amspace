@@ -1936,9 +1936,7 @@ impl App {
     fn start_transfer(&mut self, destination: crate::window_move::Destination) {
         if self.tiling_paused {
             self.show_notice(
-                crate::i18n::tr(
-                    "Reanuda Mosaico antes de trasladar una ventana.",
-                ),
+                crate::i18n::tr("Reanuda Mosaico antes de trasladar una ventana."),
                 crate::discovery::NoticeKind::Info,
             );
             return;
@@ -2967,9 +2965,7 @@ impl App {
     fn toggle_picker(&mut self) {
         if self.tiling_paused {
             self.show_notice(
-                crate::i18n::tr(
-                    "Reanuda Mosaico antes de cambiar la plantilla.",
-                ),
+                crate::i18n::tr("Reanuda Mosaico antes de cambiar la plantilla."),
                 crate::discovery::NoticeKind::Info,
             );
             return;
@@ -4108,9 +4104,7 @@ impl App {
     fn toggle_mosaic_pause(&mut self) {
         if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") == 0 {
             self.show_notice(
-                crate::i18n::tr(
-                    "Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.",
-                ),
+                crate::i18n::tr("Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico."),
                 crate::discovery::NoticeKind::Info,
             );
             return;

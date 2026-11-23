@@ -797,7 +797,12 @@ impl App {
             .as_ref()
             .is_some_and(|panel| unsafe { msg_send![&*panel.window, isVisible] })
         {
-            self.show_notice(message, crate::discovery::NoticeKind::Success);
+            let kind = if applied == choices.len() {
+                crate::discovery::NoticeKind::Success
+            } else {
+                crate::discovery::NoticeKind::Info
+            };
+            self.show_notice(message, kind);
         }
         if let Some(panel) = &mut self.scenes {
             let target = Retained::as_ptr(&self.target) as Obj;
@@ -982,9 +987,7 @@ pub(crate) fn check_scene_fixture(
             let expected_space = crate::spaces::window_space(ids[0]);
             // A visible nonactivating panel need not have a unique managed
             // Space. Require its actual onscreen bounds, not just isVisible.
-            if shown != Some(area)
-                || shown_space.is_some_and(|s| Some(s) != expected_space)
-            {
+            if shown != Some(area) || shown_space.is_some_and(|s| Some(s) != expected_space) {
                 return Err(format!(
                     "Selector fuera del destino: {shown_space:?} {shown:?}; esperado {expected_space:?} {area:?}."
                 ));
