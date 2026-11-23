@@ -61,6 +61,12 @@ fn main() {
             eprintln!("{error}");
             std::process::exit(1);
         }
+    } else if std::env::args().any(|a| a == "--check-notice") {
+        let result = objc2::rc::autoreleasepool(|_| ui::diagnostics::check_notice());
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
     } else if std::env::args().any(|a| a == "--check-tab-groups") {
         let result = objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::check());
         if let Err(error) = result {

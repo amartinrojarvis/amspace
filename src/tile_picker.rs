@@ -438,7 +438,10 @@ impl Picker {
             let _: () = msg_send![&panel,setHasShadow:false];
             let _: () = msg_send![&panel,setLevel:3isize];
             let _: () = msg_send![&panel,setHidesOnDeactivate:false];
+            // AppKit may constrain the initial content rect to its launch
+            // screen. Position the nonactivating panel on the requested one.
             let _: () = msg_send![&panel,setCollectionBehavior:((1usize<<3)|(1<<6))];
+            let _: () = msg_send![&panel,setFrame:appkit, display:false];
             let _: () = msg_send![&panel,setTitle:&*NSString::from_str(crate::i18n::tr("Distribuciones de esta pantalla"))];
             let root: Obj = msg_send![&panel, contentView];
             choice(

@@ -1256,3 +1256,127 @@ unsafe fn check_full_picker(defaults: Obj) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// Native visual inspection of the redesigned notice plate: one isolated
+/// instance, four classifications, four own-window captures, no focus change.
+pub(crate) fn check_notice() -> Result<(), String> {
+    if APP.with(|cell| cell.borrow().is_some()) {
+        return Err("La inspección de avisos requiere una instancia aislada.".into());
+    }
+    unsafe {
+        let application: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![application, setActivationPolicy:1isize];
+        let _: () = msg_send![application, finishLaunching];
+        let suite = NSString::from_str(&format!("amspace.ui.notice.{}", std::process::id()));
+        let allocated: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![allocated, initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        let target = controller();
+        let mut app = App::build(target.clone(), defaults.clone());
+        app.border_enabled = false;
+        app.sleeping = true;
+        APP.with(|cell| *cell.borrow_mut() = Some(app));
+        let kinds = [
+            (
+                crate::discovery::NoticeKind::Success,
+                "checkmark.circle.fill",
+                "Mosaico reanudado.",
+            ),
+            (
+                crate::discovery::NoticeKind::Work,
+                "arrow.triangle.2.circlepath",
+                "Abriendo aplicaciones y esperando sus ventanas…",
+            ),
+            (
+                crate::discovery::NoticeKind::Info,
+                "info.circle",
+                "Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución.",
+            ),
+            (
+                crate::discovery::NoticeKind::Error,
+                "exclamationmark.triangle.fill",
+                "No hay una ventana activa.",
+            ),
+        ];
+        let result = (|| -> Result<(), String> {
+            for (index, (kind, symbol, message)) in kinds.into_iter().enumerate() {
+                APP.with(|cell| {
+                    let mut borrowed = cell.borrow_mut();
+                    let app = borrowed.as_mut().unwrap();
+                    app.show_notice(message, kind);
+                });
+                pump(0.03);
+                let state = APP.with(|cell| {
+                    let borrowed = cell.borrow();
+                    let app = borrowed.as_ref().unwrap();
+                    let notice = app.notice.as_ref().ok_or("Falta la placa de avisos.")?;
+                    Ok::<_, String>(notice.observed())
+                })?;
+                if state.style != 128 {
+                    return Err(format!(
+                        "Aviso {index}: estilo de panel {} en lugar de nonactivating.",
+                        state.style
+                    ));
+                }
+                if !state.visible || !state.ignores_mouse || state.key {
+                    return Err(format!(
+                        "Aviso {index}: visible={} ignores_mouse={} key={}.",
+                        state.visible, state.ignores_mouse, state.key
+                    ));
+                }
+                if state.symbol != symbol {
+                    return Err(format!(
+                        "Aviso {index}: símbolo {:?} en lugar de {symbol:?}.",
+                        state.symbol
+                    ));
+                }
+                if !state.has_image || state.message != message {
+                    return Err(format!(
+                        "Aviso {index}: imagen={} texto={:?}.",
+                        state.has_image, state.message
+                    ));
+                }
+                let panel = APP.with(|cell| {
+                    cell.borrow()
+                        .as_ref()
+                        .unwrap()
+                        .notice
+                        .as_ref()
+                        .unwrap()
+                        .window()
+                        .clone()
+                });
+                capture_window(&panel, &format!(".cache/notice-{}-{index}.png", symbol))?;
+            }
+            // The plate must collapse without a key-window handoff.
+            APP.with(|cell| {
+                let borrowed = cell.borrow_mut();
+                let app = borrowed.as_ref().unwrap();
+                app.notice.as_ref().unwrap().hide();
+            });
+            pump(0.03);
+            let hidden = APP.with(|cell| {
+                let borrowed = cell.borrow();
+                let app = borrowed.as_ref().unwrap();
+                app.notice.as_ref().unwrap().observed().visible
+            });
+            if hidden {
+                return Err("La placa sigue visible tras ocultarla.".into());
+            }
+            println!(
+                "Notice: four classifications on a layer-backed HUD plate; nonactivating panel, mouse-transparent, one distinct SF Symbol per kind, own-window captures in .cache."
+            );
+            Ok(())
+        })();
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        if let Some(app) = APP.with(|cell| cell.borrow_mut().take()) {
+            if let Some(notice) = app.notice.as_ref() {
+                notice.hide();
+            }
+            let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+            let _: () = msg_send![bar, removeStatusItem:&*app.status];
+        }
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        result
+    }
+}

@@ -186,6 +186,29 @@ fn check_scene_displays(
     let area = area(second.0).ok_or("Sin área útil del otro monitor")?;
     desktop.reconcile_at(&ids[3..], area, 10., None);
     manager.desktops.insert(second, desktop);
+    let mut expected = Vec::with_capacity(ids.len());
+    for (key, distribution) in [
+        (first, "2 4 3 0 0 h0.3335 w0 h0.5 w1 w2"),
+        (second, "2 3 2 0 0 v0.725 w0 w1"),
+    ] {
+        let desktop = manager.desktops.get_mut(&key).unwrap();
+        if !desktop.restore_distribution(distribution) {
+            return Err("No se pudo preparar el reparto asimétrico del fixture".into());
+        }
+        let area = areas.iter().find(|(k, _)| *k == key).unwrap().1;
+        for (id, target) in desktop.window_frames(area, 10.) {
+            let window = manager.windows[&id].element.0;
+            if !ax::set_frame(window, target) {
+                return Err("No se pudo preparar el marco inicial del fixture".into());
+            }
+            let (p, s) = ax::geometry(window).ok_or("Sin marco antes de guardar")?;
+            let frame = NSRect::new(p, s);
+            if frame != ax::integral_frame(target) {
+                return Err("El fixture no alcanzó el marco inicial".into());
+            }
+            expected.push((id, key, frame));
+        }
+    }
     unsafe {
         let suite = NSString::from_str(&format!("amspace.scene-displays.{}", std::process::id()));
         let alloc: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
@@ -215,12 +238,10 @@ fn check_scene_displays(
                 return Err("Un puesto vacío tomó la ventana del otro monitor".into());
             }
             manager.windows.insert(absent, held);
-            manager.apply_scene(defaults, &review, &choices)?;
-            let mut expected = Vec::new();
-            for &id in ids {
+            for &(id, _, frame) in &expected {
                 let w = &manager.windows[&id];
-                let (p, s) = ax::geometry(w.element.0).ok_or("Sin marco colocado")?;
-                expected.push((id, w.space, NSRect::new(p, s)));
+                let p = frame.origin;
+                let s = frame.size;
                 let drifted = rect(p.x + 2., p.y + 1., s.width - 3., s.height - 2.);
                 if !ax::set_frame(w.element.0, drifted) {
                     return Err("No se pudo desplazar la ventana de prueba".into());

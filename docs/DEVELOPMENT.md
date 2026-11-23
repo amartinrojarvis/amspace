@@ -139,7 +139,7 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 
 Con dos pantallas que muestran escritorios normales, `--check-work-scenes` crea cinco ventanas propias repartidas entre ambas. Guarda y relee la escena desde una suite aislada, comprueba que una ausencia en un monitor no roba la candidata del otro y verifica por AX y WindowServer monitor, Space, posición y tamaño al cargar. No navega a otro escritorio.
 
-`--check-work-scenes` también abre y responde al aviso nativo con `AMSPACE_SCENE_LAUNCH_FIXTURE`: indica el bundle ID de una app AppKit desechable registrada en Launch Services y cerrada. Usa el prefijo `io.github.amartinrojarvis.amspace.fixture.` y haz que la app termine por sí sola. Comprueba que por defecto pregunta, que al desactivar el ajuste o rechazar no se abre, y que al aceptar se abre una sola vez. El diagnóstico no arranca el mosaico global, por lo que no verifica la admisión de esa ventana.
+`./scripts/check-scene-launch.sh [ruta/al/binario]` amplía el diagnóstico con apertura real. Compila y registra una app de prueba única en `~/Applications`, con tres ventanas AppKit que aparecen de forma escalonada, y la retira al terminar. Comprueba el ajuste desactivado, el rechazo y la aceptación del aviso de macOS usando una suite de preferencias aislada. No requiere cerrar la app habitual.
 
 `--check-tab-close` también comprueba la continuidad de los controles: doce reconciliaciones de tres ventanas sin cambios deben conservar el botón que recibe el siguiente gesto. Tras cambiar el título de una de las ventanas del fixture, el botón debe mostrar el título nuevo.
 

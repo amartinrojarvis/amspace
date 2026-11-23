@@ -954,9 +954,12 @@ impl App {
             return;
         }
         if self.transfer.is_some() {
-            self.show_notice(crate::i18n::tr(
-                "Espera a que termine el cambio de escritorio o el traslado anterior.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Espera a que termine el cambio de escritorio o el traslado anterior.",
+                ),
+                crate::discovery::NoticeKind::Work,
+            );
             return;
         }
         if std::env::var_os("AMSPACE_TRACE_SPACES").is_some() {
@@ -1902,7 +1905,7 @@ impl App {
             Action::Layouts => self.toggle_picker(),
             Action::PreviousTab | Action::NextTab | Action::DetachTab => {
                 if let Some(reason) = self.tab_block_reason() {
-                    self.show_notice(reason);
+                    self.show_notice(reason, crate::discovery::NoticeKind::Info);
                     return;
                 }
                 let result = if action == Action::DetachTab {
@@ -1916,7 +1919,7 @@ impl App {
                         self.update_tile_timer();
                         self.settle_focus();
                     }
-                    Err(reason) => self.show_notice(reason),
+                    Err(reason) => self.show_notice(reason, crate::discovery::NoticeKind::Error),
                 }
             }
             Action::SendSpace(index) => {
@@ -1932,9 +1935,12 @@ impl App {
     }
     fn start_transfer(&mut self, destination: crate::window_move::Destination) {
         if self.tiling_paused {
-            self.show_notice(crate::i18n::tr(
-                "Reanuda Mosaico antes de trasladar una ventana.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Reanuda Mosaico antes de trasladar una ventana.",
+                ),
+                crate::discovery::NoticeKind::Info,
+            );
             return;
         }
         if self.switching.is_some() || self.layout_picker.is_some() || self.transfer.is_some() {
@@ -2960,18 +2966,24 @@ impl App {
     }
     fn toggle_picker(&mut self) {
         if self.tiling_paused {
-            self.show_notice(crate::i18n::tr(
-                "Reanuda Mosaico antes de cambiar la plantilla.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Reanuda Mosaico antes de cambiar la plantilla.",
+                ),
+                crate::discovery::NoticeKind::Info,
+            );
             return;
         }
         if self.layout_picker.take().is_some() {
             return;
         }
         if self.transfer.is_some() || self.tab_menu.is_some() {
-            self.show_notice(crate::i18n::tr(
-                "Espera a que termine el cambio de escritorio o el traslado anterior.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Espera a que termine el cambio de escritorio o el traslado anterior.",
+                ),
+                crate::discovery::NoticeKind::Work,
+            );
             return;
         }
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
@@ -4022,11 +4034,11 @@ impl App {
             }
         }
     }
-    fn show_notice(&mut self, message: &str) {
+    fn show_notice(&mut self, message: &str, kind: crate::discovery::NoticeKind) {
         self.feedback(message);
         self.notice
             .get_or_insert_with(crate::discovery::Notice::new)
-            .show(message);
+            .show(message, kind);
         schedule_app_callback(Retained::as_ptr(&self.target) as Obj, sel!(hideNotice:), 5.);
     }
     fn show_feedback(&mut self) {
@@ -4053,7 +4065,7 @@ impl App {
         let seen = crate::tile_manager::pref(defaults, "help.seen");
         if crate::tile_manager::pref_or(defaults, "help.tips", 1) != 0 && seen & bit == 0 {
             crate::tile_manager::save(defaults, "help.seen", seen | bit);
-            self.show_notice(message);
+            self.show_notice(message, crate::discovery::NoticeKind::Info);
         }
     }
     fn tab_block_reason(&self) -> Option<&'static str> {
@@ -4095,15 +4107,21 @@ impl App {
     }
     fn toggle_mosaic_pause(&mut self) {
         if crate::tile_manager::pref(Retained::as_ptr(&self.defaults) as Obj, "tile.enabled") == 0 {
-            self.show_notice(crate::i18n::tr(
-                "Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Mosaico está desactivado. Puedes activarlo en Ajustes → Mosaico.",
+                ),
+                crate::discovery::NoticeKind::Info,
+            );
             return;
         }
         if self.transfer.is_some() || self.switching.is_some() {
-            self.show_notice(crate::i18n::tr(
-                "Espera a que termine el traslado o cambio de escritorio antes de pausar.",
-            ));
+            self.show_notice(
+                crate::i18n::tr(
+                    "Espera a que termine el traslado o cambio de escritorio antes de pausar.",
+                ),
+                crate::discovery::NoticeKind::Work,
+            );
             return;
         }
         self.tiling_paused = !self.tiling_paused;
@@ -4114,9 +4132,14 @@ impl App {
         self.configure_tiling();
         self.refresh_pause_button();
         self.refresh_tile_controls();
-        self.show_notice(if self.tiling_paused {
-            crate::i18n::tr("Mosaico en pausa. Conserva la distribución y deja de colocar ventanas. Reanúdalo en la barra lateral de Ajustes.")
-        } else { crate::i18n::tr("Mosaico reanudado.") });
+        self.show_notice(
+            if self.tiling_paused {
+                crate::i18n::tr("Mosaico en pausa. Conserva la distribución y deja de colocar ventanas. Reanúdalo en la barra lateral de Ajustes.")
+            } else {
+                crate::i18n::tr("Mosaico reanudado.")
+            },
+            crate::discovery::NoticeKind::Success,
+        );
     }
     fn record_transfer(&mut self, message: &str, feedback: bool) {
         if self.transfer_history.len() == 16 {
@@ -4259,7 +4282,7 @@ impl App {
             }
             self.feedback("");
             if self.tiling_paused && matches!(tag, 41 | 80..=87 | 95 | 97) {
-                self.show_notice(crate::i18n::tr("Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución."));
+                self.show_notice(crate::i18n::tr("Mosaico está en pausa. Pulsa Reanudar Mosaico antes de cambiar la distribución."), crate::discovery::NoticeKind::Info);
                 self.refresh_tile_controls();
                 return;
             }
@@ -5429,7 +5452,7 @@ fn show_tab_menu(button: Obj, event: Obj) {
             return;
         }
         if let Some(reason) = a.tab_block_reason() {
-            a.show_notice(reason);
+            a.show_notice(reason, crate::discovery::NoticeKind::Info);
             return;
         }
         match a.tile_manager.tab_context(id) {
@@ -5446,7 +5469,7 @@ fn show_tab_menu(button: Obj, event: Obj) {
                 });
                 popup = Some(menu);
             }
-            Err(reason) => a.show_notice(reason),
+            Err(reason) => a.show_notice(reason, crate::discovery::NoticeKind::Error),
         }
     });
     if let Some(menu) = popup {
@@ -5464,7 +5487,7 @@ fn show_tab_menu(button: Obj, event: Obj) {
                 return;
             };
             if let Some(reason) = a.tab_block_reason() {
-                a.show_notice(reason);
+                a.show_notice(reason, crate::discovery::NoticeKind::Info);
                 return;
             }
             // Validate and focus only after AppKit has ended menu tracking.
@@ -5475,7 +5498,7 @@ fn show_tab_menu(button: Obj, event: Obj) {
                         a.settle_focus();
                     }
                 }
-                Err(reason) => a.show_notice(reason),
+                Err(reason) => a.show_notice(reason, crate::discovery::NoticeKind::Error),
             }
         });
     }
@@ -5519,7 +5542,7 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
                 a.update_tile_timer();
             }
             if let Some(error) = a.tile_manager.last_error.take() {
-                a.show_notice(&error);
+                a.show_notice(&error, crate::discovery::NoticeKind::Error);
             }
             // No settle_focus here: the application's save dialog owns focus.
         }
@@ -5569,7 +5592,7 @@ fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint, indep
         }
     }
     if let Some(error) = a.tile_manager.interaction_error.take() {
-        a.show_notice(&error);
+        a.show_notice(&error, crate::discovery::NoticeKind::Error);
     }
 }
 extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, _: Obj) {
@@ -5595,7 +5618,7 @@ extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, _: Obj) {
             }
             a.update_tile_timer();
             if let Some(error) = a.tile_manager.interaction_error.take() {
-                a.show_notice(&error);
+                a.show_notice(&error, crate::discovery::NoticeKind::Error);
             }
             if let Some(error) = a.tile_manager.last_error.take() {
                 a.last_tiling_feedback = error.clone();

@@ -117,7 +117,7 @@ pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
                     app.begin_scene(defaults, restore.entry)
                 });
                 if let Err(message) = result {
-                    app.show_notice(&message);
+                    app.show_notice(&message, crate::discovery::NoticeKind::Error);
                 }
             }
             RestorePhase::Ask(origin, apps) => {
@@ -151,7 +151,7 @@ pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
         app.scene_prompt_open = false;
         let result = app.resume_scene(entry, &origin, open, apps);
         if let Err(message) = result {
-            app.show_notice(&message);
+            app.show_notice(&message, crate::discovery::NoticeKind::Error);
         }
     });
 }
@@ -631,7 +631,7 @@ impl App {
             self.begin_scene(defaults, entry)
         })();
         if let Err(message) = result {
-            self.show_notice(&message);
+            self.show_notice(&message, crate::discovery::NoticeKind::Error);
         }
     }
 
@@ -691,7 +691,10 @@ impl App {
                 .map(|(id, url)| (id, launch_app(&url), false))
                 .collect();
             if !pending.is_empty() {
-                self.show_notice(tr("Abriendo aplicaciones y esperando sus ventanas…"));
+                self.show_notice(
+                    tr("Abriendo aplicaciones y esperando sus ventanas…"),
+                    crate::discovery::NoticeKind::Work,
+                );
                 self.queue_scene(
                     entry,
                     RestorePhase::Waiting(
@@ -720,7 +723,7 @@ impl App {
         let review = match self.scene_after_wait(defaults, &entry, &origin) {
             Ok(review) => review,
             Err(message) => {
-                self.show_notice(&message);
+                self.show_notice(&message, crate::discovery::NoticeKind::Error);
                 return;
             }
         };
@@ -746,13 +749,16 @@ impl App {
             return;
         }
         if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
-            self.show_notice(&message);
+            self.show_notice(&message, crate::discovery::NoticeKind::Error);
         } else if !launch.failed.is_empty() {
-            self.show_notice(&format!(
-                "{} {}",
-                tr("No se pudieron abrir:"),
-                launch.failed.join(", ")
-            ));
+            self.show_notice(
+                &format!(
+                    "{} {}",
+                    tr("No se pudieron abrir:"),
+                    launch.failed.join(", ")
+                ),
+                crate::discovery::NoticeKind::Error,
+            );
         }
     }
 
@@ -791,7 +797,7 @@ impl App {
             .as_ref()
             .is_some_and(|panel| unsafe { msg_send![&*panel.window, isVisible] })
         {
-            self.show_notice(message);
+            self.show_notice(message, crate::discovery::NoticeKind::Success);
         }
         if let Some(panel) = &mut self.scenes {
             let target = Retained::as_ptr(&self.target) as Obj;
@@ -965,6 +971,24 @@ pub(crate) fn check_scene_fixture(
             let native_app: Obj = msg_send![class!(NSApplication), sharedApplication];
             let gallery: Option<Retained<AnyObject>> = msg_send![native_app, keyWindow];
             let gallery = gallery.ok_or("El selector no recibió su ventana nativa.")?;
+            let number: isize = msg_send![&gallery, windowNumber];
+            let shown = crate::window_server::transition_windows().and_then(|windows| {
+                windows
+                    .into_iter()
+                    .find(|w| w.id == number as u32 && w.onscreen)
+                    .and_then(|w| w.frame)
+            });
+            let shown_space = crate::spaces::window_space(number as u32);
+            let expected_space = crate::spaces::window_space(ids[0]);
+            // A visible nonactivating panel need not have a unique managed
+            // Space. Require its actual onscreen bounds, not just isVisible.
+            if shown != Some(area)
+                || shown_space.is_some_and(|s| Some(s) != expected_space)
+            {
+                return Err(format!(
+                    "Selector fuera del destino: {shown_space:?} {shown:?}; esperado {expected_space:?} {area:?}."
+                ));
+            }
             let root: Obj = msg_send![&gallery, contentView];
             let tag = (crate::tiling::Layout::ALL.len() + 1) as isize;
             let card: Option<Retained<AnyObject>> = msg_send![root, viewWithTag:tag];

@@ -30,6 +30,7 @@ A personal project developed by **Alberto Martín** for his own use, using **Ast
 - **Focus under cursor.** Activates the keyboard of the window after the mouse stops for about 240–390 ms, even between windows of the same application, without changing their order. Paused while dragging or holding ⌥, and it skips AMSpace's own windows. Leaving its settings with the cursor lets you focus another app.
 - **Bring to front.** Independent setting, initially off: in addition to focusing, it raises the window above the others.
 - **Optional mosaic.** Layouts per desktop, grouping of windows into tabs, drag with preview and floating windows via a configurable shortcut.
+- **Status notices.** When restoring a scene, a card with an icon shows whether AMSpace is still working, has finished, or has left some windows unplaced. You can keep using the active window without dismissing it.
 - **Mission Control.** The border panel hides with the desktops view and reappears when returning to the desktop.
 - **Login.** Registration with `SMAppService`, managed by macOS. Initially off.
 - **Updates from the app.** Installed version, manual check, optional daily notices, verified download and restart via Sparkle.

@@ -1,6 +1,6 @@
 use crate::native::*;
 use objc2::{class, msg_send, rc::Retained, runtime::AnyObject};
-use objc2_foundation::{NSPoint, NSRect, NSString};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub struct Guide {
     window: Retained<AnyObject>,
@@ -336,15 +336,61 @@ impl Feedback {
     }
 }
 
-/// Allocated on the first user-facing notice; no focus changes or periodic timer.
+/// Explicit classification for a user-facing notice. Every kind owns one SF Symbol
+/// and one tint, so the plate is recognisable without reading the text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeKind {
+    /// A finished operation.
+    Success,
+    /// An operation still in flight.
+    Work,
+    /// A neutral state change or proven tip.
+    Info,
+    /// A rejected or failed action.
+    Error,
+}
+
+impl NoticeKind {
+    pub(crate) fn symbol(self) -> &'static str {
+        match self {
+            Self::Success => "checkmark.circle.fill",
+            Self::Work => "arrow.triangle.2.circlepath",
+            Self::Info => "info.circle",
+            Self::Error => "exclamationmark.triangle.fill",
+        }
+    }
+    pub(crate) fn rgb(self) -> [f64; 3] {
+        match self {
+            Self::Success => [0.40, 0.86, 0.55],
+            Self::Work => [0.62, 0.79, 1.00],
+            Self::Info => [0.86, 0.90, 1.00],
+            Self::Error => [1.00, 0.55, 0.48],
+        }
+    }
+}
+
+const NOTICE_WIDTH: f64 = 480.;
+const NOTICE_MARGIN: f64 = 18.;
+const NOTICE_TEXT_X: f64 = 44.;
+const NOTICE_TEXT_WIDTH: f64 = NOTICE_WIDTH - NOTICE_TEXT_X - NOTICE_MARGIN;
+
+/// A layer-backed HUD plate with a per-kind symbol; never becomes key, so the
+/// focused window of the user keeps the keyboard.
 pub struct Notice {
     window: Retained<AnyObject>,
+    icon: Obj,
     label: Obj,
+    kind: Option<NoticeKind>,
 }
+
 impl Notice {
+    pub(crate) fn window(&self) -> &Retained<AnyObject> {
+        &self.window
+    }
+
     pub fn new() -> Self {
         unsafe {
-            let window = crate::ui::window(rect(0., 0., 480., 88.), 128);
+            let window = crate::ui::window(rect(0., 0., NOTICE_WIDTH, 74.), 128);
             let clear: Obj = msg_send![class!(NSColor), clearColor];
             let _: () = msg_send![&window, setBackgroundColor:clear];
             let _: () = msg_send![&window, setOpaque:false];
@@ -354,26 +400,118 @@ impl Notice {
             let _: () = msg_send![&window, setHidesOnDeactivate:false];
             let _: () = msg_send![&window, setCollectionBehavior:1usize | 64 | 256];
             let root: Obj = msg_send![&window, contentView];
-            crate::ui::card(root, rect(0., 0., 480., 88.));
-            let label = wrapping_label(root, rect(18., 14., 444., 58.), "", 13.);
-            Self { window, label }
+            let _: () = msg_send![root, setWantsLayer:true];
+            crate::native::hud_surface(root, false, 0.95);
+            let icon = alloc_view(class!(NSImageView), rect(NOTICE_MARGIN, 41., 18., 18.));
+            let _: () = msg_send![&icon, setImageScaling:0usize];
+            let _: () = msg_send![root, addSubview:&*icon];
+            let label = wrapping_label(
+                root,
+                rect(NOTICE_TEXT_X, 16., NOTICE_TEXT_WIDTH, 42.),
+                "",
+                13.,
+            );
+            // Fixed near-white ink: the plate is always dark, so the muted
+            // system color of an inactive appearance would drop the contrast.
+            let ink = color(0.96, 0.97, 1., 1.);
+            let _: () = msg_send![label, setTextColor:ink];
+            Self {
+                window,
+                icon: Retained::as_ptr(&icon) as Obj,
+                label,
+                kind: None,
+            }
         }
     }
-    pub fn show(&self, message: &str) {
+
+    pub fn show(&mut self, message: &str, kind: NoticeKind) {
+        self.kind = Some(kind);
         unsafe {
             text(self.label, message);
+            let _: () = msg_send![self.label, setPreferredMaxLayoutWidth:NOTICE_TEXT_WIDTH];
+            let intrinsic: NSSize = msg_send![self.label, intrinsicContentSize];
+            let body = intrinsic.height.clamp(18., 112.);
+            let height = body + 32.;
+            let _: () = msg_send![
+                self.label,
+                setFrame:NSRect::new(NSPoint::new(NOTICE_TEXT_X, 16.), NSSize::new(NOTICE_TEXT_WIDTH, body))
+            ];
+            let _: () = msg_send![
+                self.icon,
+                setFrame:NSRect::new(NSPoint::new(NOTICE_MARGIN, 16. + body - 18.), NSSize::new(18., 18.))
+            ];
+            let symbol = NSString::from_str(kind.symbol());
+            let description = NSString::from_str(message);
+            let image: Option<Retained<AnyObject>> = msg_send![
+                class!(NSImage),
+                imageWithSystemSymbolName:&*symbol,
+                accessibilityDescription:&*description
+            ];
+            if let Some(image) = image {
+                let _: () = msg_send![self.icon, setImage:&*image];
+            }
+            let [red, green, blue] = kind.rgb();
+            let tint = color(red, green, blue, 1.);
+            let _: () = msg_send![self.icon, setContentTintColor:tint];
+            let _: () = msg_send![&self.window, setContentSize:NSSize::new(NOTICE_WIDTH, height)];
             let screen: Obj = msg_send![class!(NSScreen), mainScreen];
             if screen.is_null() {
                 return;
             }
             let visible: NSRect = msg_send![screen, visibleFrame];
-            let _: () = msg_send![&self.window, setFrameOrigin:NSPoint::new(visible.origin.x + (visible.size.width - 480.) / 2., visible.origin.y + visible.size.height - 112.)];
+            let x = visible.origin.x + (visible.size.width - NOTICE_WIDTH) / 2.;
+            let y = visible.origin.y + visible.size.height - height - 24.;
+            let _: () = msg_send![&self.window, setFrameOrigin:NSPoint::new(x, y)];
             let _: () = msg_send![&self.window, orderFrontRegardless];
         }
     }
+
     pub fn hide(&self) {
         unsafe {
             let _: () = msg_send![&self.window, orderOut:std::ptr::null::<AnyObject>()];
         }
     }
+
+    /// Observed facets for the native inspection mode.
+    pub(crate) fn observed(&self) -> NoticeState {
+        unsafe {
+            let style: isize = msg_send![&self.window, styleMask];
+            let ignores_mouse: bool = msg_send![&self.window, ignoresMouseEvents];
+            let image: Obj = msg_send![self.icon, image];
+            let has_image = !image.is_null();
+            let body: *mut NSString = msg_send![self.label, stringValue];
+            let message = body
+                .as_ref()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            // The image view keeps the exact symbol authored for this kind.
+            let symbol = self
+                .kind
+                .unwrap_or(NoticeKind::Info)
+                .symbol()
+                .to_string();
+            let key: bool = msg_send![&self.window, isKeyWindow];
+            let visible: bool = msg_send![&self.window, isVisible];
+            NoticeState {
+                style,
+                ignores_mouse,
+                has_image,
+                message,
+                symbol,
+                key,
+                visible,
+            }
+        }
+    }
+}
+
+/// Everything the inspection mode can verify without executing anything.
+pub(crate) struct NoticeState {
+    pub(crate) style: isize,
+    pub(crate) ignores_mouse: bool,
+    pub(crate) has_image: bool,
+    pub(crate) message: String,
+    pub(crate) symbol: String,
+    pub(crate) key: bool,
+    pub(crate) visible: bool,
 }

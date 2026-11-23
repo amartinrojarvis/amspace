@@ -30,6 +30,7 @@ Proyecto personal desarrollado por **Alberto Martín** para su propio uso, utili
 - **Foco bajo el cursor.** Activa el teclado de la ventana tras detener el ratón unos 240–390 ms, incluso entre ventanas de una misma aplicación, sin cambiar su orden. Se pausa al arrastrar o mantener ⌥ y omite las propias ventanas de AMSpace. Salir de sus ajustes con el cursor permite enfocar otra app.
 - **Traer al primer plano.** Ajuste independiente y desactivado inicialmente: además de enfocar, eleva la ventana sobre las demás.
 - **Mosaico opcional.** Distribuciones por escritorio, agrupación de ventanas en pestañas, arrastre con previsualización y ventanas flotantes mediante atajo configurable.
+- **Avisos de estado.** Al cargar una escena, una tarjeta con icono indica si AMSpace sigue trabajando, ha terminado o ha dejado ventanas sin colocar. No hace falta cerrarla para seguir usando la ventana activa.
 - **Mission Control.** El panel del borde se oculta con la vista de escritorios y reaparece al volver al escritorio.
 - **Inicio de sesión.** Registro con `SMAppService`, gestionado por macOS. Desactivado inicialmente.
 - **Actualizaciones desde la app.** Versión instalada, búsqueda manual, avisos diarios opcionales, descarga verificada y reinicio mediante Sparkle.

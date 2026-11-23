@@ -3,6 +3,8 @@
 - En Apple Silicon, con dos monitores físicos, el diagnóstico guardó y releyó una escena de cinco ventanas desechables. Cambió sus marcos y comprobó por AX y WindowServer la posición, tamaño y pertenencia de las cinco al cargar. Una de las ejecuciones usó `(2, 522)` y `(5, 5)`; el ID nativo `5` era el tercer escritorio de la pantalla principal, según el orden `[1, 4, 5, 6]`. No se movieron ventanas de trabajo para la prueba.
 - Con cinco puestos de la misma app, retirar la primera candidata del gestor aislado no tomó una ventana del otro monitor. Una escena más pequeña dejó la ventana ajena flotante sin escribir su marco; la escena completa volvió a incorporarla.
 - Durante la reentrada se mantuvo la selección pendiente. Desactivar Mosaico canceló sin cambiar marcos; seleccionar de nuevo y entregar muestras nativas al gestor aislado terminó la carga sin un segundo clic. No se simuló una navegación cambiando el indicador.
+- El script de apertura registró una app desechable cerrada en `~/Applications`. El ajuste desactivado no la inició; sin preferencia apareció el aviso, rechazar no abrió nada y aceptar inició un único bundle para tres puestos. El registro y el bundle temporal se retiraron al terminar.
+- `--check-notice` mostró los cuatro estados en un panel que nunca fue ventana clave y que ignoró el ratón. Las capturas del panel mostraron el icono azul de progreso y el triángulo rojo de error junto a los mensajes en español.
 
 ## 0.9.42/build 97 — Posición y tamaño al recuperar una escena
 

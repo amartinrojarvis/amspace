@@ -115,7 +115,7 @@ pub(super) extern "C-unwind" fn drain(target: Obj, _: Sel, _: Obj) {
                     event.grab,
                 );
                 if let Some(error) = app.tile_manager.interaction_error.take() {
-                    app.show_notice(&error);
+                    app.show_notice(&error, crate::discovery::NoticeKind::Error);
                 }
                 app.update_tile_timer();
             }
