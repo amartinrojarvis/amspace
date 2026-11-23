@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.43</title><pubDate>Mon, 23 Nov 2026 06:58:34 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.43 — Escenas de trabajo y avisos visuales.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.44</title><pubDate>Mon, 23 Nov 2026 07:48:24 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.44 — Recuperación de escenas, borde activo y Ajustes.
 
-- La escena espera a que se estabilice el escritorio seleccionado. No se aplica en otro escritorio si cambias de nuevo.
-- Recupera ventanas flotantes compatibles y deja las ventanas sueltas ajenas a la escena como flotantes, sin moverlas. Si faltan puestos, avisa también desde el selector de plantillas.
-- Los avisos usan el mismo estilo que el selector de plantillas. Un icono distingue una operación en curso de un resultado o de un problema, sin quitarte el foco.
+- Si faltan ventanas, la escena ofrece preparar las apps, revisar los puestos, cargar lo disponible o cancelar. Las escenas completas se cargan directamente.
+- La recuperación abre apps cerradas e intenta mostrar las ocultas o restaurar ventanas minimizadas del escritorio actual. Si quedan puestos sin ventana, vuelve a ofrecer opciones.
+- El borde activo vuelve a mostrarse bajo capas que dejan pasar clics, sin tomar foco. Ajustes empieza en General; Mosaico agrupa escenas, plantillas, gestos, pestañas y excepciones.
 
 English
 
-- Scenes wait for the selected desktop to settle. Switching again cancels the pending restore.
-- Restoring a scene can reuse compatible floating windows. Unrelated individual windows keep their frames and become floating; partial restores are reported from the template picker as well.
-- Status messages now match the template picker. An icon distinguishes work in progress from an outcome or a problem without taking focus.
+- If windows are missing, choose to prepare apps, review assignments, load what is available, or cancel. Complete scenes load directly.
+- Recovery opens closed apps and attempts to unhide apps or restore minimized windows on the current desktop. If any slots remain empty, it offers alternatives.
+- The active border stays visible under click-through overlays without taking focus. Settings opens in General; Tiling groups scenes, layouts, gestures, tabs, and exceptions.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.43/AMSpace-universal.zip" length="3350184" type="application/octet-stream" sparkle:version="98" sparkle:shortVersionString="0.9.43" sparkle:edSignature="g/fBmIEqRJUsmDCsw/Q/Iaoio42rbmAHho1+80tdEWSvQX9//A0chhDS+r35BG0ZznWDTDbRvu7W6MfNBo09BA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: aC1/bVLeAF7axstwWOE4Ejd3n/ZgHvGQwxh7d7aBh8BoXb8jyHu5nLz5p6vRL+Nuxpo8fCKgz+slFS+oEQRVDw==
-length: 2310
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.44/AMSpace-universal.zip" length="3373673" type="application/octet-stream" sparkle:version="99" sparkle:shortVersionString="0.9.44" sparkle:edSignature="34n5rklOS5egWFI/ArkdalXIgoHSqNKZxQzD+6WgELR7pUW21QSym5xV8bS4Q+IBujLWlcNCYWgajXn4Og0vBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: JW/hoNVuioFWk0PjN9wv768yZYfEayhzAIgIcE4zjDilbgjjQ2fffJdMil5DawM6H+qc7xoLkd4id1UsujdKAg==
+length: 2423
 -->
