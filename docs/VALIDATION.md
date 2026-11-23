@@ -4,6 +4,7 @@
 - Con cinco puestos de la misma app, retirar la primera candidata del gestor aislado no tomó una ventana del otro monitor. Una escena más pequeña dejó la ventana ajena flotante sin escribir su marco; la escena completa volvió a incorporarla.
 - Durante la reentrada se mantuvo la selección pendiente. Desactivar Mosaico canceló sin cambiar marcos; seleccionar de nuevo y entregar muestras nativas al gestor aislado terminó la carga sin un segundo clic. No se simuló una navegación cambiando el indicador.
 - El script de apertura registró una app desechable cerrada en `~/Applications`. El ajuste desactivado no la inició; sin preferencia apareció el aviso, rechazar no abrió nada y aceptar inició un único bundle para tres puestos. El registro y el bundle temporal se retiraron al terminar.
+- En el bundle universal del commit `e09f479`, la app de prueba creó tres ventanas a intervalos de un segundo. Al terminar la carga, las tres tenían el marco AX exacto de su puesto, comparado en puntos enteros de macOS. Esta comprobación no usa documentos del usuario ni presupone que una aplicación pueda reabrir documentos que no conserva.
 - `--check-notice` mostró los cuatro estados en un panel que nunca fue ventana clave y que ignoró el ratón. Las capturas del panel mostraron el icono azul de progreso y el triángulo rojo de error junto a los mensajes en español.
 
 ## 0.9.42/build 97 — Posición y tamaño al recuperar una escena
