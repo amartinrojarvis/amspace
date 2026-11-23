@@ -1196,7 +1196,6 @@ pub(crate) fn check_scene_fixture(
                 launch_scene.bundles.fill(bundle.clone());
                 let id = scene_library::save(defaults, "Apertura", &[launch_scene])?;
                 let mut app = App::build(controller.clone(), prefs.clone());
-                std::mem::swap(&mut app.tile_manager, &mut manager);
                 let entry = scene_library::entry(defaults, &id).unwrap();
                 let review = app.tile_manager.review_scene(defaults, &entry.displays)?;
                 if stopped_apps(&review).collect::<Vec<_>>() != [bundle.as_str()]
@@ -1232,34 +1231,63 @@ pub(crate) fn check_scene_fixture(
                 };
                 let declined = answer(1000) && stopped_apps(&review).next().is_some();
                 let accepted = answer(1001);
-                let end = Instant::now() + Duration::from_secs(6);
-                let opened = loop {
-                    if APP.with(|cell| {
-                        let app = cell.borrow();
-                        matches!(
-                            app.as_ref().and_then(|app| app.scene_restore.as_ref()).map(|r| &r.phase),
-                            Some(RestorePhase::Waiting(_, launch)) if matches!(launch.pending.as_slice(), [(_, _, true)])
-                        )
-                    }) {
-                        break true;
+                let end = Instant::now() + Duration::from_secs(12);
+                let (pid, launched) = loop {
+                    let apps: Obj = msg_send![class!(NSRunningApplication),
+                        runningApplicationsWithBundleIdentifier:&*NSString::from_str(&bundle)];
+                    let count: usize = msg_send![apps, count];
+                    if count == 1 {
+                        let running: Obj = msg_send![apps, objectAtIndex:0usize];
+                        let pid: i32 = msg_send![running, processIdentifier];
+                        let (ids, done) = APP.with(|cell| {
+                            let mut borrowed = cell.borrow_mut();
+                            let app = borrowed.as_mut().unwrap();
+                            let ids =
+                                crate::tile_manager::close_diagnostics::admit_launched_fixture(
+                                    &mut app.tile_manager,
+                                    pid,
+                                    area,
+                                );
+                            (ids, app.scene_restore.is_none())
+                        });
+                        if done {
+                            break (pid, ids);
+                        }
                     }
                     if Instant::now() >= end {
-                        break false;
+                        return Err("La carga de las ventanas escalonadas no terminó.".into());
                     }
-                    super::diagnostics::pump(0.1);
+                    super::diagnostics::pump(0.08);
                 };
-                let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
-                std::mem::swap(&mut app.tile_manager, &mut manager);
+                let _app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+                let expected = scene_library::ordinal_desktop(&entry.displays[0])
+                    .ok_or("Distribución de apertura inválida.")?;
+                let frames = expected.window_frames(area, 10.);
+                if launched.len() != 3 || frames.len() != 3 {
+                    return Err(format!(
+                        "La carga terminó con {} ventanas de tres.",
+                        launched.len()
+                    ));
+                }
+                for (ordinal, wanted) in frames {
+                    let wanted = ax::integral_frame(wanted);
+                    let window = ax::window_for_id(pid, launched[ordinal as usize - 1])
+                        .ok_or("Desapareció la ventana recién abierta.")?;
+                    let (p, s) = ax::geometry(window.0).ok_or("Sin marco AX tras la apertura.")?;
+                    if NSRect::new(p, s) != wanted {
+                        return Err(format!("Puesto {ordinal}: {p:?} {s:?} ≠ {wanted:?}"));
+                    }
+                }
                 if !open_missing(defaults) {
                     return Err("La apertura de apps no está habilitada por defecto.".into());
                 }
-                if !declined || !accepted || !opened {
+                if !declined || !accepted {
                     return Err(
                         "El aviso nativo no respetó el rechazo o la apertura confirmada.".into(),
                     );
                 }
                 println!(
-                    "PASS: la opción desactivada no abre; por defecto pregunta; confirmar abre una sola app para tres puestos."
+                    "PASS: la opción desactivada no abre; confirmar abre una app y sus tres ventanas escalonadas recuperan sus marcos por AX."
                 );
             }
 

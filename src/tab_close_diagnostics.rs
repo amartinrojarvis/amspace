@@ -141,6 +141,37 @@ impl Drop for RestoreFocus {
     }
 }
 
+/// Admit only AX windows of the disposable launch fixture to the isolated manager.
+pub(crate) fn admit_launched_fixture(manager: &mut Manager, pid: i32, area: NSRect) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for (id, element) in ax::application_windows(pid).unwrap_or_default() {
+        let Some((position, size)) = ax::geometry(element.0) else {
+            continue;
+        };
+        let frame = NSRect::new(position, size);
+        let Some(space) = spaces::visible_desktops().into_iter().find(|key| {
+            spaces::window_space(id) == Some(key.1)
+                && self::area(key.0) == Some(area)
+                && overlap(frame, area) > 0.
+        }) else {
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(slot) = manager.windows.entry(id) {
+            slot.insert(Managed {
+                pid,
+                space,
+                original: frame,
+                original_area: area,
+                element,
+            });
+            manager.floating.insert(id);
+        }
+        ids.push(id);
+    }
+    ids.sort_unstable();
+    ids
+}
+
 pub(crate) fn observe_scene_reentry(manager: &mut Manager, defaults: Obj) {
     if manager.space_reentry.is_some() {
         let active = manager.active_areas.clone();
