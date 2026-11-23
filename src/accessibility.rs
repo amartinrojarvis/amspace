@@ -328,6 +328,19 @@ pub fn flag(element: Cf, name: &str) -> bool {
         .and_then(|v| boolean(v.0))
         .unwrap_or(false)
 }
+
+pub(crate) fn restore_minimized_window(window: Cf) -> bool {
+    !window.is_null()
+        && attr(window, "AXSubrole").is_some_and(|v| equals_text(v.0, "AXStandardWindow"))
+        && !flag(window, "AXModal")
+        && !flag(window, "AXFullScreen")
+        && !system_utility_window(window)
+        && flag(window, "AXMinimized")
+        && unsafe {
+            AXUIElementSetAttributeValue(window, cf(ns_string!("AXMinimized")), kCFBooleanFalse)
+                == 0
+        }
+}
 pub fn boolean(value: Cf) -> Option<bool> {
     (!value.is_null() && unsafe { CFGetTypeID(value) == CFBooleanGetTypeID() })
         .then(|| unsafe { CFBooleanGetValue(value) })

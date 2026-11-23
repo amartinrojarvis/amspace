@@ -5,7 +5,6 @@
 int main(void) {
     @autoreleasepool {
         NSApplication *app = NSApplication.sharedApplication;
-        [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [app finishLaunching];
         NSNumber *display = [NSBundle.mainBundle objectForInfoDictionaryKey:@"AMSpaceFixtureDisplay"];
         NSScreen *screen = nil;
@@ -38,6 +37,13 @@ int main(void) {
                 [window setFrame:[window frameRectForContentRect:content] display:YES];
             });
         }
+        NSURL *hideRequest = [[NSBundle.mainBundle.bundleURL URLByDeletingLastPathComponent]
+                               URLByAppendingPathComponent:@"hide"];
+        [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+            if (![NSFileManager.defaultManager fileExistsAtPath:hideRequest.path]) return;
+            [timer invalidate];
+            [app hide:nil];
+        }];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_SEC),
                        dispatch_get_main_queue(), ^{ [app terminate:nil]; });
         [app run];

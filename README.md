@@ -11,6 +11,8 @@ La interfaz funciona en **español e inglés**. Sigue el orden de idiomas prefer
 
 Solo cambia el idioma de AMSpace: no modifica macOS, los atajos ni las distribuciones guardadas. Los títulos de ventanas, nombres de aplicaciones y plantillas personales conservan su texto original.
 
+Ajustes abre en **General**, donde están el idioma, el inicio de sesión, las actualizaciones y el soporte. **Barra de menús** configura el indicador; **Ventanas**, el borde y el foco; **Mosaico** agrupa escenas, plantillas, gestos, pestañas y excepciones; **Atajos** reúne las combinaciones de teclado.
+
 ## Contexto
 
 Proyecto personal desarrollado por **Alberto Martín** para su propio uso, utilizando **Astra** y **Qwen 3.8 Flash Next**. La aplicación dispone de interfaz en español e inglés. La optimización y el mínimo consumo de recursos son una prioridad máxima: está pensada para mi portátil y mi estación de escritorio con dos monitores, uno apaisado y otro vertical. Esa configuración guía el diseño, pero no implica compatibilidad o rendimiento máximos universales. [VALIDATION.md](docs/VALIDATION.md) recoge las mediciones, los escenarios realmente comprobados y sus límites.
@@ -257,11 +259,11 @@ En **Mosaico → Rejilla y distribución…** puedes activar el ajuste a una rej
 
 **Guardar distribución** conserva plantilla, proporciones, estructura y rejilla por escritorio. **Restaurar distribución** usa posiciones lógicas y requiere el mismo número de ventanas; no distingue aplicaciones.
 
-Para guardar una escena, abre **Ajustes → Mosaico → Escenas de trabajo…**, escribe un nombre y pulsa **Guardar escena actual** (o **Intro**). Guarda la distribución visible por monitor y aplicación, incluidas las divisiones ajustadas por la rejilla.
+Para guardar una escena, abre **Ajustes → Mosaico → Gestionar escenas…**, escribe un nombre y pulsa **Guardar escena actual** (o **Intro**). Guarda la distribución visible por monitor y aplicación, incluidas las divisiones ajustadas por la rejilla.
 
-Para cargarla, pulsa su tarjeta en el selector de plantillas, o usa **S** para seleccionar la primera escena y **Intro** para cargarla. **Ver todas…** abre la biblioteca: elige una escena o pulsa **Cargar** para volver a aplicar la seleccionada. Si no faltan apps que se puedan abrir, no aparece ninguna confirmación. Si falta una ventana, su puesto se contrae; si falta una pantalla, sus ventanas no se redirigen a otra.
+Para cargarla, pulsa su tarjeta en el selector de plantillas, o usa **S** para seleccionar la primera escena y **Intro** para cargarla. **Ver todas…** abre la biblioteca: elige una escena o pulsa **Cargar** para volver a aplicar la seleccionada. Si todas las ventanas están disponibles, no hay confirmación. Si faltan ventanas o pantallas, puedes revisar, cancelar o cargar lo disponible; en ese último caso, los puestos vacíos se contraen y las ventanas de una pantalla desconectada no se redirigen a otra.
 
-**Ajustes → Mosaico → Abrir apps faltantes** está activado por defecto. AMSpace pregunta una vez antes de iniciar apps instaladas que estén cerradas. Puedes desactivar el ajuste o cargar sin abrirlas. Si aceptas, espera hasta diez segundos a que aparezcan ventanas compatibles y carga la escena sin otro clic. No vuelve a abrir documentos concretos.
+**Ajustes → Mosaico → Abrir apps faltantes** está activado por defecto y habilita **Preparar apps y cargar**. Al elegirlo, AMSpace intenta iniciar apps cerradas, mostrar las ocultas o recuperar ventanas minimizadas del escritorio actual. Espera hasta diez segundos por ventanas compatibles y aplica la escena si se completa; si todavía falta alguna, vuelve a ofrecer las alternativas. No reabre documentos concretos ni traslada ventanas de otro escritorio automáticamente.
 
 Mientras AMSpace siga abierto, recupera las ventanas originales que continúen disponibles; si no puede identificarlas, prioriza las del monitor de destino, incluidas las flotantes compatibles. **Revisar** permite elegirlas manualmente. En un monitor donde se aplica la escena, las ventanas sueltas ajenas al reparto quedan flotantes sin cambiar de posición ni tamaño; si sobra un grupo de pestañas, déjalo flotante antes de cargar. Una selección hecha al terminar un cambio de escritorio espera brevemente sin actuar en otro escritorio. La escena no trae ventanas desde escritorios ocultos. Si macOS rechaza la colocación, AMSpace no da la aplicación por hecha.
 

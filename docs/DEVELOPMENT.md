@@ -105,6 +105,8 @@ El override de argumentos dura solo ese proceso. El bundle debe contener `es.lpr
 
 `--check-localizations` también abre las cinco páginas de Ajustes con áreas útiles de 1600 × 1200, 1280 × 740, 800 × 1400 y 1280 × 640 puntos. Comprueba la escala nativa, el uso del viewport, que el desplazamiento solo exista por desbordamiento real, que ambos extremos sean alcanzables y que los textos de Atajos no queden recortados; guarda capturas `.cache/locale-<idioma>-settings-<caso>-<página>.png`. Son ventanas AppKit propias en nivel flotante, con preferencias aisladas: no cambia resoluciones ni prueba físicamente esas pantallas.
 
+También comprueba que los controles de escenas se vean al abrir Mosaico, sin desplazarse, y usa la selección de la barra lateral AppKit para verificar que activa la página y el título correctos.
+
 ## Diagnósticos versionados y efectos
 
 Entrada reproducible sobre un bundle ya compilado:
@@ -125,6 +127,7 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | Comando | Efectos y condiciones |
 |---|---|
 | `target/debug/amspace --diagnose` | Lee permisos, Spaces, ventanas y geometría; no solicita un traslado. Requiere sesión gráfica para datos útiles |
+| `target/debug/amspace --check-border` | Dibuja el borde real sobre una ventana desechable de la pantalla principal colocada bajo un panel que deja pasar clics. Comprueba que ambos están en el orden esperado, que el borde está encajado y que no toma foco; captura solo el borde en `.cache/border-under-overlay.png`. No inyecta entrada ni mueve ventanas ajenas. |
 | `target/debug/amspace --check-transfer-preflight` | Planifica llegadas con caché vacía y mosaico habilitado en preferencias de registro aisladas; no mueve ventanas ni escribe preferencias persistentes. Necesita AX, una ventana normal visible y destinos reales para cubrirlos |
 | `target/debug/amspace --check-priority-shortcuts` | Instala y retira veinte taps con una combinación temporal; no inyecta teclas. Necesita AX y verifica ciclo de vida, no que el teclado físico venza a todas las apps |
 | `target/debug/amspace --check-space-transfer` | Crea otro proceso con ventana temporal, la envía a los demás escritorios y de vuelta, y verifica geometría oculta. Necesita AX y al menos dos escritorios. Modifica la ventana fixture, no documentos del usuario |

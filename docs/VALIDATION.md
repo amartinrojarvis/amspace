@@ -1,3 +1,10 @@
+## 0.9.44/build 99 — Recuperación de apps y borde en la pantalla principal
+
+- `check-scene-launch.sh`, en Apple Silicon con dos monitores físicos: guardado y recuperación exacta de cinco ventanas por AX y WindowServer, carga directa de escenas completas, elección explícita de carga parcial, apertura de una app cerrada con tres ventanas escalonadas y reapertura de una app oculta conservando el PID. La prueba usa aplicaciones desechables y un gestor aislado. No cubre documentos reales, una ventana minimizada ni el traslado de ventanas desde un Space oculto.
+- `--check-border`: en la pantalla principal, WindowServer confirmó una cubierta por delante de la ventana de prueba. El borde conservó su geometría, siguió visible y no tomó foco. La prueba unitaria mantiene el recorte para una ventana interactiva. La captura recoge el panel propio, no el contenido de la ventana.
+- `--check-localizations`, en el bundle universal: selección efectiva de las cinco páginas desde la barra lateral y controles de escena visibles al abrir Mosaico, en español e inglés y cuatro áreas útiles simuladas. Se inspeccionaron las capturas de General y Mosaico.
+- `scripts/check.sh`: formato, Clippy, plist y 298 pruebas aprobadas (nueve ignoradas). Bundle compilado para Apple Silicon e Intel; las pruebas gráficas se ejecutaron en Apple Silicon.
+
 ## 0.9.43/build 98 — Carga de escenas en escritorios ocupados
 
 - En Apple Silicon, con dos monitores físicos, el diagnóstico guardó y releyó una escena de cinco ventanas desechables. Cambió sus marcos y comprobó por AX y WindowServer la posición, tamaño y pertenencia de las cinco al cargar. Una de las ejecuciones usó `(2, 522)` y `(5, 5)`; el ID nativo `5` era el tercer escritorio de la pantalla principal, según el orden `[1, 4, 5, 6]`. No se movieron ventanas de trabajo para la prueba.

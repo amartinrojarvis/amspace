@@ -60,9 +60,9 @@ unsafe fn check_settings_layout(
             }
             let _: () = msg_send![&panel, orderFrontRegardless];
             let result = (|| -> Result<(), String> {
-                for (page, section) in SETTINGS_SECTIONS.iter().take(5).enumerate() {
+                for (page, (section, title, _)) in SETTINGS_SECTIONS.into_iter().enumerate() {
                     let _: () = msg_send![app.tabs, selectTabViewItemAtIndex:page];
-                    text(app.page_title, crate::i18n::tr(section.0));
+                    text(app.page_title, crate::i18n::tr(title));
                     pump(0.08);
                     let item: Obj = msg_send![app.tabs, tabViewItemAtIndex:page];
                     let view: Obj = msg_send![item, view];
@@ -74,36 +74,41 @@ unsafe fn check_settings_layout(
                     if (frame.size.width - bounds.size.width).abs() > 0.5
                         || (frame.size.height - bounds.size.height).abs() > 0.5
                         || (frame.size.width - viewport.size.width).abs() > 0.5
-                        || (page != 0 && (frame.size.height - viewport.size.height).abs() > 0.5)
+                        || (section != SettingsPage::Windows
+                            && (frame.size.height - viewport.size.height).abs() > 0.5)
                     {
                         return Err(format!(
                             "{name}, page {page}: scaled or unused page viewport."
                         ));
                     }
-                    let scroll: Obj = if page == 1 {
-                        app.space_scroll
-                    } else if page == 0 {
-                        ptr::null_mut()
-                    } else {
-                        let control = match page {
-                            2 => app.tile_controls[0],
-                            3 => app.shortcut_fields[0].0,
-                            _ => app.login,
-                        };
-                        msg_send![control, enclosingScrollView]
+                    let scroll: Obj = match section {
+                        SettingsPage::MenuBar => app.space_scroll,
+                        SettingsPage::Windows => ptr::null_mut(),
+                        SettingsPage::Mosaic => {
+                            msg_send![app.tile_controls[0], enclosingScrollView]
+                        }
+                        SettingsPage::Shortcuts => {
+                            msg_send![app.shortcut_fields[0].0, enclosingScrollView]
+                        }
+                        SettingsPage::General => msg_send![app.login, enclosingScrollView],
                     };
                     if !scroll.is_null() {
                         let clip: Obj = msg_send![scroll, contentView];
                         let visible: NSRect = msg_send![clip, bounds];
                         let document: Obj = msg_send![scroll, documentView];
                         let extent: NSRect = msg_send![document, frame];
-                        let content_height = match page {
-                            1 => app.space_rows.len() as f64 * 52.,
-                            2 => settings_tile_height(extent.size.width),
-                            3 => SETTINGS_SHORTCUTS_HEIGHT,
-                            _ => SETTINGS_GENERAL_HEIGHT,
+                        let content_height = match section {
+                            SettingsPage::MenuBar => app.space_rows.len() as f64 * 52.,
+                            SettingsPage::Mosaic => settings_tile_height(extent.size.width),
+                            SettingsPage::Shortcuts => SETTINGS_SHORTCUTS_HEIGHT,
+                            SettingsPage::General => SETTINGS_GENERAL_HEIGHT,
+                            SettingsPage::Windows => unreachable!(),
                         };
-                        let reserved = if page == 1 { 282. } else { 0. };
+                        let reserved = if section == SettingsPage::MenuBar {
+                            282.
+                        } else {
+                            0.
+                        };
                         let available = bounds.size.height - reserved;
                         let needs_scroll = content_height > available + 0.5;
                         let scrolls = extent.size.height > visible.size.height + 0.5;
@@ -117,6 +122,21 @@ unsafe fn check_settings_layout(
                                  viewport={}, document={}).",
                                 visible.size.height, extent.size.height,
                             ));
+                        }
+                        if section == SettingsPage::Mosaic {
+                            let action: Obj = msg_send![document, viewWithTag:130isize];
+                            let setting: Obj = msg_send![document, viewWithTag:137isize];
+                            if [action, setting].into_iter().any(|control| {
+                                if control.is_null() {
+                                    return true;
+                                }
+                                let frame: NSRect = msg_send![control, frame];
+                                frame.origin.y < extent.size.height - visible.size.height
+                            }) {
+                                return Err(format!(
+                                    "{name}: escenas no visibles al abrir Mosaico."
+                                ));
+                            }
                         }
                         // Check both ends through the actual native clip view.
                         for y in [0., (extent.size.height - visible.size.height).max(0.)] {
@@ -143,7 +163,7 @@ unsafe fn check_settings_layout(
                                 ));
                             }
                             let field: bool = msg_send![control, isKindOfClass:class!(NSTextField)];
-                            if page == 3 && field {
+                            if section == SettingsPage::Shortcuts && field {
                                 let cell: Obj = msg_send![control, cell];
                                 let fitted: NSSize = msg_send![cell, cellSizeForBounds:rect(0., 0., frame.size.width, frame.size.height)];
                                 if fitted.width > frame.size.width + 0.5
@@ -257,17 +277,25 @@ pub(crate) fn check_localizations() -> Result<(), String> {
             }
             check_settings_layout(&target, &defaults)?;
             let _: () = msg_send![&panel, orderFrontRegardless];
-            for page in 0..5isize {
-                with_app(|app| {
-                    let _: () = msg_send![app.tabs, selectTabViewItemAtIndex:page];
-                    text(
-                        app.page_title,
-                        crate::i18n::tr(SETTINGS_SECTIONS[page as usize].0),
-                    );
+            let navigation = APP.with(|cell| cell.borrow().as_ref().unwrap().settings_navigation);
+            for (page, (section, title, _)) in SETTINGS_SECTIONS.into_iter().enumerate() {
+                let indices: Obj = msg_send![class!(NSIndexSet), indexSetWithIndex:page];
+                let _: () =
+                    msg_send![navigation, selectRowIndexes:indices, byExtendingSelection:false];
+                let selected = APP.with(|cell| {
+                    let app = cell.borrow();
+                    let app = app.as_ref().unwrap();
+                    let item: Obj = msg_send![app.tabs, selectedTabViewItem];
+                    let index: isize = msg_send![app.tabs, indexOfTabViewItem:item];
+                    let heading: Retained<NSString> = msg_send![app.page_title, stringValue];
+                    index == page as isize && heading.to_string() == crate::i18n::tr(title)
                 });
+                if !selected {
+                    return Err(format!("La barra lateral no activó {title}."));
+                }
                 pump(0.08);
                 capture_window(&panel, &format!(".cache/locale-{code}-settings-{page}.png"))?;
-                if page == 2 {
+                if section == SettingsPage::Mosaic {
                     let content: Obj = msg_send![&panel, contentView];
                     for (tag, layout) in [
                         (77isize, crate::tiling::Layout::CenteredWide),
@@ -305,6 +333,8 @@ pub(crate) fn check_localizations() -> Result<(), String> {
                     )?;
                 }
             }
+            let first: Obj = msg_send![class!(NSIndexSet), indexSetWithIndex:0usize];
+            let _: () = msg_send![navigation, selectRowIndexes:first, byExtendingSelection:false];
             let content: Obj = msg_send![&panel, contentView];
             let selector: Obj = msg_send![content, viewWithTag:120isize];
             if selector.is_null() {
@@ -1378,5 +1408,116 @@ pub(crate) fn check_notice() -> Result<(), String> {
         }
         let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
         result
+    }
+}
+
+/// Two disposable AppKit panels in a separate owner, like a real target app.
+pub(crate) fn run_border_fixture() -> Result<(), String> {
+    unsafe {
+        let native: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![native, setActivationPolicy:1isize];
+        let _: () = msg_send![native, finishLaunching];
+        let screens: Obj = msg_send![class!(NSScreen), screens];
+        let screen: Obj = msg_send![screens, firstObject];
+        if screen.is_null() {
+            return Err("No hay pantalla para el diagnóstico de borde.".into());
+        }
+        let area: NSRect = msg_send![screen, visibleFrame];
+        let frame = rect(area.origin.x + 100., area.origin.y + 100., 320., 220.);
+        let backing: Allocated<AnyObject> = msg_send![class!(NSWindow), alloc];
+        let backing: Retained<AnyObject> = msg_send![backing,
+            initWithContentRect:frame, styleMask:0usize, backing:2usize, defer:false];
+        let _: () = msg_send![&backing, setReleasedWhenClosed:false];
+        let cover = window(frame, 128);
+        let _: () = msg_send![&cover, setOpaque:false];
+        let _: () = msg_send![&cover, setBackgroundColor:color(0.1, 0.1, 0.1, 0.02)];
+        for panel in [&backing, &cover] {
+            let _: () = msg_send![panel, setIgnoresMouseEvents:true];
+            let _: () = msg_send![panel, orderFrontRegardless];
+        }
+        pump(0.08);
+        let target: isize = msg_send![&backing, windowNumber];
+        let cover_id: isize = msg_send![&cover, windowNumber];
+        println!("{target} {cover_id}");
+        std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
+        pump(15.);
+        Ok(())
+    }
+}
+
+pub(crate) fn check_border() -> Result<(), String> {
+    use std::io::BufRead;
+    use std::process::{Child, Command, Stdio};
+    struct Fixture(Child);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = Fixture(
+        Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+            .arg("--border-fixture")
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?,
+    );
+    let mut line = String::new();
+    std::io::BufReader::new(child.0.stdout.take().ok_or("Sin salida del fixture.")?)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    let (target, cover) = line
+        .trim()
+        .split_once(' ')
+        .ok_or("Faltan ventanas del fixture.")?;
+    let target = target.parse::<u32>().map_err(|e| e.to_string())?;
+    let cover = cover.parse::<u32>().map_err(|e| e.to_string())?;
+    unsafe {
+        let native: Obj = msg_send![class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![native, setActivationPolicy:1isize];
+        let _: () = msg_send![native, finishLaunching];
+        let suite = NSString::from_str(&format!("amspace.ui.border.{}", std::process::id()));
+        let allocated: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![allocated, initWithSuiteName:&*suite];
+        let mut app = App::build(controller(), defaults);
+        let border: isize = msg_send![&app.border, windowNumber];
+        let ordered = ws::transition_windows().ok_or("Sin inventario del compositor.")?;
+        let mut on_screen = ordered.iter().filter(|w| w.onscreen);
+        let cover = on_screen
+            .find(|w| w.id == cover)
+            .ok_or("Cubierta no visible.")?;
+        let target_window = on_screen
+            .find(|w| w.id == target)
+            .ok_or("La cubierta no está delante.")?;
+        if cover.frame.is_none() || cover.frame != target_window.frame {
+            return Err("La cubierta no ocupa toda la ventana de prueba.".into());
+        }
+        let frame = target_window
+            .frame
+            .ok_or("La ventana de prueba no tiene geometría.")?;
+        app.tracked = Some(ws::Window {
+            id: target,
+            frame,
+            radius: 10.,
+        });
+        app.update_border_geometry();
+        let visible: bool = msg_send![&app.border, isVisible];
+        let key: bool = msg_send![&app.border, isKeyWindow];
+        let observed = ws::visible_border_regions(target, border as u32);
+        if !visible
+            || key
+            || !matches!(observed, Some((r, ref paths)) if r == frame && paths.as_slice() == [r])
+        {
+            return Err(format!(
+                "Borde oculto, desalineado o con foco: {observed:?}."
+            ));
+        }
+        let capture = capture_window(&app.border, ".cache/border-under-overlay.png");
+        app.hide_border();
+        capture?;
+        println!(
+            "PASS: borde visible y encajado, sin foco, bajo una cubierta que deja pasar clics."
+        );
+        Ok(())
     }
 }

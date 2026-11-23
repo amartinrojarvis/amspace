@@ -254,9 +254,9 @@ In **Mosaic → Grid and layout…** you can enable snapping to a virtual grid. 
 
 **Save layout** keeps the layout, proportions, structure and grid per desktop. **Restore layout** uses logical positions and requires the same number of windows; it does not distinguish applications.
 
-In **Settings → Tiling → Work scenes…**, name the visible arrangement and click **Save current scene**, or press Return. Click a scene’s card in the layout picker to load it immediately using available tiled windows. **View all…** opens the library, where **Load** reapplies the selected scene and **Review** allows manual window assignment. Missing windows and disconnected displays are skipped.
+In **Settings → Tiling → Manage scenes…**, name the visible arrangement and click **Save current scene**, or press Return. Click a scene’s card in the layout picker to load it. **View all…** opens the library, where **Load** reapplies the selected scene and **Review** allows manual window assignment. A complete scene loads immediately; otherwise choose to review, cancel or load what's available. Loading what's available contracts empty slots and does not redirect windows from disconnected displays.
 
-**Settings → Tiling → Open missing apps** is on by default. AMSpace asks once before opening installed apps that are not running. You can disable the setting or load without opening them. If you accept, AMSpace waits up to ten seconds for compatible windows and loads the scene without a second confirmation. It does not reopen specific documents.
+**Settings → Tiling → Open missing apps** is on by default and enables **Prepare apps and load**. It tries to open closed apps, unhide running apps or restore minimized windows on the current desktop. It waits up to ten seconds for compatible windows. If the scene is still incomplete, it offers alternatives before applying anything. It does not reopen specific documents or automatically move windows from another desktop.
 
 The review lists tiled windows on visible desktops. Tab groups keep their members on the same display. If a destination has extra windows, none are evicted: float the extras and click **Review**. An application can refuse a size or a move; AMSpace checks the resulting geometry before reporting success.
 

@@ -28,36 +28,99 @@ enum RestorePhase {
         desktops: Vec<(u32, u64)>,
         screens: Vec<crate::native::ScreenGeometry>,
     },
-    Ask(SceneReview, Vec<(String, Retained<AnyObject>)>),
+    Ask(SceneReview, SceneProblem),
     Waiting(SceneReview, SceneLaunch),
 }
 
 struct SceneLaunch {
     deadline: Instant,
     pending: Vec<(String, Receiver<bool>, bool)>,
-    failed: Vec<String>,
 }
 
-fn stopped_apps(review: &SceneReview) -> impl Iterator<Item = &str> {
+struct SceneProblem {
+    detail: String,
+    apps: Vec<(String, Retained<AnyObject>)>,
+    can_apply: bool,
+}
+
+fn missing_apps<'a>(
+    review: &'a SceneReview,
+    choices: &'a [Option<u32>],
+) -> impl Iterator<Item = &'a str> {
     let mut seen = HashSet::new();
     review
         .rows
         .iter()
-        .filter(|row| row.available && row.candidates.is_empty())
-        .map(|row| row.bundle.as_str())
+        .zip(choices)
+        .filter(|(row, choice)| row.available && choice.is_none())
+        .map(|(row, _)| row.bundle.as_str())
         .filter(move |&id| seen.insert(id))
-        .filter(|id| unsafe {
-            let apps: Obj = msg_send![class!(NSRunningApplication),
-                runningApplicationsWithBundleIdentifier:&*NSString::from_str(id)];
-            let count: usize = msg_send![apps, count];
-            count == 0
-        })
+}
+
+fn app_label(id: &str, url: Option<&AnyObject>) -> String {
+    unsafe {
+        let apps: Obj = msg_send![class!(NSRunningApplication),
+            runningApplicationsWithBundleIdentifier:&*NSString::from_str(id)];
+        let app: Obj = msg_send![apps, firstObject];
+        let name: Option<Retained<NSString>> = msg_send![app, localizedName];
+        if let Some(name) = name {
+            return name.to_string();
+        }
+        if let Some(url) = url {
+            let stem: Obj = msg_send![url, URLByDeletingPathExtension];
+            let name: Option<Retained<NSString>> = msg_send![stem, lastPathComponent];
+            if let Some(name) = name {
+                return name.to_string();
+            }
+        }
+        id.to_owned()
+    }
 }
 
 fn installed_app(id: &str) -> Option<Retained<AnyObject>> {
     unsafe {
         let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
         msg_send![workspace, URLForApplicationWithBundleIdentifier:&*NSString::from_str(id)]
+    }
+}
+
+fn prepare_app(id: &str, url: &AnyObject, missing: usize) -> Receiver<bool> {
+    let mut prepared = false;
+    unsafe {
+        let apps: Obj = msg_send![class!(NSRunningApplication),
+            runningApplicationsWithBundleIdentifier:&*NSString::from_str(id)];
+        let count: usize = msg_send![apps, count];
+        if count == 1 {
+            let app: Obj = msg_send![apps, firstObject];
+            let hidden: bool = msg_send![app, isHidden];
+            if hidden {
+                prepared = msg_send![app, unhide];
+            }
+            let pid: i32 = msg_send![app, processIdentifier];
+            let visible = scene_desktops();
+            let mut windows: Vec<_> = ax::application_windows(pid)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            windows.sort_unstable_by_key(|(id, _)| *id);
+            let restored = windows
+                .into_iter()
+                .filter(|(id, window)| {
+                    crate::spaces::window_space(*id)
+                        .is_some_and(|space| visible.iter().any(|&(_, current)| current == space))
+                        && ax::restore_minimized_window(window.0)
+                })
+                .take(missing)
+                .count();
+            prepared |= restored > 0;
+        }
+    }
+    if prepared {
+        let (sender, receiver) = mpsc::channel();
+        let _ = sender.send(true);
+        receiver
+    } else {
+        launch_app(url)
     }
 }
 
@@ -120,38 +183,51 @@ pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
                     app.show_notice(&message, crate::discovery::NoticeKind::Error);
                 }
             }
-            RestorePhase::Ask(origin, apps) => {
+            RestorePhase::Ask(origin, problem) => {
                 app.scene_prompt_open = true;
-                prompt = Some((restore.entry, origin, apps));
+                prompt = Some((restore.entry, origin, problem));
             }
             RestorePhase::Waiting(origin, launch) => {
                 app.update_scene_launch(restore.entry, origin, launch);
             }
         }
     });
-    let Some((entry, origin, apps)) = prompt else {
+    let Some((entry, origin, problem)) = prompt else {
         return;
     };
     // The native modal runs its own loop. Do not hold the App borrow while it is up.
-    let open = unsafe {
+    let response = unsafe {
         let alert: Retained<AnyObject> = msg_send![class!(NSAlert), new];
-        let _: () =
-            msg_send![&alert, setMessageText:&*NSString::from_str(tr("¿Abrir apps faltantes?"))];
-        let _: () = msg_send![&alert, setInformativeText:&*NSString::from_str(tr(
-            "Puedes abrirlas o cargar la escena solo con las ventanas disponibles."
-        ))];
-        let _: Obj =
-            msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr("Cargar sin abrir"))];
-        let _: Obj =
-            msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr("Abrir y cargar"))];
-        let response: isize = msg_send![&alert, runModal];
-        response == 1001
+        let _: () = msg_send![&alert, setMessageText:&*NSString::from_str(tr("Faltan ventanas para la escena"))];
+        let _: () = msg_send![&alert, setInformativeText:&*NSString::from_str(&problem.detail)];
+        let first = if problem.can_apply {
+            "Cargar disponibles"
+        } else {
+            "Revisar ventanas"
+        };
+        let _: Obj = msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr(first))];
+        let second = if !problem.apps.is_empty() {
+            "Preparar apps y cargar"
+        } else if problem.can_apply {
+            "Revisar ventanas"
+        } else {
+            "Cancelar"
+        };
+        let _: Obj = msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr(second))];
+        if second != "Cancelar" {
+            let _: Obj = msg_send![&alert, addButtonWithTitle:&*NSString::from_str(tr("Cancelar"))];
+        }
+        msg_send![&alert, runModal]
     };
     with_app(|app| {
         app.scene_prompt_open = false;
-        let result = app.resume_scene(entry, &origin, open, apps);
-        if let Err(message) = result {
-            app.show_notice(&message, crate::discovery::NoticeKind::Error);
+        match response {
+            1000 if problem.can_apply => app.resume_scene(entry, &origin, Vec::new()),
+            1001 if !problem.apps.is_empty() => app.resume_scene(entry, &origin, problem.apps),
+            1000 | 1001 if response == 1000 || problem.can_apply => {
+                app.review_scene_problem(&entry, &problem.detail);
+            }
+            _ => {}
         }
     });
 }
@@ -637,16 +713,77 @@ impl App {
 
     fn begin_scene(&mut self, defaults: Obj, entry: scene_library::Entry) -> Result<(), String> {
         let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
-        if open_missing(defaults) {
-            let apps: Vec<_> = stopped_apps(&review)
-                .filter_map(|id| Some((id.to_owned(), installed_app(id)?)))
-                .collect();
-            if !apps.is_empty() {
-                self.queue_scene(entry, RestorePhase::Ask(review, apps), 0.);
-                return Ok(());
+        if quick_choices(&review, None).iter().all(Option::is_some) {
+            if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
+                self.review_scene_problem(&entry, &message);
+            }
+        } else {
+            self.offer_scene_choices(entry, review, open_missing(defaults));
+        }
+        Ok(())
+    }
+
+    fn offer_scene_choices(
+        &mut self,
+        entry: scene_library::Entry,
+        review: SceneReview,
+        prepare: bool,
+    ) {
+        let choices = quick_choices(&review, None);
+        let can_apply = choices.iter().any(Option::is_some);
+        let mut detail = String::new();
+        let mut apps = Vec::new();
+        for id in missing_apps(&review, &choices) {
+            let url = installed_app(id);
+            if !detail.is_empty() {
+                detail.push('\n');
+            }
+            detail.push_str(&app_label(id, url.as_deref()));
+            if url.is_none() {
+                detail.push_str(tr(" — no instalada"));
+            }
+            if prepare && let Some(url) = url {
+                apps.push((id.to_owned(), url));
             }
         }
-        self.apply_quick_scene(defaults, &entry.id, &review)
+        if review.rows.iter().any(|row| !row.available) {
+            detail.push('\n');
+            detail.push_str(tr("Hay pantallas de la escena que no están disponibles."));
+        }
+        detail.push_str("\n\n");
+        detail.push_str(tr(if apps.is_empty() {
+            "En Revisar ventanas puedes elegir otras. Si una ventana está en otro escritorio, tráela al actual y vuelve a cargar."
+        } else {
+            "Preparar apps intenta abrirlas o mostrar sus ventanas. No se cambia de escritorio ni se trasladan ventanas ocultas en otro escritorio."
+        }));
+        self.queue_scene(
+            entry,
+            RestorePhase::Ask(
+                review,
+                SceneProblem {
+                    detail,
+                    apps,
+                    can_apply,
+                },
+            ),
+            0.,
+        );
+    }
+
+    fn review_scene_problem(&mut self, entry: &scene_library::Entry, message: &str) {
+        let target = Retained::as_ptr(&self.target) as Obj;
+        let defaults = Retained::as_ptr(&self.defaults) as Obj;
+        let panel = self.scenes.get_or_insert_with(|| Panel::new(target));
+        panel.reload(defaults, Some(&entry.id));
+        let review = self
+            .tile_manager
+            .review_scene(defaults, &entry.displays)
+            .ok();
+        panel.populate(review, target);
+        unsafe {
+            text(panel.status, message);
+            let _: () = msg_send![&panel.window, makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+        }
     }
 
     fn queue_scene(&mut self, entry: scene_library::Entry, phase: RestorePhase, delay: f64) {
@@ -678,19 +815,33 @@ impl App {
         &mut self,
         entry: scene_library::Entry,
         origin: &SceneReview,
-        open: bool,
         apps: Vec<(String, Retained<AnyObject>)>,
-    ) -> Result<(), String> {
+    ) {
         let defaults = Retained::as_ptr(&self.defaults) as Obj;
-        let review = self.scene_after_wait(defaults, &entry, origin)?;
-        if open && open_missing(defaults) {
-            let stopped: HashSet<_> = stopped_apps(&review).collect();
+        let review = match self.scene_after_wait(defaults, &entry, origin) {
+            Ok(review) => review,
+            Err(message) => {
+                self.review_scene_problem(&entry, &message);
+                return;
+            }
+        };
+        if !apps.is_empty() && open_missing(defaults) {
+            let choices = quick_choices(&review, None);
+            let mut needed = HashMap::<_, usize>::new();
+            for (row, choice) in review.rows.iter().zip(&choices) {
+                if row.available && choice.is_none() {
+                    *needed.entry(row.bundle.as_str()).or_default() += 1;
+                }
+            }
             let pending: Vec<_> = apps
                 .into_iter()
-                .filter(|(id, _)| stopped.contains(id.as_str()))
-                .map(|(id, url)| (id, launch_app(&url), false))
+                .filter_map(|(id, url)| {
+                    let response = prepare_app(&id, &url, *needed.get(id.as_str())?);
+                    Some((id, response, false))
+                })
                 .collect();
             if !pending.is_empty() {
+                self.tile_manager.invalidate();
                 self.show_notice(
                     tr("Abriendo aplicaciones y esperando sus ventanas…"),
                     crate::discovery::NoticeKind::Work,
@@ -702,15 +853,16 @@ impl App {
                         SceneLaunch {
                             deadline: Instant::now() + Duration::from_secs(10),
                             pending,
-                            failed: Vec::new(),
                         },
                     ),
                     0.25,
                 );
-                return Ok(());
+                return;
             }
         }
-        self.apply_quick_scene(defaults, &entry.id, &review)
+        if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
+            self.review_scene_problem(&entry, &message);
+        }
     }
 
     fn update_scene_launch(
@@ -723,7 +875,7 @@ impl App {
         let review = match self.scene_after_wait(defaults, &entry, &origin) {
             Ok(review) => review,
             Err(message) => {
-                self.show_notice(&message, crate::discovery::NoticeKind::Error);
+                self.review_scene_problem(&entry, &message);
                 return;
             }
         };
@@ -733,7 +885,6 @@ impl App {
                 match response.try_recv() {
                     Ok(true) => *opened = true,
                     Ok(false) | Err(TryRecvError::Disconnected) => {
-                        launch.failed.push(id.clone());
                         return false;
                     }
                     Err(TryRecvError::Empty) => {}
@@ -750,17 +901,12 @@ impl App {
             self.queue_scene(entry, RestorePhase::Waiting(origin, launch), 0.25);
             return;
         }
+        if choices.iter().any(Option::is_none) {
+            self.offer_scene_choices(entry, review, false);
+            return;
+        }
         if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
-            self.show_notice(&message, crate::discovery::NoticeKind::Error);
-        } else if !launch.failed.is_empty() {
-            self.show_notice(
-                &format!(
-                    "{} {}",
-                    tr("No se pudieron abrir:"),
-                    launch.failed.join(", ")
-                ),
-                crate::discovery::NoticeKind::Error,
-            );
+            self.review_scene_problem(&entry, &message);
         }
     }
 
@@ -958,7 +1104,6 @@ pub(crate) fn check_scene_fixture(
                 bundles: displays[0].bundles.clone(),
             };
             scene_library::save(defaults, "Antes", &displays)?;
-            displays.push(offline);
             let saved = scene_library::save(defaults, "Estudio", &displays)?;
             let mut desktop = crate::scene_library::ordinal_desktop(&displays[0])
                 .ok_or("No se pudo preparar la galería del fixture.")?;
@@ -1005,13 +1150,7 @@ pub(crate) fn check_scene_fixture(
             let initial = manager
                 .review_scene(defaults, &displays)
                 .map_err(|e| format!("Preparación de la tarjeta: {e}"))?;
-            let reordered: Vec<_> = ids
-                .iter()
-                .rev()
-                .copied()
-                .map(Some)
-                .chain(std::iter::repeat_n(None, ids.len()))
-                .collect();
+            let reordered: Vec<_> = ids.iter().rev().copied().map(Some).collect();
             manager
                 .apply_scene(defaults, &initial, &reordered)
                 .map_err(|e| format!("Permutación del fixture: {e}"))?;
@@ -1046,7 +1185,9 @@ pub(crate) fn check_scene_fixture(
                 "PASS: una tarjeta carga la escena directamente, sin revisión ni confirmación."
             );
             panel.captured_windows.remove(&saved);
-            panel.reload(defaults, Some(&saved));
+            displays.push(offline);
+            let offline_id = scene_library::save(defaults, "Pantalla ausente", &displays)?;
+            panel.reload(defaults, Some(&offline_id));
             panel.populate(Some(manager.review_scene(defaults, &displays)?), target);
             if panel.choices().is_some() {
                 return Err("Se eligieron automáticamente ventanas ambiguas.".into());
@@ -1164,11 +1305,19 @@ pub(crate) fn check_scene_fixture(
             APP.with(|cell| *cell.borrow_mut() = Some(app));
             let _: () = msg_send![load, performClick:ptr::null::<AnyObject>()];
             let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            let Some(Restore {
+                entry,
+                phase: RestorePhase::Ask(origin, problem),
+            }) = app.scene_restore.take()
+            else {
+                return Err("La escena incompleta no pidió una decisión.".into());
+            };
+            if !problem.apps.is_empty() || !problem.can_apply {
+                return Err("La escena ofreció abrir una app no instalada.".into());
+            }
+            app.resume_scene(entry, &origin, Vec::new());
             std::mem::swap(&mut app.tile_manager, &mut manager);
             panel = app.scenes.take().unwrap();
-            if app.scene_restore.is_some() {
-                return Err("Una app no instalada generó una solicitud de apertura.".into());
-            }
             for (ordinal, target) in expected.window_frames(area, 10.) {
                 let id = choices[ordinal as usize - 1].unwrap();
                 let actual = geometry(id)?;
@@ -1198,14 +1347,26 @@ pub(crate) fn check_scene_fixture(
                 let mut app = App::build(controller.clone(), prefs.clone());
                 let entry = scene_library::entry(defaults, &id).unwrap();
                 let review = app.tile_manager.review_scene(defaults, &entry.displays)?;
-                if stopped_apps(&review).collect::<Vec<_>>() != [bundle.as_str()]
+                let unfilled = quick_choices(&review, None);
+                let running = || {
+                    let apps: Obj = msg_send![class!(NSRunningApplication),
+                        runningApplicationsWithBundleIdentifier:&*NSString::from_str(&bundle)];
+                    let count: usize = msg_send![apps, count];
+                    count
+                };
+                if missing_apps(&review, &unfilled).collect::<Vec<_>>() != [bundle.as_str()]
+                    || running() != 0
                     || installed_app(&bundle).is_none()
                 {
                     return Err("El fixture de lanzamiento debe estar instalado y cerrado.".into());
                 }
                 crate::tile_manager::save(defaults, OPEN_MISSING, 0);
                 app.restore_scene(&id);
-                if app.scene_restore.is_some() || stopped_apps(&review).next().is_none() {
+                if !matches!(
+                    app.scene_restore.take().map(|restore| restore.phase),
+                    Some(RestorePhase::Ask(_, ref problem)) if problem.apps.is_empty()
+                ) || running() != 0
+                {
                     return Err("La opción desactivada solicitó abrir una app cerrada.".into());
                 }
                 let _: () =
@@ -1229,7 +1390,7 @@ pub(crate) fn check_scene_fixture(
                     super::diagnostics::pump(0.15);
                     answered.get()
                 };
-                let declined = answer(1000) && stopped_apps(&review).next().is_some();
+                let declined = answer(1002) && running() == 0;
                 let accepted = answer(1001);
                 let end = Instant::now() + Duration::from_secs(12);
                 let (pid, launched) = loop {
@@ -1289,6 +1450,52 @@ pub(crate) fn check_scene_fixture(
                 println!(
                     "PASS: la opción desactivada no abre; confirmar abre una app y sus tres ventanas escalonadas recuperan sus marcos por AX."
                 );
+
+                let apps: Obj = msg_send![class!(NSRunningApplication),
+                    runningApplicationsWithBundleIdentifier:&*NSString::from_str(&bundle)];
+                let running_app: Retained<AnyObject> = msg_send![apps, firstObject];
+                let fixture_url =
+                    installed_app(&bundle).ok_or("No se encontró la app de prueba.")?;
+                let parent: Obj = msg_send![&fixture_url, URLByDeletingLastPathComponent];
+                let path: Retained<NSString> = msg_send![parent, path];
+                let signal = std::path::Path::new(&path.to_string()).join("hide");
+                std::fs::File::create_new(signal).map_err(|err| err.to_string())?;
+                let end = Instant::now() + Duration::from_secs(2);
+                loop {
+                    let is_hidden: bool = msg_send![&running_app, isHidden];
+                    if is_hidden {
+                        break;
+                    }
+                    if Instant::now() >= end {
+                        return Err("macOS no ocultó la app desechable.".into());
+                    }
+                    super::diagnostics::pump(0.08);
+                }
+                APP.with(|cell| *cell.borrow_mut() = Some(_app));
+                if !answer(1001) {
+                    return Err("No se ofreció recuperar una app abierta y oculta.".into());
+                }
+                let end = Instant::now() + Duration::from_secs(4);
+                loop {
+                    let done =
+                        APP.with(|cell| cell.borrow().as_ref().unwrap().scene_restore.is_none());
+                    let is_hidden: bool = msg_send![&running_app, isHidden];
+                    if done && !is_hidden {
+                        break;
+                    }
+                    if Instant::now() >= end {
+                        return Err(
+                            "La recuperación no mostró la app que ya estaba abierta.".into()
+                        );
+                    }
+                    super::diagnostics::pump(0.08);
+                }
+                let _ = APP.with(|cell| cell.borrow_mut().take());
+                let still_pid: i32 = msg_send![&running_app, processIdentifier];
+                if still_pid != pid || running() != 1 {
+                    return Err("La recuperación reemplazó la instancia ya abierta.".into());
+                }
+                println!("PASS: recuperar una app oculta conserva su instancia y sus ventanas.");
             }
 
             let saved_frames = ids

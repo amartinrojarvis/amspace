@@ -33,7 +33,6 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>AMSpace Scene Fixture</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>LSUIElement</key><true/>
 <key>AMSpaceFixtureDisplay</key><integer>$display</integer>
 </dict></plist>
 PLIST

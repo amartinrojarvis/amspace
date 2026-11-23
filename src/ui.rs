@@ -196,6 +196,7 @@ struct App {
     updater: Option<Updater>,
     updates_switch: Obj,
     tabs: Obj,
+    settings_navigation: Obj,
     page_title: Obj,
     bar_colors: Vec<Obj>,
     space_page: Obj,
@@ -376,15 +377,23 @@ unsafe fn paint_swatch(button: Obj, name: &str, rgb: [f64; 3]) {
         let _: () = msg_send![button, setToolTip:&*NSString::from_str(name)];
     }
 }
-const SETTINGS_SECTIONS: [(&str, &str); 7] = [
-    ("Ventanas", "macwindow"),
-    ("Barra de menús", "menubar.rectangle"),
-    ("Mosaico", "rectangle.split.2x2"),
-    ("Atajos", "keyboard"),
-    ("General", "gearshape"),
-    ("Acerca de", "info.circle"),
-    ("Salir", "power"),
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsPage {
+    General,
+    MenuBar,
+    Windows,
+    Mosaic,
+    Shortcuts,
+}
+
+const SETTINGS_SECTIONS: [(SettingsPage, &str, &str); 5] = [
+    (SettingsPage::General, "General", "gearshape"),
+    (SettingsPage::MenuBar, "Barra de menús", "menubar.rectangle"),
+    (SettingsPage::Windows, "Ventanas", "macwindow"),
+    (SettingsPage::Mosaic, "Mosaico", "rectangle.split.2x2"),
+    (SettingsPage::Shortcuts, "Atajos", "keyboard"),
 ];
+const SETTINGS_ACTIONS: [(&str, &str); 2] = [("Acerca de", "info.circle"), ("Salir", "power")];
 unsafe fn build_navigation(parent: Obj, frame: NSRect, target: Obj, footer: bool) -> Obj {
     unsafe {
         let table = alloc_view(
@@ -423,13 +432,22 @@ unsafe fn build_navigation(parent: Obj, frame: NSRect, target: Obj, footer: bool
 extern "C-unwind" fn navigation_rows(_: Obj, _: Sel, table: Obj) -> isize {
     unsafe {
         let footer: isize = msg_send![table, tag];
-        if footer == 1 { 2 } else { 5 }
+        if footer == 1 {
+            SETTINGS_ACTIONS.len() as isize
+        } else {
+            SETTINGS_SECTIONS.len() as isize
+        }
     }
 }
 extern "C-unwind" fn navigation_view(_: Obj, _: Sel, table: Obj, _: Obj, row: isize) -> Obj {
     unsafe {
         let footer: isize = msg_send![table, tag];
-        let (title, symbol) = SETTINGS_SECTIONS[row as usize + if footer == 1 { 5 } else { 0 }];
+        let (title, symbol) = if footer == 1 {
+            SETTINGS_ACTIONS[row as usize]
+        } else {
+            let (_, title, symbol) = SETTINGS_SECTIONS[row as usize];
+            (title, symbol)
+        };
         let title = crate::i18n::tr(title);
         let cell = alloc_view(class!(NSTableCellView), rect(0., 0., 160., 36.));
         let field = label(
@@ -472,11 +490,9 @@ extern "C-unwind" fn navigation_selected(_: Obj, _: Sel, notification: Obj) {
                     return;
                 }
                 let _: () = msg_send![a.tabs, selectTabViewItemAtIndex:row];
-                text(
-                    a.page_title,
-                    crate::i18n::tr(SETTINGS_SECTIONS[row as usize].0),
-                );
-                if row == 1 {
+                let (page, title, _) = SETTINGS_SECTIONS[row as usize];
+                text(a.page_title, crate::i18n::tr(title));
+                if page == SettingsPage::MenuBar {
                     a.refresh_space_rows(true);
                 }
             });
@@ -490,7 +506,7 @@ const SETTINGS_GENERAL_HEIGHT: f64 = 488.;
 fn settings_tile_height(width: f64) -> f64 {
     let columns = if width >= 560. { 4 } else { 3 };
     let rows = crate::tiling::Layout::ALL.len().div_ceil(columns);
-    922. + rows.saturating_sub(2) as f64 * 108.
+    1100. + rows.saturating_sub(2) as f64 * 108.
 }
 
 fn settings_window_size(visible: NSSize) -> NSSize {
@@ -537,7 +553,7 @@ fn settings_tile_geometry(width: f64) -> (f64, Vec<NSRect>) {
         .map(|i| {
             rect(
                 8. + (i % columns) as f64 * (card_width + 16.),
-                height - 369. - (i / columns) as f64 * 108.,
+                height - 477. - (i / columns) as f64 * 108.,
                 card_width,
                 90.,
             )
@@ -729,6 +745,7 @@ impl App {
                 updater: None,
                 updates_switch: ptr::null_mut(),
                 tabs: ptr::null_mut(),
+                settings_navigation: ptr::null_mut(),
                 page_title: ptr::null_mut(),
                 bar_colors: vec![],
                 space_page: ptr::null_mut(),
@@ -1656,7 +1673,8 @@ impl App {
                 0.5,
                 false,
             );
-            build_navigation(side, rect(12., height - 328., 160., 228.), target, false);
+            self.settings_navigation =
+                build_navigation(side, rect(12., height - 328., 160., 228.), target, false);
             self.preview = label(
                 side,
                 rect(20., 144., 145., 28.),
@@ -1676,7 +1694,7 @@ impl App {
             self.page_title = label(
                 root,
                 rect(220., height - 82., 432., 32.),
-                crate::i18n::tr("Ventanas"),
+                crate::i18n::tr(SETTINGS_SECTIONS[0].1),
                 24.,
                 0.4,
                 false,
@@ -1686,9 +1704,13 @@ impl App {
                 rect(220., 78., content_width, tab_height),
             );
             let _: () = msg_send![&tabs, setTabViewType:6usize];
-            for i in 0..5 {
+            for (section, _, _) in SETTINGS_SECTIONS {
                 let view = alloc_view(class!(NSView), rect(0., 0., content_width, tab_height));
-                let page_height = if i == 0 { 360. } else { tab_height };
+                let page_height = if section == SettingsPage::Windows {
+                    360.
+                } else {
+                    tab_height
+                };
                 let inner = alloc_view(
                     class!(NSView),
                     rect(0., tab_height - page_height, content_width, page_height),
@@ -1696,12 +1718,12 @@ impl App {
                 // Frame and bounds match: never shrink text or hit targets.
                 let _: () = msg_send![&view, addSubview:&*inner];
                 let page = Retained::as_ptr(&inner) as Obj;
-                match i {
-                    0 => self.build_window_page(page, target),
-                    1 => self.build_space_page(page, target),
-                    2 => self.build_tile_page(page, target),
-                    3 => self.build_shortcuts_page(page, target),
-                    _ => self.build_application_page(page, target),
+                match section {
+                    SettingsPage::General => self.build_application_page(page, target),
+                    SettingsPage::MenuBar => self.build_space_page(page, target),
+                    SettingsPage::Windows => self.build_window_page(page, target),
+                    SettingsPage::Mosaic => self.build_tile_page(page, target),
+                    SettingsPage::Shortcuts => self.build_shortcuts_page(page, target),
                 }
                 let item: Retained<AnyObject> = msg_send![class!(NSTabViewItem), new];
                 let _: () = msg_send![&item, setView:&*view];
@@ -2522,10 +2544,45 @@ impl App {
                 40,
                 crate::tile_manager::pref(defaults, "tile.enabled") != 0,
             );
-            card(root, rect(0., height - 218., width, 140.));
+            let scene_top = height - 78.;
+            card(root, rect(0., scene_top - 94., width, 94.));
             label(
                 root,
-                rect(18., height - 113., width - 36., 24.),
+                rect(18., scene_top - 36., width - 206., 24.),
+                crate::i18n::tr("Escenas de trabajo"),
+                14.,
+                0.3,
+                false,
+            );
+            button(
+                root,
+                rect(width - 183., scene_top - 39., 165., 30.),
+                crate::i18n::tr("Gestionar escenas…"),
+                target,
+                130,
+            );
+            let open_missing = crate::i18n::tr("Abrir apps faltantes");
+            label(
+                root,
+                rect(18., scene_top - 75., width - 90., 22.),
+                open_missing,
+                13.,
+                0.,
+                false,
+            );
+            toggle(
+                root,
+                width - 58.,
+                scene_top - 75.,
+                open_missing,
+                target,
+                137,
+                scenes::open_missing(defaults),
+            );
+            card(root, rect(0., height - 326., width, 140.));
+            label(
+                root,
+                rect(18., height - 221., width - 36., 24.),
                 crate::i18n::tr("Distribuciones predeterminadas"),
                 14.,
                 0.3,
@@ -2534,14 +2591,14 @@ impl App {
             for (portrait, y, tag, title, area) in [
                 (
                     false,
-                    height - 149.,
+                    height - 257.,
                     77isize,
                     "Pantalla apaisada",
                     rect(0., 0., 1600., 900.),
                 ),
                 (
                     true,
-                    height - 183.,
+                    height - 291.,
                     78isize,
                     "Pantalla vertical",
                     rect(0., 0., 900., 1600.),
@@ -2570,7 +2627,7 @@ impl App {
             }
             label(
                 root,
-                rect(18., height - 212., width - 36., 20.),
+                rect(18., height - 320., width - 36., 20.),
                 crate::i18n::tr("Se usan si el escritorio no tiene una plantilla propia."),
                 11.,
                 0.,
@@ -2578,7 +2635,7 @@ impl App {
             );
             let title = label(
                 root,
-                rect(18., height - 256., width - 90., 24.),
+                rect(18., height - 364., width - 90., 24.),
                 "",
                 14.,
                 0.3,
@@ -2587,7 +2644,7 @@ impl App {
             let enabled = toggle(
                 root,
                 width - 58.,
-                height - 256.,
+                height - 364.,
                 crate::i18n::tr("Mosaico en este escritorio"),
                 target,
                 41,
@@ -2608,17 +2665,55 @@ impl App {
                 let _: () = msg_send![b, setAccessibilityLabel:&*NSString::from_str(&crate::tr_format!("Plantilla: {}", "Layout: {}", layout.name()))];
                 self.tile_choices.push(b);
             }
-            // The lower rows start under the last template row, whatever its
-            // position for the current column count, so nothing overlaps.
-            let last_row = cards.last().map_or(245., |card| card.origin.y);
-            let animation_row = last_row - 37.;
-            let float_drop_row = animation_row - 40.;
-            let simple_row = float_drop_row - 40.;
-            let preview_row = simple_row - 40.;
-            let groups_row = preview_row - 40.;
-            let max_row = groups_row - 40.;
-            let alignment_row = max_row - 40.;
-            let actions_row = alignment_row - 44.;
+            // Anchor subsections below the grid regardless of the number of columns.
+            let last_row = cards.last().map_or(515., |card| card.origin.y);
+            let actions_row = last_row - 38.;
+            let gestures_top = actions_row - 16.;
+            button(
+                root,
+                rect(15., actions_row, (width - 36.) / 2., 28.),
+                crate::i18n::tr("Rejilla y plantillas…"),
+                target,
+                49,
+            );
+            button(
+                root,
+                rect(width / 2. + 3., actions_row, (width - 36.) / 2., 28.),
+                crate::i18n::tr("Selector de plantillas"),
+                target,
+                57,
+            );
+            let tabs_top = gestures_top - 204.;
+            for (top, height, title) in [
+                (gestures_top, 190., "Colocación y gestos"),
+                (tabs_top, 156., "Pestañas del mosaico"),
+            ] {
+                card(root, rect(0., top - height, width, height));
+                label(
+                    root,
+                    rect(18., top - 36., width - 206., 24.),
+                    crate::i18n::tr(title),
+                    14.,
+                    0.3,
+                    false,
+                );
+            }
+            card(root, rect(0., 10., width, 72.));
+            label(
+                root,
+                rect(18., 49., width - 206., 22.),
+                crate::i18n::tr("Excepciones"),
+                14.,
+                0.3,
+                false,
+            );
+            let simple_row = gestures_top - 72.;
+            let animation_row = simple_row - 34.;
+            let preview_row = animation_row - 34.;
+            let float_drop_row = preview_row - 34.;
+            let groups_row = tabs_top - 72.;
+            let max_row = groups_row - 34.;
+            let alignment_row = max_row - 34.;
             label(
                 root,
                 rect(18., animation_row, width - 90., 22.),
@@ -2753,49 +2848,10 @@ impl App {
                 isize::from(crate::tile_manager::pref(defaults, "tile.groups.centered") == 1);
             let _: () = msg_send![alignment,selectItemAtIndex:selected];
             let _: () = msg_send![alignment,setAccessibilityLabel:&*NSString::from_str(crate::i18n::tr("Alineación de pestañas"))];
+            let hint = label(root, rect(18., 20., width - 211., 24.), "", 11., 0., true);
             button(
                 root,
-                rect(15., actions_row, (width - 36.) / 2., 28.),
-                crate::i18n::tr("Rejilla y plantillas…"),
-                target,
-                49,
-            );
-            button(
-                root,
-                rect(width / 2. + 3., actions_row, (width - 36.) / 2., 28.),
-                crate::i18n::tr("Selector de plantillas"),
-                target,
-                57,
-            );
-            button(
-                root,
-                rect(15., actions_row - 36., width - 30., 30.),
-                crate::i18n::tr("Escenas de trabajo…"),
-                target,
-                130,
-            );
-            let open_missing = crate::i18n::tr("Abrir apps faltantes");
-            label(
-                root,
-                rect(18., actions_row - 72., width - 90., 22.),
-                open_missing,
-                13.,
-                0.,
-                false,
-            );
-            toggle(
-                root,
-                width - 58.,
-                actions_row - 72.,
-                open_missing,
-                target,
-                137,
-                scenes::open_missing(defaults),
-            );
-            let hint = label(root, rect(18., 17., width - 200., 24.), "", 11., 0., true);
-            button(
-                root,
-                rect(width - 181., 12., 165., 30.),
+                rect(width - 183., 29., 165., 30.),
                 crate::i18n::tr("Apps flotantes…"),
                 target,
                 46,
@@ -3594,46 +3650,39 @@ impl App {
                 self.updater.as_ref().is_some_and(Updater::automatic_checks),
             );
             let _: () = msg_send![self.updates_switch, setEnabled:available];
+            card(root, rect(0., 10., width, 106.));
             label(
                 root,
-                rect(18., 77., 245., 24.),
-                concat!("AMSpace ", env!("CARGO_PKG_VERSION")),
+                rect(18., 74., 245., 24.),
+                crate::i18n::tr("Soporte"),
                 14.,
                 0.3,
                 false,
             );
             button(
                 root,
-                rect(width - 192., 72., 176., 30.),
+                rect(width - 192., 136., 176., 30.),
                 crate::i18n::tr("Historial de versiones"),
                 target,
                 32,
             );
-            label(
-                root,
-                rect(18., 44., 200., 20.),
-                "Alberto Martín",
-                12.,
-                0.,
-                true,
-            );
             button(
                 root,
-                rect(width - 192., 28., 176., 30.),
+                rect(width - 192., 69., 176., 30.),
                 crate::i18n::tr("Copiar diagnóstico"),
                 target,
                 99,
             );
             button(
                 root,
-                rect(14., 0., width - 210., 30.),
+                rect(14., 25., width - 210., 30.),
                 crate::i18n::tr("Instalación y ayuda…"),
                 target,
                 113,
             );
             button(
                 root,
-                rect(width - 192., 0., 176., 30.),
+                rect(width - 192., 25., 176., 30.),
                 crate::i18n::tr("Enviar feedback…"),
                 target,
                 116,

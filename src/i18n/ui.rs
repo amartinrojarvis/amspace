@@ -1,6 +1,11 @@
 //! Authored settings, sidebar, menu, tooltip, accessibility and feedback strings.
 pub(super) fn english(text: &str) -> Option<&'static str> {
     Some(match text {
+        "Colocación y gestos" => "Placement and gestures",
+        "Pestañas del mosaico" => "Tiling tabs",
+        "Gestionar escenas…" => "Manage scenes…",
+        "Excepciones" => "Exceptions",
+        "Soporte" => "Support",
         "Activa Mosaico en Ajustes para usar escenas de trabajo." => {
             "Enable tiling in Settings to use work scenes."
         }
@@ -49,11 +54,19 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Aplicar escena" => "Apply scene",
         "Cargar" => "Load",
         "Abrir apps faltantes" => "Open missing apps",
-        "¿Abrir apps faltantes?" => "Open missing apps?",
-        "Cargar sin abrir" => "Load without opening",
-        "Abrir y cargar" => "Open and load",
-        "Puedes abrirlas o cargar la escena solo con las ventanas disponibles." => {
-            "Open the apps, or load the scene using only the available windows."
+        "Faltan ventanas para la escena" => "Windows are missing from the scene",
+        "Cargar disponibles" => "Load available windows",
+        "Preparar apps y cargar" => "Prepare apps and load",
+        "Revisar ventanas" => "Review windows",
+        " — no instalada" => " — not installed",
+        "Hay pantallas de la escena que no están disponibles." => {
+            "Some of the scene’s displays are unavailable."
+        }
+        "En Revisar ventanas puedes elegir otras. Si una ventana está en otro escritorio, tráela al actual y vuelve a cargar." => {
+            "Choose alternatives in Review windows. If a window is on another desktop, bring it to the current one and load again."
+        }
+        "Preparar apps intenta abrirlas o mostrar sus ventanas. No se cambia de escritorio ni se trasladan ventanas ocultas en otro escritorio." => {
+            "Preparing apps tries to open them or show their windows. It does not switch desktops or move hidden windows from another desktop."
         }
         "La pantalla o el escritorio han cambiado. Vuelve a cargar la escena." => {
             "The display or desktop changed. Load the scene again."
@@ -61,7 +74,6 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Abriendo aplicaciones y esperando sus ventanas…" => {
             "Opening apps and waiting for their windows…"
         }
-        "No se pudieron abrir:" => "Could not open:",
         "Pantalla sin mosaico disponible" => "No available layout on this display",
         "Sin ventana compatible" => "No matching window",
         "Elige una ventana…" => "Choose a window…",

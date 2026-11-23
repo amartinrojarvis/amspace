@@ -38,6 +38,7 @@ struct Api {
     connection: unsafe extern "C" fn() -> i32,
     bounds: unsafe extern "C" fn(i32, u32, *mut NSRect) -> i32,
     move_window: Option<unsafe extern "C" fn(i32, u32, *const NSPoint) -> i32>,
+    window_tags: Option<unsafe extern "C" fn(i32, u32, *mut u32, usize) -> i32>,
     register: unsafe extern "C" fn(
         extern "C" fn(u32, *const c_void, usize, *mut c_void),
         u32,
@@ -86,6 +87,12 @@ fn api() -> Option<&'static Api> {
                 std::mem::transmute::<
                     *mut c_void,
                     unsafe extern "C" fn(i32, u32, *const NSPoint) -> i32,
+                >(p)
+            }),
+            window_tags: sym(c"SLSGetWindowTags").map(|p| {
+                std::mem::transmute::<
+                    *mut c_void,
+                    unsafe extern "C" fn(i32, u32, *mut u32, usize) -> i32,
                 >(p)
             }),
             register: load!(
@@ -461,7 +468,20 @@ pub fn visible_border_regions(target: u32, border: u32) -> Option<(NSRect, Vec<N
         border,
         &visible_spaces,
         crate::spaces::window_space,
+        passes_mouse_events,
     )
+}
+
+fn passes_mouse_events(window: u32) -> bool {
+    let Some(api) = api() else { return false };
+    let Some(query) = api.window_tags else {
+        return false;
+    };
+    let mut tags = [0u32; 2];
+    let status = unsafe { query((api.connection)(), window, tags.as_mut_ptr(), 64) };
+    // kCGSIgnoreForEventsTagBit. A click-through HUD is not an
+    // interactive window and its enclosing rectangle must not erase the border.
+    status == 0 && tags[0] & (1 << 9) != 0
 }
 
 // WindowServer orders this immutable list front to back. Locate the target
@@ -472,6 +492,7 @@ fn regions_from_list(
     border: u32,
     visible: &[u64],
     mut space: impl FnMut(u32) -> Option<u64>,
+    mut passes_events: impl FnMut(u32) -> bool,
 ) -> Option<(NSRect, Vec<NSRect>)> {
     if target == border {
         return None;
@@ -491,11 +512,8 @@ fn regions_from_list(
             return None;
         }
         let candidate = visible_window_frame(info)?;
-        (candidate.size.width > 0.
-            && candidate.size.height > 0.
-            && crate::border::intersection(frame, candidate).is_some()
-            && on_screen(id))
-        .then_some(candidate)
+        let overlap = crate::border::intersection(frame, candidate)?;
+        (on_screen(id) && !(overlap == frame && passes_events(id))).then_some(candidate)
     });
     Some((frame, crate::border::visible_regions(frame, occluders)))
 }
@@ -964,28 +982,53 @@ mod tests {
             let clipped = Some((target, vec![rect(0., 0., 50., 80.)]));
             let mut queried = Vec::new();
             assert_eq!(
-                regions_from_list(list, 20, 40, &[7], |id| {
-                    queried.push(id);
-                    None // Unknown membership does not override the on-screen list.
-                }),
+                regions_from_list(
+                    list,
+                    20,
+                    40,
+                    &[7],
+                    |id| {
+                        queried.push(id);
+                        None // Unknown membership does not override the on-screen list.
+                    },
+                    |_| false,
+                ),
                 clipped
             );
             assert_eq!(queried, [20, 32]);
             assert_eq!(
-                regions_from_list(list, 20, 40, &[], |_| unreachable!()),
+                regions_from_list(list, 20, 40, &[], |_| unreachable!(), |_| false),
                 clipped
             );
             assert_eq!(
-                regions_from_list(list, 20, 40, &[7], |id| Some(if id == 32 { 8 } else { 7 })),
+                regions_from_list(
+                    list,
+                    20,
+                    40,
+                    &[7],
+                    |id| Some(if id == 32 { 8 } else { 7 }),
+                    |_| false,
+                ),
                 Some((target, vec![target]))
             );
-            assert_eq!(regions_from_list(list, 20, 40, &[7], |_| Some(8)), None);
+            assert_eq!(
+                regions_from_list(list, 20, 40, &[7], |_| Some(8), |_| false),
+                None
+            );
             for id in [34, 40, 99] {
                 assert_eq!(
-                    regions_from_list(list, id, 40, &[7], |_| unreachable!()),
+                    regions_from_list(list, id, 40, &[7], |_| unreachable!(), |_| false),
                     None
                 );
             }
+            assert_eq!(
+                regions_from_list(list, 20, 40, &[], |_| unreachable!(), |id| id == 32),
+                clipped
+            );
+            assert_eq!(
+                regions_from_list(list, 20, 99, &[], |_| unreachable!(), |id| id == 40,),
+                Some((target, vec![rect(0., 0., 50., 80.)]))
+            );
         });
     }
 }
