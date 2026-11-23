@@ -1,5 +1,5 @@
 //! Explicit main-thread diagnostics using only AMSpace panels and isolated defaults.
-pub(crate) use super::scenes::check_scene_fixture;
+pub(crate) use super::scenes::{check_scene_fixture, quick_choices};
 use super::*;
 
 pub(super) fn pump(seconds: f64) {

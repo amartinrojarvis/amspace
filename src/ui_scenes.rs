@@ -19,13 +19,17 @@ pub(super) fn open_missing(defaults: Obj) -> bool {
 
 pub(super) struct Restore {
     entry: scene_library::Entry,
-    origin: SceneReview,
     phase: RestorePhase,
 }
 
 enum RestorePhase {
-    Ask(Vec<(String, Retained<AnyObject>)>),
-    Waiting(SceneLaunch),
+    Settling {
+        deadline: Instant,
+        desktops: Vec<(u32, u64)>,
+        screens: Vec<crate::native::ScreenGeometry>,
+    },
+    Ask(SceneReview, Vec<(String, Retained<AnyObject>)>),
+    Waiting(SceneReview, SceneLaunch),
 }
 
 struct SceneLaunch {
@@ -80,12 +84,48 @@ pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
             return;
         };
         match restore.phase {
-            RestorePhase::Ask(apps) => {
-                app.scene_prompt_open = true;
-                prompt = Some((restore.entry, restore.origin, apps));
+            RestorePhase::Settling {
+                deadline,
+                desktops,
+                screens,
+            } => {
+                let defaults = Retained::as_ptr(&app.defaults) as Obj;
+                let result = app.scene_access(defaults).and_then(|()| {
+                    if scene_desktops() != desktops
+                        || crate::native::screen_configuration() != screens
+                    {
+                        return Err(tr(
+                            "La pantalla o el escritorio han cambiado. Vuelve a cargar la escena.",
+                        )
+                        .into());
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(tr("Espera a que termine el cambio de escritorio.").into());
+                    }
+                    if app.tile_manager.scene_waiting_for_space() {
+                        app.queue_scene(
+                            restore.entry,
+                            RestorePhase::Settling {
+                                deadline,
+                                desktops,
+                                screens,
+                            },
+                            0.125,
+                        );
+                        return Ok(());
+                    }
+                    app.begin_scene(defaults, restore.entry)
+                });
+                if let Err(message) = result {
+                    app.show_notice(&message);
+                }
             }
-            RestorePhase::Waiting(launch) => {
-                app.update_scene_launch(restore.entry, restore.origin, launch);
+            RestorePhase::Ask(origin, apps) => {
+                app.scene_prompt_open = true;
+                prompt = Some((restore.entry, origin, apps));
+            }
+            RestorePhase::Waiting(origin, launch) => {
+                app.update_scene_launch(restore.entry, origin, launch);
             }
         }
     });
@@ -114,6 +154,12 @@ pub(super) extern "C-unwind" fn launch_progress(target: Obj, _: Sel, _: Obj) {
             app.show_notice(&message);
         }
     });
+}
+
+fn scene_desktops() -> Vec<(u32, u64)> {
+    let mut desktops = crate::spaces::visible_desktops();
+    desktops.sort_unstable();
+    desktops
 }
 
 pub(super) struct Panel {
@@ -150,7 +196,10 @@ fn remembered_slots(
         .collect()
 }
 
-fn quick_choices(review: &SceneReview, remembered: Option<&[SceneWindow]>) -> Vec<Option<u32>> {
+pub(crate) fn quick_choices(
+    review: &SceneReview,
+    remembered: Option<&[SceneWindow]>,
+) -> Vec<Option<u32>> {
     let mut choices = remembered_slots(review, remembered);
     let mut used: HashSet<_> = review
         .rows
@@ -158,9 +207,18 @@ fn quick_choices(review: &SceneReview, remembered: Option<&[SceneWindow]>) -> Ve
         .zip(&choices)
         .filter_map(|(row, choice)| choice.map(|i| row.candidates[i].id))
         .collect();
-    for (row, choice) in review.rows.iter().zip(&mut choices) {
-        if choice.is_none() {
-            *choice = row.candidates.iter().position(|c| used.insert(c.id));
+    // Reserve windows already on their saved monitor before filling gaps
+    // elsewhere: an early missing slot must not steal a later local match.
+    for local_only in [true, false] {
+        for (row, choice) in review.rows.iter().zip(&mut choices) {
+            if choice.is_none() {
+                let candidates = if local_only {
+                    &row.candidates[..row.local_candidates]
+                } else {
+                    &row.candidates
+                };
+                *choice = candidates.iter().position(|c| used.insert(c.id));
+            }
         }
     }
     review
@@ -425,7 +483,7 @@ impl Panel {
                     let _: () = msg_send![app, setLineBreakMode:4isize];
                     let _: () = msg_send![app, setToolTip:&*NSString::from_str(&row.bundle)];
                     let first = if !row.available {
-                        tr("Pantalla desconectada")
+                        tr("Pantalla sin mosaico disponible")
                     } else if row.candidates.is_empty() {
                         tr("Sin ventana compatible")
                     } else {
@@ -558,35 +616,41 @@ impl App {
             self.scene_access(defaults)?;
             let entry = scene_library::entry(defaults, id)
                 .ok_or_else(|| tr("Esta escena ya no está guardada. Elige otra.").to_owned())?;
-            let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
-            if open_missing(defaults) {
-                let apps: Vec<_> = stopped_apps(&review)
-                    .filter_map(|id| Some((id.to_owned(), installed_app(id)?)))
-                    .collect();
-                if !apps.is_empty() {
-                    self.queue_scene(entry, review, RestorePhase::Ask(apps), 0.);
-                    return Ok(());
-                }
+            if self.tile_manager.scene_waiting_for_space() {
+                self.queue_scene(
+                    entry,
+                    RestorePhase::Settling {
+                        deadline: Instant::now() + Duration::from_secs(3),
+                        desktops: scene_desktops(),
+                        screens: crate::native::screen_configuration(),
+                    },
+                    0.125,
+                );
+                return Ok(());
             }
-            self.apply_quick_scene(defaults, &entry.id, &review)
+            self.begin_scene(defaults, entry)
         })();
         if let Err(message) = result {
             self.show_notice(&message);
         }
     }
 
-    fn queue_scene(
-        &mut self,
-        entry: scene_library::Entry,
-        origin: SceneReview,
-        phase: RestorePhase,
-        delay: f64,
-    ) {
-        self.scene_restore = Some(Restore {
-            entry,
-            origin,
-            phase,
-        });
+    fn begin_scene(&mut self, defaults: Obj, entry: scene_library::Entry) -> Result<(), String> {
+        let review = self.tile_manager.review_scene(defaults, &entry.displays)?;
+        if open_missing(defaults) {
+            let apps: Vec<_> = stopped_apps(&review)
+                .filter_map(|id| Some((id.to_owned(), installed_app(id)?)))
+                .collect();
+            if !apps.is_empty() {
+                self.queue_scene(entry, RestorePhase::Ask(review, apps), 0.);
+                return Ok(());
+            }
+        }
+        self.apply_quick_scene(defaults, &entry.id, &review)
+    }
+
+    fn queue_scene(&mut self, entry: scene_library::Entry, phase: RestorePhase, delay: f64) {
+        self.scene_restore = Some(Restore { entry, phase });
         schedule_app_callback(
             Retained::as_ptr(&self.target) as Obj,
             sel!(sceneLaunchProgress:),
@@ -630,12 +694,14 @@ impl App {
                 self.show_notice(tr("Abriendo aplicaciones y esperando sus ventanas…"));
                 self.queue_scene(
                     entry,
-                    review,
-                    RestorePhase::Waiting(SceneLaunch {
-                        deadline: Instant::now() + Duration::from_secs(10),
-                        pending,
-                        failed: Vec::new(),
-                    }),
+                    RestorePhase::Waiting(
+                        review,
+                        SceneLaunch {
+                            deadline: Instant::now() + Duration::from_secs(10),
+                            pending,
+                            failed: Vec::new(),
+                        },
+                    ),
                     0.25,
                 );
                 return Ok(());
@@ -676,7 +742,7 @@ impl App {
                     .any(|row| &row.bundle == id && !row.candidates.is_empty())
         });
         if !launch.pending.is_empty() && Instant::now() < launch.deadline {
-            self.queue_scene(entry, origin, RestorePhase::Waiting(launch), 0.25);
+            self.queue_scene(entry, RestorePhase::Waiting(origin, launch), 0.25);
             return;
         }
         if let Err(message) = self.apply_quick_scene(defaults, &entry.id, &review) {
@@ -702,16 +768,31 @@ impl App {
             .and_then(|panel| panel.captured_windows.get(id))
             .map(Vec::as_slice);
         let choices = quick_choices(review, remembered);
-        if choices.iter().all(Option::is_none) {
+        let applied = choices.iter().flatten().count();
+        if applied == 0 {
             return Err(tr("No hay ventanas compatibles en los mosaicos visibles.").into());
         }
         self.tile_manager.apply_scene(defaults, review, &choices)?;
         self.refresh_tile_controls();
-        let message = if choices.iter().any(Option::is_none) {
-            tr("Escena aplicada con puestos omitidos.")
-        } else {
+        let partial;
+        let message = if applied == choices.len() {
             tr("Escena aplicada.")
+        } else {
+            partial = crate::tr_format!(
+                "Escena aplicada: {} de {} puestos.",
+                "Scene applied: {} of {} slots.",
+                applied,
+                choices.len()
+            );
+            &partial
         };
+        if !self
+            .scenes
+            .as_ref()
+            .is_some_and(|panel| unsafe { msg_send![&*panel.window, isVisible] })
+        {
+            self.show_notice(message);
+        }
         if let Some(panel) = &mut self.scenes {
             let target = Retained::as_ptr(&self.target) as Obj;
             panel.populate(None, target);
@@ -1128,7 +1209,7 @@ pub(crate) fn check_scene_fixture(
                         let app = cell.borrow();
                         matches!(
                             app.as_ref().and_then(|app| app.scene_restore.as_ref()).map(|r| &r.phase),
-                            Some(RestorePhase::Waiting(launch)) if matches!(launch.pending.as_slice(), [(_, _, true)])
+                            Some(RestorePhase::Waiting(_, launch)) if matches!(launch.pending.as_slice(), [(_, _, true)])
                         )
                     }) {
                         break true;
@@ -1177,12 +1258,14 @@ pub(crate) fn check_scene_fixture(
                 &original,
                 panel.captured_windows.get(&saved.id).map(Vec::as_slice),
             );
+            let extra = reordered[2].ok_or("Falta el tercer miembro del mosaico inicial.")?;
             reordered.rotate_left(1);
             manager.apply_scene(defaults, &original, &reordered)?;
             if geometry(ids[0])? == saved_frames[0] {
                 return Err("La distribución intermedia no cambió la posición de prueba.".into());
             }
             let saved_id = saved.id.clone();
+            let mut subset = saved.displays[0].clone();
             let mut app = App::build(controller.clone(), prefs.clone());
             app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
             std::mem::swap(&mut app.tile_manager, &mut manager);
@@ -1222,6 +1305,31 @@ pub(crate) fn check_scene_fixture(
             println!(
                 "PASS: la escena recupera posición y tamaño exactos, incluso con uno o dos puntos de deriva."
             );
+            subset.bundles.pop();
+            subset.distribution = "2 1 2 0 0 v0.37 w0 w1".into();
+            let subset_id = scene_library::save(defaults, "Dos puestos", &[subset])?;
+            let extra_frame = geometry(extra)?;
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            app.restore_scene(&subset_id);
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
+            if geometry(extra)? != extra_frame
+                || manager.capture_scene(defaults)?.windows.len() != 2
+            {
+                return Err(
+                    "La escena no dejó la ventana ajena flotante en su posición original.".into(),
+                );
+            }
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            app.restore_scene(&saved_id);
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
+            if manager.capture_scene(defaults)?.windows.len() != ids.len() {
+                return Err("La escena completa no recuperó la ventana flotante.".into());
+            }
+            println!("PASS: la ventana ajena no se mueve y otra escena recupera esa flotante.");
             let settled = ids
                 .iter()
                 .copied()
@@ -1256,13 +1364,60 @@ pub(crate) fn check_scene_fixture(
             {
                 return Err("Aplicar no respetó la barrera de colocación.".into());
             }
+            app.scenes = Some(std::mem::replace(&mut panel, Panel::new(target)));
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            app.restore_scene(&subset_id);
+            APP.with(|cell| *cell.borrow_mut() = Some(app));
+            super::diagnostics::pump(0.2);
+            let pending = APP.with(|cell| {
+                let app = cell.borrow();
+                matches!(
+                    app.as_ref()
+                        .and_then(|a| a.scene_restore.as_ref())
+                        .map(|r| &r.phase),
+                    Some(RestorePhase::Settling { .. })
+                )
+            });
+            if !pending {
+                return Err("La carga rápida se perdió durante la reentrada.".into());
+            }
+            crate::tile_manager::save(defaults, "tile.enabled", 0);
+            super::diagnostics::pump(0.2);
+            let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            if app.scene_restore.is_some() {
+                return Err("Desactivar el mosaico no canceló la escena pendiente.".into());
+            }
             for (&id, frame) in ids.iter().zip(settled) {
                 if geometry(id)? != frame {
                     return Err("Guardar o revisar durante la reentrada movió una ventana.".into());
                 }
             }
+            crate::tile_manager::save(defaults, "tile.enabled", 1);
+            app.restore_scene(&subset_id);
+            APP.with(|cell| *cell.borrow_mut() = Some(app));
+            let end = Instant::now() + Duration::from_secs(4);
+            while Instant::now() < end {
+                with_app(|a| {
+                    crate::tile_manager::close_diagnostics::observe_scene_reentry(
+                        &mut a.tile_manager,
+                        defaults,
+                    );
+                });
+                super::diagnostics::pump(0.09);
+                if APP.with(|cell| cell.borrow().as_ref().unwrap().scene_restore.is_none()) {
+                    break;
+                }
+            }
+            let mut app = APP.with(|cell| cell.borrow_mut().take()).unwrap();
+            std::mem::swap(&mut app.tile_manager, &mut manager);
+            panel = app.scenes.take().unwrap();
+            if app.scene_restore.is_some() || manager.capture_scene(defaults)?.windows.len() != 2 {
+                return Err(
+                    "La carga pendiente no se aplicó al estabilizarse el escritorio.".into(),
+                );
+            }
             println!(
-                "PASS: guardado y revisión durante reentrada, aplicación bloqueada sin mover ventanas."
+                "PASS: carga aplazada durante la reentrada, cancelación sin escrituras y aplicación al estabilizarse el escritorio."
             );
             Ok(())
         })();

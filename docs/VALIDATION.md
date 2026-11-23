@@ -1,3 +1,9 @@
+## 0.9.43/build 98 — Carga de escenas en escritorios ocupados
+
+- En Apple Silicon, con dos monitores físicos, el diagnóstico guardó y releyó una escena de cinco ventanas desechables. Cambió sus marcos y comprobó por AX y WindowServer la posición, tamaño y pertenencia de las cinco al cargar. Una de las ejecuciones usó `(2, 522)` y `(5, 5)`; el ID nativo `5` era el tercer escritorio de la pantalla principal, según el orden `[1, 4, 5, 6]`. No se movieron ventanas de trabajo para la prueba.
+- Con cinco puestos de la misma app, retirar la primera candidata del gestor aislado no tomó una ventana del otro monitor. Una escena más pequeña dejó la ventana ajena flotante sin escribir su marco; la escena completa volvió a incorporarla.
+- Durante la reentrada se mantuvo la selección pendiente. Desactivar Mosaico canceló sin cambiar marcos; seleccionar de nuevo y entregar muestras nativas al gestor aislado terminó la carga sin un segundo clic. No se simuló una navegación cambiando el indicador.
+
 ## 0.9.42/build 97 — Posición y tamaño al recuperar una escena
 
 - `--check-work-scenes` guardó tres ventanas desechables, permutó sus puestos y verificó los cuatro componentes de sus marcos AX al cargar. Volvió a cargar tras desplazar una ventana un punto en cada eje y reducirla dos puntos por dimensión: recuperó el marco exacto.

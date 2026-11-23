@@ -17,8 +17,8 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
             "The display or its windows changed. Click Review."
         }
         "No hay ventanas en mosaico para guardar." => "There are no tiled windows to save.",
-        "Sobran ventanas en el mosaico de destino. Déjalas flotantes y vuelve a revisar." => {
-            "The destination has additional tiled windows. Float them and review again."
+        "Hay un grupo de pestañas que no pertenece a la escena. Sepáralo antes de cargar." => {
+            "A tab group is not part of the scene. Separate it before loading."
         }
         "macOS no confirmó la colocación. Se intentó recuperar la posición anterior; revisa las ventanas." => {
             "macOS did not confirm placement. Previous positions were requested; review the windows."
@@ -62,7 +62,7 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
             "Opening apps and waiting for their windows…"
         }
         "No se pudieron abrir:" => "Could not open:",
-        "Pantalla desconectada" => "Display disconnected",
+        "Pantalla sin mosaico disponible" => "No available layout on this display",
         "Sin ventana compatible" => "No matching window",
         "Elige una ventana…" => "Choose a window…",
         "Omitir puesto" => "Skip slot",

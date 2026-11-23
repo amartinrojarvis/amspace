@@ -340,7 +340,8 @@ thread_local! {
             cf(ns_string!("AXPosition")),
             cf(ns_string!("AXSize")),
         ];
-        unsafe { objc2::msg_send![objc2::class!(NSArray), arrayWithObjects:keys.as_ptr(), count:keys.len()] }
+        let objects = keys.as_ptr().cast::<*const objc2::runtime::AnyObject>();
+        unsafe { objc2::msg_send![objc2::class!(NSArray), arrayWithObjects:objects, count:keys.len()] }
     };
 }
 

@@ -2368,6 +2368,7 @@ impl App {
                 || !ax::trusted()
             {
                 self.layout_picker = None;
+                self.scene_restore = None;
                 self.tile_manager.cancel_drag();
                 return;
             }

@@ -137,6 +137,8 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 | `python3 scripts/benchmark.py <PID> --seconds 20` | Mide CPU y RSS del proceso; ajustes cerrados y ratón en reposo para una muestra comparable |
 | `AMSPACE_BENCH_PID=$(pgrep -x Finder) cargo test --release benchmark_window_geometry -- --ignored --nocapture` | Compara lecturas AX individuales y agrupadas sobre la misma ventana, sin moverla ni activarla. Requiere permiso AX y una ventana estable que no esté minimizada ni a pantalla completa. Informa latencia por lectura, no CPU o RSS del proceso. |
 
+Con dos pantallas que muestran escritorios normales, `--check-work-scenes` crea cinco ventanas propias repartidas entre ambas. Guarda y relee la escena desde una suite aislada, comprueba que una ausencia en un monitor no roba la candidata del otro y verifica por AX y WindowServer monitor, Space, posición y tamaño al cargar. No navega a otro escritorio.
+
 `--check-work-scenes` también abre y responde al aviso nativo con `AMSPACE_SCENE_LAUNCH_FIXTURE`: indica el bundle ID de una app AppKit desechable registrada en Launch Services y cerrada. Usa el prefijo `io.github.amartinrojarvis.amspace.fixture.` y haz que la app termine por sí sola. Comprueba que por defecto pregunta, que al desactivar el ajuste o rechazar no se abre, y que al aceptar se abre una sola vez. El diagnóstico no arranca el mosaico global, por lo que no verifica la admisión de esa ventana.
 
 `--check-tab-close` también comprueba la continuidad de los controles: doce reconciliaciones de tres ventanas sin cambios deben conservar el botón que recibe el siguiente gesto. Tras cambiar el título de una de las ventanas del fixture, el botón debe mostrar el título nuevo.

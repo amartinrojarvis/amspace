@@ -44,6 +44,7 @@ pub(crate) struct SceneRow {
     pub slot: usize,
     pub bundle: String,
     pub available: bool,
+    pub local_candidates: usize,
     pub candidates: Vec<Rc<SceneCandidate>>,
 }
 pub(crate) struct SceneReview {
@@ -74,7 +75,7 @@ fn screens(defaults: Obj) -> Result<Vec<Screen>, String> {
             let number: Obj =
                 msg_send![desc,objectForKey:objc2_foundation::ns_string!("NSScreenNumber")];
             let id: u32 = msg_send![number, unsignedIntValue];
-            let uuid = spaces::display_uuid(id).ok_or(stale())?;
+            let uuid = spaces::display_uuid(id).ok_or_else(stale)?;
             if result.iter().any(|s: &Screen| s.uuid == uuid) {
                 return Err(stale());
             }
@@ -112,11 +113,7 @@ fn bundle(pid: i32) -> Option<String> {
     }
 }
 fn live_frame(w: &Managed, id: u32, areas: &[(Workspace, NSRect)]) -> Option<NSRect> {
-    if ax::window_id(w.element.0) != Some(id)
-        || ax::flag(w.element.0, "AXMinimized")
-        || ax::flag(w.element.0, "AXFullScreen")
-        || ws::ordered_in(id) == Some(false)
-    {
+    if ax::window_id(w.element.0) != Some(id) || ws::ordered_in(id) == Some(false) {
         return None;
     }
     let (p, s) = ax::geometry(w.element.0)?;
@@ -124,6 +121,12 @@ fn live_frame(w: &Managed, id: u32, areas: &[(Workspace, NSRect)]) -> Option<NSR
     (workspace_at_frame(spaces::window_space(id)?, frame, areas) == Some(w.space)).then_some(frame)
 }
 impl Manager {
+    pub(crate) fn scene_waiting_for_space(&mut self) -> bool {
+        self.waiting_for_space(Instant::now())
+            || self.space_reentry.is_some()
+            || self.settling_space()
+    }
+
     fn scene_guard(&mut self, defaults: Obj) -> Result<(), String> {
         if pref(defaults, "tile.enabled") == 0 {
             return Err(tr("Activa Mosaico en Ajustes para usar escenas de trabajo.").into());
@@ -211,10 +214,14 @@ impl Manager {
             let Some((key, _)) = screen.visible else {
                 continue;
             };
-            let Some(desktop) = self.desktops.get(&key) else {
-                continue;
-            };
-            for &id in &desktop.order {
+            let tiled = self.desktops.get(&key).into_iter().flat_map(|d| &d.order);
+            let mut floating: Vec<_> = self
+                .floating
+                .iter()
+                .filter(|id| self.windows.get(id).is_some_and(|w| w.space == key))
+                .collect();
+            floating.sort_unstable();
+            for &id in tiled.chain(floating) {
                 let Some(w) = self.windows.get(&id) else {
                     continue;
                 };
@@ -223,6 +230,7 @@ impl Manager {
                     || w.space != key
                     || !identities.contains(&(w.pid, id))
                     || live_frame(w, id, &areas).is_none()
+                    || (self.floating.contains(&id) && !ax::tileable(w.element.0))
                 {
                     continue;
                 }
@@ -237,7 +245,10 @@ impl Manager {
                         element: w.element.clone(),
                         label,
                     }),
-                    desktop.tab_strip(id).is_some_and(|(m, _)| m.len() > 1),
+                    self.desktops
+                        .get(&key)
+                        .and_then(|d| d.tab_strip(id))
+                        .is_some_and(|(m, _)| m.len() > 1),
                 ));
             }
         }
@@ -245,10 +256,10 @@ impl Manager {
         let mut destinations = Vec::new();
         for display in displays {
             let screen = screens.iter().find(|s| s.uuid == display.uuid);
-            let destination = screen.map(|s| s.visible.ok_or_else(stale)).transpose()?;
+            let destination = screen.and_then(|s| s.visible);
             destinations.push(destination);
             for (index, bundle) in display.bundles.iter().enumerate() {
-                let choices = destination.map_or_else(Vec::new, |(key, _)| {
+                let mut choices = destination.map_or_else(Vec::new, |(key, _)| {
                     candidates
                         .get(bundle)
                         .into_iter()
@@ -257,11 +268,16 @@ impl Manager {
                         .map(|(c, _)| c.clone())
                         .collect()
                 });
+                let local_candidates = destination.map_or(0, |(key, _)| {
+                    choices.sort_by_key(|c| (c.source != key, self.floating.contains(&c.id)));
+                    choices.partition_point(|c| c.source == key)
+                });
                 rows.push(SceneRow {
                     display: screen.map_or(&display.name, |s| &s.name).clone(),
                     slot: index + 1,
                     bundle: bundle.clone(),
                     available: destination.is_some(),
+                    local_candidates,
                     candidates: choices,
                 });
             }
@@ -329,7 +345,7 @@ impl Manager {
             if from != to {
                 proposals
                     .entry(from)
-                    .or_insert_with(|| self.desktops[&from].clone())
+                    .or_insert_with(|| self.desktops.get(&from).cloned().unwrap_or_default())
                     .remove(id);
             }
         }
@@ -338,6 +354,7 @@ impl Manager {
             .filter_map(|s| s.visible)
             .collect();
         let mut writes = Vec::with_capacity(chosen.len());
+        let mut unmatched = Vec::new();
         offset = 0;
         for (d, destination) in review.displays.iter().zip(&review.destinations) {
             let range = offset..offset + d.bundles.len();
@@ -352,8 +369,23 @@ impl Manager {
                 return Err(stale());
             }
             let model = proposals.get_mut(&key).unwrap();
-            if model.order.iter().any(|id| !chosen.contains_key(id)) {
-                return Err(tr("Sobran ventanas en el mosaico de destino. Déjalas flotantes y vuelve a revisar.").into());
+            let extras: Vec<_> = model
+                .order
+                .iter()
+                .copied()
+                .filter(|id| !chosen.contains_key(id))
+                .collect();
+            for id in extras {
+                if model
+                    .tab_strip(id)
+                    .is_some_and(|(members, _)| members.len() > 1)
+                {
+                    return Err(tr("Hay un grupo de pestañas que no pertenece a la escena. Sepáralo antes de cargar.").into());
+                }
+                let w = self.windows.get(&id).ok_or_else(stale)?;
+                let frame = live_frame(w, id, &areas).ok_or_else(stale)?;
+                unmatched.push((id, frame, area));
+                model.remove(id);
             }
             if !model.restore_scene_distribution(&d.distribution, &choices[range]) {
                 return Err(stale());
@@ -423,10 +455,17 @@ impl Manager {
                     }
                 }
                 self.invalidate();
-                return Err(tr("macOS no confirmó la colocación. Se intentó recuperar la posición anterior; revisa las ventanas.").into());
+                let app = app_name(self.windows[&id].pid).unwrap_or_else(|| format!("#{id}"));
+                return Err(format!(
+                    "{app}: {}",
+                    tr(
+                        "macOS no confirmó la colocación. Se intentó recuperar la posición anterior; revisa las ventanas."
+                    )
+                ));
             }
         }
         for (id, (source, dest)) in chosen {
+            self.floating.remove(&id);
             if source != dest {
                 let w = self.windows.get_mut(&id).unwrap();
                 let area = areas.iter().find(|(k, _)| *k == dest).unwrap().1;
@@ -434,6 +473,16 @@ impl Manager {
                 w.original_area = area;
                 w.space = dest;
             }
+        }
+        // Keep unrelated windows exactly where they were, outside the restored
+        // tree. Commit only after every AX write has been confirmed.
+        for (id, frame, area) in unmatched {
+            self.cancel_window_placement(id);
+            self.floating.insert(id);
+            self.minimum_sizes.remove(&id);
+            let w = self.windows.get_mut(&id).unwrap();
+            w.original = frame;
+            w.original_area = area;
         }
         for (key, model) in proposals {
             self.cancel_desktop_placements(&model);

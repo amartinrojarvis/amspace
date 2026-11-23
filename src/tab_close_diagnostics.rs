@@ -76,18 +76,20 @@ pub fn run_fixture() {
         let delegate: Retained<AnyObject> = msg_send![builder.register(), new];
         // The primary monitor may be occupied by a fullscreen app. Put the
         // disposable windows on a monitor with an actual visible desktop.
-        let fixture_origin = spaces::visible_desktops()
+        let areas: Vec<_> = spaces::visible_desktops()
             .into_iter()
-            .find_map(|(display, _)| area(display))
-            .map_or((200., 220.), |r| {
-                (
-                    r.origin.x + 100.,
-                    primary_height() - r.origin.y - r.size.height + 100.,
-                )
-            });
+            .filter_map(|(display, _)| area(display))
+            .collect();
+        let two_displays = std::env::args().any(|arg| arg == "--second-scene-display");
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();
-            for index in 0..3 {
+            for index in 0..if two_displays { 5 } else { 3 } {
+                let fixture_origin = areas.get(usize::from(index >= 3)).map_or((200., 220.), |r| {
+                    (
+                        r.origin.x + 100.,
+                        primary_height() - r.origin.y - r.size.height + 100.,
+                    )
+                });
                 let window: Allocated<AnyObject> = msg_send![class!(NSWindow), alloc];
                 let frame = rect(
                     fixture_origin.0 + 40. * index as f64,
@@ -102,10 +104,17 @@ pub fn run_fixture() {
                 let _: () = msg_send![&window, setDelegate:&*delegate];
                 let _: () = msg_send![&window, setTitle:&*NSString::from_str(&format!("AMSpace · cierre temporal {index}"))];
                 let _: () = msg_send![&window, orderFrontRegardless];
+                if two_displays {
+                    let global: NSRect = msg_send![&window, frameRectForContentRect:frame];
+                    let _: () = msg_send![&window, setFrame:global, display:false];
+                }
                 windows.push(window);
             }
-            let ids: Vec<isize> = windows.iter().map(|window| msg_send![&**window, windowNumber]).collect();
-            println!("{} {} {}", ids[0], ids[1], ids[2]);
+            let ids: Vec<String> = windows.iter().map(|window| {
+                let id: isize = msg_send![&**window, windowNumber];
+                id.to_string()
+            }).collect();
+            println!("{}", ids.join(" "));
             let _ = std::io::stdout().flush();
         });
         let target = Retained::as_ptr(&delegate) as usize;
@@ -132,6 +141,127 @@ impl Drop for RestoreFocus {
     }
 }
 
+pub(crate) fn observe_scene_reentry(manager: &mut Manager, defaults: Obj) {
+    if manager.space_reentry.is_some() {
+        let active = manager.active_areas.clone();
+        let sample = manager.reentry_sample(defaults, &active);
+        manager.observe_reentry(sample, Instant::now());
+    }
+}
+
+fn check_scene_displays(
+    manager: &mut Manager,
+    pid: i32,
+    ids: &[u32],
+    first: Workspace,
+) -> Result<(), String> {
+    let areas: Vec<_> = spaces::visible_desktops()
+        .into_iter()
+        .filter_map(|key| Some((key, area(key.0)?)))
+        .collect();
+    let mut second = None;
+    for &id in &ids[3..] {
+        let element = ax::window_for_id(pid, id).ok_or("Falta la ventana AX del otro monitor")?;
+        let (p, s) = ax::geometry(element.0).ok_or("Sin geometría del otro monitor")?;
+        let frame = NSRect::new(p, s);
+        let native = spaces::window_space(id).ok_or("Sin Space de la segunda ventana")?;
+        let key = workspace_at_frame(native, frame, &areas)
+            .filter(|key| key.0 != first.0 && second.is_none_or(|other| *key == other))
+            .ok_or("El fixture no apareció en la segunda pantalla física")?;
+        second = Some(key);
+        let original_area = area(key.0).ok_or("Sin área útil del otro monitor")?;
+        manager.windows.insert(
+            id,
+            Managed {
+                pid,
+                space: key,
+                original: frame,
+                original_area,
+                element,
+            },
+        );
+    }
+    let second = second.ok_or("Se necesitan dos pantallas para este escenario")?;
+    let mut desktop = Desktop::configured(Layout::Spiral, None);
+    let area = area(second.0).ok_or("Sin área útil del otro monitor")?;
+    desktop.reconcile_at(&ids[3..], area, 10., None);
+    manager.desktops.insert(second, desktop);
+    unsafe {
+        let suite = NSString::from_str(&format!("amspace.scene-displays.{}", std::process::id()));
+        let alloc: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let prefs: Retained<AnyObject> = msg_send![alloc, initWithSuiteName:&*suite];
+        let defaults = Retained::as_ptr(&prefs) as Obj;
+        save(defaults, "tile.enabled", 1);
+        let result: Result<(), String> = (|| {
+            let capture = manager.capture_scene(defaults)?;
+            if capture.displays.len() != 2 || capture.windows.len() != 5 {
+                return Err("La escena no capturó los cinco puestos de dos monitores".into());
+            }
+            let id = crate::scene_library::save(defaults, "Dos pantallas", &capture.displays)?;
+            let scene =
+                crate::scene_library::entry(defaults, &id).ok_or("Falta la escena persistida")?;
+            let review = manager.review_scene(defaults, &scene.displays)?;
+            let choices = crate::ui::diagnostics::quick_choices(&review, None);
+            let absent = choices[0].ok_or("Falta la primera ventana del fixture")?;
+            let held = manager.windows.remove(&absent).unwrap();
+            let partial = manager.review_scene(defaults, &scene.displays)?;
+            let partial = crate::ui::diagnostics::quick_choices(&partial, None);
+            let split = scene.displays[0].bundles.len();
+            let missing = partial[..split]
+                .iter()
+                .filter(|slot| slot.is_none())
+                .count();
+            if partial[split..] != choices[split..] || missing != 1 {
+                return Err("Un puesto vacío tomó la ventana del otro monitor".into());
+            }
+            manager.windows.insert(absent, held);
+            manager.apply_scene(defaults, &review, &choices)?;
+            let mut expected = Vec::new();
+            for &id in ids {
+                let w = &manager.windows[&id];
+                let (p, s) = ax::geometry(w.element.0).ok_or("Sin marco colocado")?;
+                expected.push((id, w.space, NSRect::new(p, s)));
+                let drifted = rect(p.x + 2., p.y + 1., s.width - 3., s.height - 2.);
+                if !ax::set_frame(w.element.0, drifted) {
+                    return Err("No se pudo desplazar la ventana de prueba".into());
+                }
+            }
+            let review = manager.review_scene(defaults, &scene.displays)?;
+            manager.apply_scene(defaults, &review, &choices)?;
+            for (id, key, frame) in expected {
+                let w = &manager.windows[&id];
+                let (p, s) = ax::geometry(w.element.0).ok_or("Sin marco final")?;
+                let space = spaces::window_space(id).ok_or("Sin Space final")?;
+                let actual = NSRect::new(p, s);
+                let initial = if ids[..3].contains(&id) {
+                    first
+                } else {
+                    second
+                };
+                if workspace_at_frame(space, actual, &areas) != Some(key)
+                    || actual != frame
+                    || key != initial
+                {
+                    return Err(format!(
+                        "La escena no recuperó monitor, Space y marco de {id}"
+                    ));
+                }
+            }
+            println!(
+                "PASS: guardado y carga de cinco ventanas en dos monitores físicos ({first:?}, {second:?}); posición, tamaño y pertenencia exactos."
+            );
+            Ok(())
+        })();
+        let _: () = msg_send![&prefs, removePersistentDomainForName:&*suite];
+        result?;
+    }
+    manager.desktops.remove(&second);
+    for id in &ids[3..] {
+        manager.forget_window(*id);
+    }
+    Ok(())
+}
+
 pub fn check(scenes_only: bool) -> Result<(), String> {
     if !ax::trusted() {
         return Err(
@@ -145,9 +275,11 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
         RestoreFocus(msg_send![workspace, frontmostApplication])
     };
+    let two_displays = scenes_only && spaces::visible_desktops().len() >= 2;
     let mut fixture = Fixture(
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--tab-close-fixture")
+            .args(two_displays.then_some("--second-scene-display"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -162,8 +294,8 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         .map(str::parse::<u32>)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    if ids.len() != 3 {
-        return Err("El fixture no creó tres ventanas".into());
+    if ids.len() != if two_displays { 5 } else { 3 } {
+        return Err("El fixture no creó todas las ventanas previstas".into());
     }
     pump(0.15);
     let pid = fixture.0.id() as i32;
@@ -181,7 +313,7 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         .ok_or("Sin área visible del fixture")?;
     let mut manager = Manager::default();
     manager.active_areas.push((space, area));
-    for id in &ids {
+    for id in &ids[..3] {
         let element = ax::window_for_id(pid, *id).ok_or("Falta miembro AX")?;
         let (p, s) = ax::geometry(element.0).ok_or("Falta geometría AX")?;
         manager.windows.insert(
@@ -196,10 +328,13 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         );
     }
     let mut desktop = Desktop::configured(Layout::Spiral, None);
-    desktop.reconcile_at(&ids, area, 10., None);
+    desktop.reconcile_at(&ids[..3], area, 10., None);
     if scenes_only {
         manager.desktops.insert(space, desktop);
-        return crate::ui::diagnostics::check_scene_fixture(manager, &ids, pid, area);
+        if two_displays {
+            check_scene_displays(&mut manager, pid, &ids, space)?;
+        }
+        return crate::ui::diagnostics::check_scene_fixture(manager, &ids[..3], pid, area);
     }
     for (target, id) in ids.iter().zip(&ids[1..]) {
         desktop = desktop
