@@ -727,6 +727,7 @@ impl App {
                 return;
             }
         };
+        let choices = quick_choices(&review, None);
         launch.pending.retain_mut(|(id, response, opened)| {
             if !*opened {
                 match response.try_recv() {
@@ -739,10 +740,11 @@ impl App {
                 }
             }
             !*opened
-                || !review
+                || review
                     .rows
                     .iter()
-                    .any(|row| &row.bundle == id && !row.candidates.is_empty())
+                    .zip(&choices)
+                    .any(|(row, choice)| row.available && &row.bundle == id && choice.is_none())
         });
         if !launch.pending.is_empty() && Instant::now() < launch.deadline {
             self.queue_scene(entry, RestorePhase::Waiting(origin, launch), 0.25);
