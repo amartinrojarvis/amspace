@@ -2,6 +2,7 @@
 
 - `--check-tab-focus`, en Apple Silicon: cuatro ventanas AppKit desechables, dos por grupo. La acción de selección del controlador invalidó el objetivo del puntero anterior; Accesibilidad confirmó la ventana elegida y el otro grupo conservó su pestaña activa al alternar varias veces. Se comprobó también el PID en primer plano. No se usaron ventanas del usuario.
 - Comprobación aislada del código: formato, Clippy, plist y 298 pruebas aprobadas (nueve ignoradas). El diagnóstico de arrastre completo se interrumpió en una ejecución preliminar por un pan reentrante; no se valida aquí ese flujo.
+- [CI del commit de publicación](https://github.com/amartinrojarvis/amspace/actions/runs/45441107775) aprobada; bundle compilado para Apple Silicon e Intel. Los cinco archivos de [v0.9.45](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.45) coincidieron con las descargas públicas. Se verificó el DMG montado en solo lectura y el ZIP inmutable (`a593b55`) byte a byte. No se probó la instalación desde Sparkle ni la ejecución en Intel.
 
 ## 0.9.44/build 99 — Recuperación de apps y borde en la pantalla principal
 

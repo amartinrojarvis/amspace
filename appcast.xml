@@ -1,21 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.44</title><pubDate>Mon, 23 Nov 2026 07:48:24 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.44 — Recuperación de escenas, borde activo y Ajustes.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.45</title><pubDate>Tue, 24 Nov 2026 16:48:04 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.45 — Foco entre grupos de pestañas.
 
-- Si faltan ventanas, la escena ofrece preparar las apps, revisar los puestos, cargar lo disponible o cancelar. Las escenas completas se cargan directamente.
-- La recuperación abre apps cerradas e intenta mostrar las ocultas o restaurar ventanas minimizadas del escritorio actual. Si quedan puestos sin ventana, vuelve a ofrecer opciones.
-- El borde activo vuelve a mostrarse bajo capas que dejan pasar clics, sin tomar foco. Ajustes empieza en General; Mosaico agrupa escenas, plantillas, gestos, pestañas y excepciones.
+- Al seleccionar una pestaña, el foco queda en la ventana elegida aunque otro grupo tenga ventanas de la misma app. El otro grupo conserva su pestaña activa.
+- El foco bajo el cursor respeta las barras de pestañas y no enfoca la ventana que queda debajo.
 
 English
 
-- If windows are missing, choose to prepare apps, review assignments, load what is available, or cancel. Complete scenes load directly.
-- Recovery opens closed apps and attempts to unhide apps or restore minimized windows on the current desktop. If any slots remain empty, it offers alternatives.
-- The active border stays visible under click-through overlays without taking focus. Settings opens in General; Tiling groups scenes, layouts, gestures, tabs, and exceptions.
+- Selecting a tab focuses the chosen window even when another group contains windows from the same app. The other group keeps its active tab.
+- Focus follows mouse respects tab bars and does not focus the window underneath.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.44/AMSpace-universal.zip" length="3373673" type="application/octet-stream" sparkle:version="99" sparkle:shortVersionString="0.9.44" sparkle:edSignature="34n5rklOS5egWFI/ArkdalXIgoHSqNKZxQzD+6WgELR7pUW21QSym5xV8bS4Q+IBujLWlcNCYWgajXn4Og0vBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: JW/hoNVuioFWk0PjN9wv768yZYfEayhzAIgIcE4zjDilbgjjQ2fffJdMil5DawM6H+qc7xoLkd4id1UsujdKAg==
-length: 2423
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.45/AMSpace-universal.zip" length="3378509" type="application/octet-stream" sparkle:version="100" sparkle:shortVersionString="0.9.45" sparkle:edSignature="ROl1KtqEHNRZFfT2pQyn+gpGRXgizjBgb676WnOZKkK5hwXaRvHKfaw13R/C/1YlpZi2cjhk//X7qyXsb1YAAQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: ig6JHKXeZaj+YA9LV15fuB97WEjNUqvLObljES6PEkDJ93zz+hTTVGWkUGWrsMq3ZqJtRSm5gw/rNArzJ73LCQ==
+length: 1892
 -->
