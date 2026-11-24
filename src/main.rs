@@ -39,12 +39,13 @@ fn main() {
         objc2::rc::autoreleasepool(|_| tile_manager::diagnostics::run_fixture());
     } else if std::env::args().any(|a| a == "--tab-close-fixture") {
         objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::run_fixture());
-    } else if let Some(mode) =
-        std::env::args().find(|a| matches!(a.as_str(), "--check-tab-close" | "--check-work-scenes"))
-    {
-        let result = objc2::rc::autoreleasepool(|_| {
-            tile_manager::close_diagnostics::check(mode == "--check-work-scenes")
-        });
+    } else if let Some(mode) = std::env::args().find(|a| {
+        matches!(
+            a.as_str(),
+            "--check-tab-close" | "--check-tab-focus" | "--check-work-scenes"
+        )
+    }) {
+        let result = objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::check(&mode));
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);

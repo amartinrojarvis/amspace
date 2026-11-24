@@ -1457,7 +1457,11 @@ impl App {
             let Some(height) = primary_height() else {
                 return;
             };
-            let Some((w, pid)) = ax::window_at(point.x, height - point.y) else {
+            let point_ax = NSPoint::new(point.x, height - point.y);
+            if self.tile_manager.tab_strip_at(point_ax) {
+                return;
+            }
+            let Some((w, pid)) = ax::window_at(point_ax.x, point_ax.y) else {
                 return;
             };
             let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -1535,7 +1539,11 @@ impl App {
             let Some(height) = primary_height() else {
                 return;
             };
-            let Some((window, pid)) = ax::window_at(point.x, height - point.y) else {
+            let point_ax = NSPoint::new(point.x, height - point.y);
+            if self.tile_manager.tab_strip_at(point_ax) {
+                return;
+            }
+            let Some((window, pid)) = ax::window_at(point_ax.x, point_ax.y) else {
                 return;
             };
             if pid != pending.pid || ax::window_id(window.0) != Some(pending.id) {
@@ -5566,6 +5574,10 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
                 && a.tile_manager.activate_tab(id)
             {
                 a.hover_resume = Instant::now() + Duration::from_millis(600);
+                // The click supersedes any earlier hover, including one on a
+                // different window of the same process.
+                a.pending_focus = None;
+                a.focus_target = None;
                 a.update_tile_timer();
                 a.settle_focus();
                 a.show_tip(4, crate::i18n::tr("En la barra reordenas; fuera eliges destino. ⌥: colocar sin apilar. Clic derecho: Colocar en… y otras acciones; ×: cierre normal."));

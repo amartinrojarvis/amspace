@@ -1,3 +1,8 @@
+## 0.9.45/build 100 — Foco entre grupos de pestañas de una misma app
+
+- `--check-tab-focus`, en Apple Silicon: cuatro ventanas AppKit desechables, dos por grupo. La acción de selección del controlador invalidó el objetivo del puntero anterior; Accesibilidad confirmó la ventana elegida y el otro grupo conservó su pestaña activa al alternar varias veces. Se comprobó también el PID en primer plano. No se usaron ventanas del usuario.
+- Comprobación aislada del código: formato, Clippy, plist y 298 pruebas aprobadas (nueve ignoradas). El diagnóstico de arrastre completo se interrumpió en una ejecución preliminar por un pan reentrante; no se valida aquí ese flujo.
+
 ## 0.9.44/build 99 — Recuperación de apps y borde en la pantalla principal
 
 - `check-scene-launch.sh`, en Apple Silicon con dos monitores físicos: guardado y recuperación exacta de cinco ventanas por AX y WindowServer, carga directa de escenas completas, elección explícita de carga parcial, apertura de una app cerrada con tres ventanas escalonadas y reapertura de una app oculta conservando el PID. La prueba usa aplicaciones desechables y un gestor aislado. No cubre documentos reales, una ventana minimizada ni el traslado de ventanas desde un Space oculto.

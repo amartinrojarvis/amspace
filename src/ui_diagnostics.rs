@@ -909,6 +909,64 @@ fn check_power_reentry(target: Obj, defaults: &AnyObject) -> Result<(), String> 
     Ok(())
 }
 
+pub(crate) fn check_tab_focus_click(
+    manager: &mut crate::tile_manager::Manager,
+    pid: i32,
+    previous: u32,
+    chosen: u32,
+) -> Result<(), String> {
+    unsafe {
+        let suite = NSString::from_str(&format!("amspace.ui.tab-focus.{}", std::process::id()));
+        let defaults: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+        let defaults: Retained<AnyObject> = msg_send![defaults, initWithSuiteName:&*suite];
+        let _: () = msg_send![&defaults, setBool:true, forKey:ns_string!("tile.enabled")];
+        let _: () = msg_send![&defaults, setBool:false, forKey:ns_string!("help.tips")];
+        let target = controller();
+        let target_ptr = Retained::as_ptr(&target) as Obj;
+        let mut app = App::build(target.clone(), defaults.clone());
+        app.border_enabled = false;
+        app.tile_manager = std::mem::take(manager);
+        app.focus_target = Some((pid, previous, Instant::now()));
+        app.pending_focus = Some(PendingFocus {
+            front_pid: pid,
+            pid,
+            id: previous,
+            point: msg_send![class!(NSEvent), mouseLocation],
+            verify: true,
+            retries: 0,
+        });
+        APP.with(|cell| {
+            assert!(cell.borrow().is_none());
+            *cell.borrow_mut() = Some(app);
+        });
+        let panel = window(rect(100., 200., 160., 50.), 128);
+        let root: Obj = msg_send![&*panel, contentView];
+        let tab = button(
+            root,
+            rect(60., 8., 40., 32.),
+            "Tab",
+            target_ptr,
+            chosen as isize,
+        );
+        let _: () = msg_send![&*panel, orderFrontRegardless];
+        let _: bool = msg_send![tab, sendAction:sel!(selectTileTab:), to:target_ptr];
+        pump(0.15);
+        let mut app = APP.with(|cell| cell.borrow_mut().take().unwrap());
+        let superseded = app.focus_target.is_none() && app.pending_focus.is_none();
+        *manager = std::mem::take(&mut app.tile_manager);
+        let _: () = msg_send![class!(NSObject), cancelPreviousPerformRequestsWithTarget:&*target];
+        tab_delivery::clear(target_ptr);
+        let _: () = msg_send![&*panel, orderOut:ptr::null::<AnyObject>()];
+        let bar: Obj = msg_send![class!(NSStatusBar), systemStatusBar];
+        let _: () = msg_send![bar, removeStatusItem:&*app.status];
+        let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
+        if !superseded {
+            return Err("La pestaña no desplazó el objetivo anterior del puntero".into());
+        }
+        Ok(())
+    }
+}
+
 /// Exercise the production × callback against a disposable foreign window.
 pub(crate) fn check_reentrant_close(
     manager: &mut crate::tile_manager::Manager,

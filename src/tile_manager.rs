@@ -1266,6 +1266,12 @@ impl Manager {
         }
     }
 
+    pub(crate) fn tab_strip_at(&self, point: NSPoint) -> bool {
+        self.strips
+            .iter()
+            .any(|strip| contains(strip.frame, point) && strip.accepts_input())
+    }
+
     /// Only an explicit tab click activates/raises a foreign window.
     pub fn activate_tab(&mut self, id: u32) -> bool {
         if self.presentation_blocks_input()
@@ -4365,13 +4371,7 @@ impl Manager {
             return;
         }
         // Native strip buttons own these clicks, not the titlebar below them.
-        if down
-            && self.drag.is_none()
-            && self
-                .strips
-                .iter()
-                .any(|strip| contains(strip.frame, p) && strip.accepts_input())
-        {
+        if down && self.drag.is_none() && self.tab_strip_at(p) {
             self.pressed = true;
             return;
         }
@@ -4940,17 +4940,15 @@ impl Manager {
         self.last_visible_windows =
             Some(candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect());
         self.last_scan = Some(Instant::now());
-        let focused = std::cell::LazyCell::new(|| unsafe {
+        let front_pid = std::cell::LazyCell::new(|| unsafe {
             let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
             let app: Obj = msg_send![workspace, frontmostApplication];
             if app.is_null() {
                 return None;
             }
-            let pid: i32 = msg_send![app, processIdentifier];
-            ws::front_window(pid)
-                .map(|w| w.id)
-                .or_else(|| ax::focused_id(pid))
+            Some(msg_send![app, processIdentifier])
         });
+        let focused = std::cell::LazyCell::new(|| front_pid.and_then(ax::focused_id));
         let visible_ids: HashSet<_> = candidates.iter().map(|(_, id, _)| *id).collect();
         let all_ids = if self.windows.keys().any(|id| !visible_ids.contains(id)) {
             ws::all_window_ids()
@@ -5309,16 +5307,17 @@ impl Manager {
             // retained order so its leaf is neither collapsed nor re-expanded:
             // the same distribution is produced and no second write is needed.
             retain_settled_ids(ids, &d.order, settling);
-            // A native tab switch changes the visible id without a model event:
-            // adopt it before geometry so the slot keeps a live leaf.
+            // Only keyboard focus identifies a native tab change. The same
+            // app's topmost window can belong to an unrelated tile group.
             d.sync_tabs(ids);
-            if let Some(id) = *focused
+            if !d.groups().is_empty()
+                && let Some(id) = *focused
                 && ids.contains(&id)
             {
                 d.select_tab(id);
             }
             let insertion_focus = if d.needs_insertion_focus(ids) {
-                *focused
+                (*focused).or_else(|| front_pid.and_then(ws::front_window).map(|w| w.id))
             } else {
                 None
             };

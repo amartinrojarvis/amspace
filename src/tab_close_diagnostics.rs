@@ -30,6 +30,10 @@ extern "C-unwind" fn command(_: Obj, _: Sel, value: Obj) {
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
         match command.as_str() {
             "allow" => ALLOW_CLOSE.set(true),
+            "focus-last" => {
+                let _: () = msg_send![app, activateIgnoringOtherApps:true];
+                let _: () = msg_send![&**windows.last().unwrap(), makeKeyAndOrderFront:ptr::null::<AnyObject>()];
+            }
             "rename" => {
                 let _: () = msg_send![&*windows[0], setTitle:&*NSString::from_str(UPDATED_TITLE)];
             }
@@ -61,8 +65,10 @@ pub fn run_fixture() {
         unsafe { libc::_exit(0) }
     });
     unsafe {
+        let four_windows = std::env::args().any(|arg| arg == "--shared-app-tabs");
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
-        let _: bool = msg_send![app, setActivationPolicy:1isize];
+        let _: bool =
+            msg_send![app, setActivationPolicy:if four_windows { 0isize } else { 1isize }];
         let _: () = msg_send![app, finishLaunching];
         let mut builder = ClassBuilder::new(c"AMSpaceCloseFixture", class!(NSObject)).unwrap();
         builder.add_method(
@@ -81,10 +87,17 @@ pub fn run_fixture() {
             .filter_map(|(display, _)| area(display))
             .collect();
         let two_displays = std::env::args().any(|arg| arg == "--second-scene-display");
+        let count = if two_displays {
+            5
+        } else if four_windows {
+            4
+        } else {
+            3
+        };
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();
-            for index in 0..if two_displays { 5 } else { 3 } {
-                let fixture_origin = areas.get(usize::from(index >= 3)).map_or((200., 220.), |r| {
+            for index in 0..count {
+                let fixture_origin = areas.get(usize::from(two_displays && index >= 3)).map_or((200., 220.), |r| {
                     (
                         r.origin.x + 100.,
                         primary_height() - r.origin.y - r.size.height + 100.,
@@ -314,7 +327,56 @@ fn check_scene_displays(
     Ok(())
 }
 
-pub fn check(scenes_only: bool) -> Result<(), String> {
+fn check_shared_app_tabs(
+    manager: &mut Manager,
+    ids: &[u32],
+    pid: i32,
+    space: Workspace,
+    area: NSRect,
+) -> Result<(), String> {
+    let mut desktop = Desktop::configured(Layout::Spiral, None);
+    desktop.reconcile_at(ids, area, 10., None);
+    for pair in ids.chunks_exact(2) {
+        desktop = desktop
+            .proposed_drop(pair[1], DropIntent::Group(pair[0]), area, 10.)
+            .ok_or("No se pudieron preparar los dos grupos de la misma app")?;
+    }
+    manager.desktops.insert(space, desktop);
+    let current_focus = || {
+        let front_pid: i32 = unsafe {
+            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: Obj = msg_send![workspace, frontmostApplication];
+            msg_send![front, processIdentifier]
+        };
+        (front_pid, ax::focused_id(pid))
+    };
+    if current_focus() != (pid, Some(ids[3])) {
+        return Err("El fixture no obtuvo el foco inicial en el segundo grupo".into());
+    }
+    crate::ui::diagnostics::check_tab_focus_click(manager, pid, ids[3], ids[0])?;
+    for (chosen, other) in [(ids[0], ids[3]), (ids[2], ids[0]), (ids[1], ids[2])] {
+        if chosen != ids[0] && !manager.activate_tab(chosen) {
+            return Err(format!("Pestaña rechazada: {chosen}"));
+        }
+        pump(0.15);
+        let (front_pid, focused) = current_focus();
+        if focused != Some(chosen) || front_pid != pid {
+            return Err(format!(
+                "Foco esperado {pid}/{chosen}; obtenido {front_pid}/{focused:?}"
+            ));
+        }
+        let desktop = &manager.desktops[&space];
+        if desktop.tab_role(chosen) != Some(true) || desktop.tab_role(other) != Some(true) {
+            return Err("La selección cambió la pestaña activa del otro grupo".into());
+        }
+    }
+    println!("PASS: foco AX por ventana y selección independiente en dos grupos del mismo PID.");
+    Ok(())
+}
+
+pub fn check(mode: &str) -> Result<(), String> {
+    let scenes_only = mode == "--check-work-scenes";
+    let focus_only = mode == "--check-tab-focus";
     if !ax::trusted() {
         return Err(
             "El diagnóstico de cierre necesita Accesibilidad; no modifica permisos.".into(),
@@ -332,6 +394,7 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--tab-close-fixture")
             .args(two_displays.then_some("--second-scene-display"))
+            .args(focus_only.then_some("--shared-app-tabs"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -346,7 +409,14 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         .map(str::parse::<u32>)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    if ids.len() != if two_displays { 5 } else { 3 } {
+    let expected = if two_displays {
+        5
+    } else if focus_only {
+        4
+    } else {
+        3
+    };
+    if ids.len() != expected {
         return Err("El fixture no creó todas las ventanas previstas".into());
     }
     pump(0.15);
@@ -365,7 +435,7 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
         .ok_or("Sin área visible del fixture")?;
     let mut manager = Manager::default();
     manager.active_areas.push((space, area));
-    for id in &ids[..3] {
+    for id in &ids[..if scenes_only { 3 } else { expected }] {
         let element = ax::window_for_id(pid, *id).ok_or("Falta miembro AX")?;
         let (p, s) = ax::geometry(element.0).ok_or("Falta geometría AX")?;
         manager.windows.insert(
@@ -378,6 +448,23 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
                 element,
             },
         );
+    }
+    let send = |command: &str,
+                input: &mut std::process::ChildStdin,
+                output: &mut BufReader<std::process::ChildStdout>|
+     -> Result<(), String> {
+        writeln!(input, "{command}").map_err(|e| e.to_string())?;
+        let mut reply = String::new();
+        output.read_line(&mut reply).map_err(|e| e.to_string())?;
+        if reply.trim() != "OK" {
+            return Err(format!("Fixture no confirmó {command}: {reply}"));
+        }
+        pump(0.12);
+        Ok(())
+    };
+    if focus_only {
+        send("focus-last", &mut input, &mut output)?;
+        return check_shared_app_tabs(&mut manager, &ids, pid, space, area);
     }
     let mut desktop = Desktop::configured(Layout::Spiral, None);
     desktop.reconcile_at(&ids[..3], area, 10., None);
@@ -395,19 +482,6 @@ pub fn check(scenes_only: bool) -> Result<(), String> {
     }
     manager.desktops.insert(space, desktop);
     super::drag_diagnostics::check(&mut manager, &ids, space, area)?;
-    let send = |command: &str,
-                input: &mut std::process::ChildStdin,
-                output: &mut BufReader<std::process::ChildStdout>|
-     -> Result<(), String> {
-        writeln!(input, "{command}").map_err(|e| e.to_string())?;
-        let mut reply = String::new();
-        output.read_line(&mut reply).map_err(|e| e.to_string())?;
-        if reply.trim() != "OK" {
-            return Err(format!("Fixture no confirmó {command}: {reply}"));
-        }
-        pump(0.12);
-        Ok(())
-    };
     send("rename", &mut input, &mut output)?;
     let frames = manager.desktops[&space].window_frames(area, 10.);
     manager.draw_strips(space, &frames, primary_height(), 0, false);
