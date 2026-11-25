@@ -935,19 +935,11 @@ impl MembershipGrace {
             .collect()
     }
 }
-#[derive(Clone, Copy)]
-enum StripSpaceBinding {
-    Pending(Instant),
-    Confirmed,
-    Fallback,
-}
-
 /// A reused strip panel and the content last painted into it.
 struct TabStrip {
     panel: Retained<AnyObject>,
     space: Workspace,
     area: Option<NSRect>,
-    binding: StripSpaceBinding,
     marker: Option<Retained<AnyObject>>,
     signature: Vec<(String, Option<Retained<AnyObject>>)>,
     icon_sources: Vec<Option<Retained<AnyObject>>>,
@@ -958,7 +950,6 @@ struct TabStrip {
 }
 impl TabStrip {
     fn show_at(&mut self, frame: NSRect, primary: f64) {
-        self.confirm_space();
         unsafe {
             if self.frame != frame {
                 let _: () = msg_send![&*self.panel,setFrame:appkit(frame, primary),display:true];
@@ -980,31 +971,13 @@ impl TabStrip {
 
     fn hide(&self) {
         unsafe {
+            let visible: bool = msg_send![&*self.panel, isVisible];
+            if !visible {
+                return;
+            }
             let content: Obj = msg_send![&*self.panel, contentView];
             release_tab_cursor_in_view(content);
             let _: () = msg_send![&*self.panel, orderOut:ptr::null::<AnyObject>()];
-        }
-    }
-
-    fn confirm_space(&mut self) {
-        let StripSpaceBinding::Pending(until) = self.binding else {
-            return;
-        };
-        let number: isize = unsafe { msg_send![&*self.panel, windowNumber] };
-        let membership = u32::try_from(number).ok().and_then(spaces::window_spaces);
-        match membership.as_deref() {
-            Some([space]) if *space == self.space.1 => {
-                self.binding = StripSpaceBinding::Confirmed;
-            }
-            // WindowServer publishes a newly ordered panel after the run loop
-            // returns. The existing tiling cadence supplies bounded retries.
-            Some([]) if Instant::now() < until => {}
-            _ => {
-                self.binding = StripSpaceBinding::Fallback;
-                unsafe {
-                    let _: () = msg_send![&*self.panel, setCollectionBehavior:((1usize << 0) | (1 << 3) | (1 << 6))];
-                }
-            }
         }
     }
 
@@ -2386,8 +2359,7 @@ impl Manager {
             return;
         }
         for strip in &self.strips {
-            if matches!(strip.binding, StripSpaceBinding::Confirmed)
-                && visible.contains(&strip.space)
+            let current = visible.contains(&strip.space)
                 && self.desktops.get(&strip.space).is_some_and(|desktop| {
                     desktop.groups().iter().any(|group| {
                         group.members.len() > 1
@@ -2397,9 +2369,11 @@ impl Manager {
                 })
                 && strip
                     .area
-                    .is_some_and(|saved| area(strip.space.0) == Some(saved))
-            {
+                    .is_some_and(|saved| area(strip.space.0) == Some(saved));
+            if current {
                 strip.show();
+            } else {
+                strip.hide();
             }
         }
     }
@@ -2424,12 +2398,11 @@ impl Manager {
         self.tab_drag = None;
         self.gesture_candidates.clear();
         self.hide_preview_panels();
-        // Native per-Space panels travel with the desktop. Keep their controls
-        // alive through the quiet/reentry barrier; fallback overlays cannot.
+        // Floating panels can follow the active Space even after WindowServer
+        // reported the intended membership. Hide by workspace instead.
         for strip in &mut self.strips {
             strip.clear_marker();
-            strip.confirm_space();
-            if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
+            if !visible.contains(&strip.space) {
                 strip.hide();
             }
         }
@@ -2961,11 +2934,9 @@ impl Manager {
                 }
                 None => {
                     let panel_obj = unsafe { new_overlay(panel, primary) };
-                    // No CanJoinAllSpaces or MoveToActiveSpace: AppKit owns the
-                    // slide, rather than hiding/redrawing a sticky overlay.
+                    // The overlay can join any Space; Manager scopes its
+                    // visibility to the workspace that owns the group.
                     unsafe {
-                        let _: () =
-                            msg_send![&panel_obj, setCollectionBehavior:((1usize << 3) | (1 << 6))];
                         let _: () = msg_send![&panel_obj, setHidesOnDeactivate:false];
                     }
                     let root = unsafe {
@@ -2986,15 +2957,12 @@ impl Manager {
                         let _: () = msg_send![&panel_obj, orderFrontRegardless];
                         sync_strip_hover(&root);
                     }
-                    let binding =
-                        StripSpaceBinding::Pending(Instant::now() + Duration::from_secs(1));
                     self.strips.insert(
                         used,
                         TabStrip {
                             panel: panel_obj,
                             space,
                             area: workspace_area,
-                            binding,
                             marker: None,
                             signature: tabs,
                             icon_sources: new_sources,
@@ -3051,13 +3019,17 @@ impl Manager {
         self.strips.retain(|strip| {
             let used = index < strips;
             index += 1;
-            used || (!self.active_areas.iter().any(|(key, _)| *key == strip.space)
+            if used {
+                return true;
+            }
+            strip.hide();
+            !self.active_areas.iter().any(|(key, _)| *key == strip.space)
                 && self.desktops.get(&strip.space).is_some_and(|desktop| {
                     desktop
                         .groups()
                         .iter()
                         .any(|group| group.members.len() > 1 && group.members == strip.members)
-                }))
+                })
         });
         for badge in self.badges.iter().skip(badges) {
             unsafe {
@@ -4318,7 +4290,9 @@ impl Manager {
             // Notifications may arrive late or be skipped during native reentry.
             // A changed visible Space also starts the quiet period before writes.
             if !resuming_space && desktop_keys_changed(&self.active_areas, &areas) {
-                self.space_changed();
+                let visible: Vec<_> = areas.iter().map(|(key, _)| *key).collect();
+                self.space_changed_with_visible_at(Instant::now(), &visible);
+                self.restore_space_strips(&visible);
                 return;
             }
             // visibleFrame can change with the Dock/menu bar without a display
@@ -4356,7 +4330,11 @@ impl Manager {
             }
             // The notification can precede the native Space update. Check again
             // after the quiet period, before resuming any deferred geometry.
-            self.cancel_inactive_placements(&areas.iter().map(|(key, _)| *key).collect::<Vec<_>>());
+            let visible: Vec<_> = areas.iter().map(|(key, _)| *key).collect();
+            self.cancel_inactive_placements(&visible);
+            if resuming_space {
+                self.restore_space_strips(&visible);
+            }
             self.active_areas = areas;
             self.last_area_update = Some(Instant::now());
         }

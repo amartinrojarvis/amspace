@@ -305,7 +305,6 @@ pub fn check_controls() -> Result<(), String> {
                 panel: panel.clone(),
                 space: (0, 0),
                 area: None,
-                binding: StripSpaceBinding::Fallback,
                 marker: None,
                 signature: names.to_vec(),
                 icon_sources: vec![],
@@ -585,6 +584,10 @@ fn check_reorder_presentation(strip: &mut TabStrip) -> Result<(), String> {
     Ok(())
 }
 
+fn strip_visible(panel: &AnyObject) -> bool {
+    unsafe { msg_send![panel, isVisible] }
+}
+
 fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
     let (space, area) = spaces::visible_desktops()
         .into_iter()
@@ -603,27 +606,25 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
     };
     manager.desktops.insert(space, desktop);
     manager.draw_strips(space, &frames, primary_height(), 0, false);
-    // Like the production tick, wait for WindowServer's first membership
-    // publication without sleeping/blocking the production main thread.
     pump(0.15);
-    manager.draw_strips(space, &frames, primary_height(), 0, false);
     let strip = &manager.strips[0];
-    if !matches!(strip.binding, StripSpaceBinding::Confirmed) {
-        return Err("AppKit no asignó la tira a su Space nativo".into());
+    if !strip.accepts_input() {
+        return Err("La tira inicial no quedó visible y disponible".into());
     }
     let panel = strip.panel.clone();
     let root: Retained<AnyObject> = unsafe { msg_send![&*panel, contentView] };
-    let number: isize = unsafe { msg_send![&*panel, windowNumber] };
+    let other = (space.0, space.1.wrapping_add(1));
     for _ in 0..20 {
-        manager.space_changed_with_visible_at(Instant::now(), &[]);
+        manager.space_changed_with_visible_at(Instant::now(), &[other]);
+        manager.restore_space_strips(&[other]);
         manager.active_areas.clear();
         manager.trim_overlays(0, 0);
-        let visible: bool = unsafe { msg_send![&*panel, isVisible] };
-        if manager.strips.len() != 1
-            || !visible
-            || spaces::window_space(number as u32) != Some(space.1)
-        {
-            return Err("La transición retiró o desancló la tira retenida".into());
+        if manager.strips.len() != 1 || strip_visible(&panel) {
+            return Err("La tira del primer escritorio seguía visible en el segundo".into());
+        }
+        manager.restore_space_strips(&[space]);
+        if !strip_visible(&panel) {
+            return Err("La tira no reapareció al volver antes de reconciliar".into());
         }
         manager.active_areas.push((space, area));
         manager.draw_strips(space, &frames, primary_height(), 0, false);
@@ -637,6 +638,28 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
             return Err("Volver al contexto reconstruyó panel o controles".into());
         }
     }
+    // A group on the second desktop uses the same slot, not a separate region.
+    let mut second_desktop = Desktop::default();
+    second_desktop.reconcile_at(&[3], area, 10., None);
+    let second_desktop = second_desktop
+        .proposed_drop(4, DropIntent::Group(3), area, 10.)
+        .ok_or("Sin grupo en el segundo escritorio de diagnóstico")?;
+    let second_frames = second_desktop.window_frames(area, 10.);
+    manager.desktops.insert(other, second_desktop);
+    let now = Instant::now();
+    manager.space_changed_with_visible_at(now, &[other]);
+    manager.active_areas[0] = (other, area);
+    manager.draw_strips(other, &second_frames, primary_height(), 1, false);
+    let second_panel = manager.strips[1].panel.clone();
+    if strip_visible(&panel) || !strip_visible(&second_panel) {
+        return Err("Se solaparon tiras de escritorios distintos".into());
+    }
+    manager.space_changed_with_visible_at(now, &[space]);
+    manager.restore_space_strips(&[space]);
+    if !strip_visible(&panel) || strip_visible(&second_panel) {
+        return Err("Volver dejó visible la tira del segundo escritorio".into());
+    }
+    manager.active_areas[0] = (space, area);
     unsafe {
         capture_control(
             Retained::as_ptr(&root) as Obj,
@@ -667,12 +690,10 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
         return Err("Se reutilizaron coordenadas anteriores a un cambio de área".into());
     }
     manager.strips[0].area = Some(area);
-    manager.strips[0].binding = StripSpaceBinding::Fallback;
     manager.restore_space_strips(&[space]);
-    if unsafe { msg_send![&*panel, isVisible] } {
-        return Err("Se restauró un panel sin pertenencia nativa confirmada".into());
+    if !strip_visible(&panel) {
+        return Err("El grupo válido no se restauró desde la caché".into());
     }
-    manager.strips[0].binding = StripSpaceBinding::Confirmed;
     manager.set_presentation_at(crate::desktop_mode::Mode::Overview, now, None);
     manager.restore_space_strips(&[space]);
     if unsafe { msg_send![&*panel, isVisible] } {
@@ -713,7 +734,7 @@ fn check_strip_lifecycle(target: &Retained<AnyObject>) -> Result<(), String> {
         return Err("Una tira sin grupo quedó retenida".into());
     }
     println!(
-        "PASS: panel nativo del Space {}, 20 ciclos de barrera/caché sin ocultar ni reconstruir, pausa y retirada. No se cambió físicamente de escritorio.",
+        "PASS: 20 idas y vueltas del contexto del Space {}, con panel AppKit, caché y separación de escritorios. No se cambió físicamente de escritorio.",
         space.1
     );
     Ok(())

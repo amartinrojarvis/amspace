@@ -1,3 +1,8 @@
+## 0.9.47/build 102 — Visibilidad de las tiras al cambiar de Space
+
+- `--check-tab-controls` reprodujo con el código anterior una tira que seguía visible al pasar al segundo contexto. Con la corrección, los paneles AppKit pasaron 20 idas y vueltas simuladas: la tira saliente se ocultó, la entrante reapareció antes de reconciliar AX y conservó el mismo panel y los mismos controles. Dos grupos que ocupaban el mismo hueco no mostraron las tiras a la vez. También se comprobó pausa, presentación, área cambiada y eliminación del grupo.
+- `./scripts/check.sh`: 298 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado. El diagnóstico gráfico se ejecutó en Apple Silicon; no cambió físicamente de Space ni verifica la animación del compositor, varios monitores o ejecución en Intel.
+
 ## 0.9.46/build 101 — Apilado entre grupos de pestañas mixtos
 
 - `--check-tab-stacking`, en Apple Silicon: dos procesos AppKit desechables, con dos grupos de marcos superpuestos. La ruta publicada en 0.9.45 dejó la pestaña correcta con foco pero adelantó también la ventana hermana del primer grupo. Con activación dirigida, la acción AppKit dio foco al ID elegido y WindowServer confirmó que en el otro grupo la pestaña activa seguía por delante. No se usaron ventanas de Brave, Spark ni Codex.
