@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.47</title><pubDate>Wed, 25 Nov 2026 08:20:19 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.47 — Pestañas en su escritorio.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.48</title><pubDate>Wed, 25 Nov 2026 13:56:40 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.48 — Foco durante vídeo a pantalla completa.
 
-- Al cambiar de escritorio, las barras de pestañas del anterior se ocultan. Al volver, reaparecen en su sitio sin esperar a que el mosaico recoloque las ventanas.
+- El foco bajo el cursor deja de cambiar de ventana mientras el navegador reproduce vídeo a pantalla completa, incluso con reproductores que no declaran ese modo a macOS. Los clics explícitos siguen funcionando.
 
 English
 
-- Tab bars stay on their own desktop and reappear in place when you return, without waiting for windows to be tiled again.
+- Focus follows mouse no longer switches windows while the foreground browser presents fullscreen video, including borderless players that do not report fullscreen to macOS. Clicking still works as usual.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.47/AMSpace-universal.zip" length="3390834" type="application/octet-stream" sparkle:version="102" sparkle:shortVersionString="0.9.47" sparkle:edSignature="vvfddV0pHV1/FjnWiAMHA2blTPKfAvTykRq8Ij2fon/VGSxzV1k6BcW2AC+eGNV9vyJGuYptOhyZfznwca26BA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: H+vSoLB73PUOv1fUOh6g/dbKJ268zuTFS9JVCdMXe7X93xcjvmsvRYPcc/9on7y22ZOwRjlF/EWT9Qq4zxMwCQ==
-length: 1693
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.48/AMSpace-universal.zip" length="3393228" type="application/octet-stream" sparkle:version="103" sparkle:shortVersionString="0.9.48" sparkle:edSignature="tZpSjkXepwmXbVr532oo3F/Bopu1nVEGxlkahYG5ferGrLFJ69ZuR/IBf4xDICp7ElTN//11FzaBM1VjBKduDg=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: jlFZ8+shbdV35A1mE+x1nxJsl7lFNBUzZ+MryOdSw0/EpyifjX3BbNbV7nf6AGmbs4u99wnQp/s8ctDpmPJxCw==
+length: 1838
 -->

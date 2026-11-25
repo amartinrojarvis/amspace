@@ -2,6 +2,7 @@
 
 - La regresión geométrica distingue una superficie sin bordes que llena un monitor vertical con origen negativo de una ventana maximizada que deja libre la barra de menús, de otro monitor y de una superficie que abarca varias pantallas.
 - `./scripts/check.sh`: 299 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado. No se comprobó la reproducción en los sitios afectados ni se cambió la app instalada.
+- [CI del commit de publicación](https://github.com/amartinrojarvis/amspace/actions/runs/45628551926) aprobada. Las cinco descargas públicas de [v0.9.48](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.48) y el ZIP inmutable de Sparkle (`228c006`) coincidieron con los archivos firmados. El DMG montado en solo lectura conservó la disposición, la guía, el enlace a Aplicaciones y la firma del bundle 103. No se probó la instalación desde la versión anterior.
 
 ## 0.9.47/build 102 — Visibilidad de las tiras al cambiar de Space
 
