@@ -950,7 +950,19 @@ pub(crate) fn check_tab_focus_click(
         );
         let _: () = msg_send![&*panel, orderFrontRegardless];
         let _: bool = msg_send![tab, sendAction:sel!(selectTileTab:), to:target_ptr];
-        pump(0.15);
+        let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let deadline = Instant::now() + Duration::from_millis(150);
+        let focused = loop {
+            let front: Obj = msg_send![workspace, frontmostApplication];
+            let owner: i32 = msg_send![front, processIdentifier];
+            if owner == pid && ax::focused_id(pid) == Some(chosen) {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            pump(0.01);
+        };
         let mut app = APP.with(|cell| cell.borrow_mut().take().unwrap());
         let superseded = app.focus_target.is_none() && app.pending_focus.is_none();
         *manager = std::mem::take(&mut app.tile_manager);
@@ -962,6 +974,9 @@ pub(crate) fn check_tab_focus_click(
         let _: () = msg_send![&defaults, removePersistentDomainForName:&*suite];
         if !superseded {
             return Err("La pestaña no desplazó el objetivo anterior del puntero".into());
+        }
+        if !focused {
+            return Err("La ventana elegida no llegó a recibir el foco de teclado".into());
         }
         Ok(())
     }

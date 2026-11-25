@@ -66,9 +66,10 @@ pub fn run_fixture() {
     });
     unsafe {
         let four_windows = std::env::args().any(|arg| arg == "--shared-app-tabs");
+        let mixed = std::env::args().any(|arg| arg == "--mixed-app-tabs");
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
         let _: bool =
-            msg_send![app, setActivationPolicy:if four_windows { 0isize } else { 1isize }];
+            msg_send![app, setActivationPolicy:if four_windows || mixed { 0isize } else { 1isize }];
         let _: () = msg_send![app, finishLaunching];
         let mut builder = ClassBuilder::new(c"AMSpaceCloseFixture", class!(NSObject)).unwrap();
         builder.add_method(
@@ -91,6 +92,8 @@ pub fn run_fixture() {
             5
         } else if four_windows {
             4
+        } else if mixed {
+            2
         } else {
             3
         };
@@ -327,6 +330,125 @@ fn check_scene_displays(
     Ok(())
 }
 
+fn front_pid() -> i32 {
+    unsafe {
+        let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let front: Obj = msg_send![workspace, frontmostApplication];
+        msg_send![front, processIdentifier]
+    }
+}
+
+fn check_mixed_app_tabs() -> Result<(), String> {
+    fn spawn() -> Result<(Fixture, [u32; 2]), String> {
+        let mut fixture = Fixture(
+            Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+                .args(["--tab-close-fixture", "--mixed-app-tabs"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|e| e.to_string())?,
+        );
+        let mut line = String::new();
+        BufReader::new(fixture.0.stdout.as_mut().unwrap())
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        let ids = line
+            .split_whitespace()
+            .map(str::parse::<u32>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .try_into()
+            .map_err(|_| "El fixture no creó dos ventanas")?;
+        Ok((fixture, ids))
+    }
+
+    let (shared, [hidden, chosen]) = spawn()?;
+    let (mut other, [cover, previous]) = spawn()?;
+    let shared_pid = shared.0.id() as i32;
+    let other_pid = other.0.id() as i32;
+    let ids = [hidden, cover, chosen, previous];
+    let space_id = spaces::window_space(hidden).ok_or("Sin Space para el fixture")?;
+    let (space, frame) = spaces::visible_desktops()
+        .into_iter()
+        .filter(|key| key.1 == space_id)
+        .find_map(|key| Some((key, area(key.0)?)))
+        .ok_or("Sin área útil para el fixture")?;
+    let mut manager = Manager::default();
+    manager.active_areas.push((space, frame));
+    let mut desktop = Desktop::configured(Layout::Spiral, None);
+    desktop.reconcile_at(&ids, frame, 10., None);
+    for (member, active) in [(hidden, cover), (chosen, previous)] {
+        desktop = desktop
+            .proposed_drop(active, DropIntent::Group(member), frame, 10.)
+            .ok_or("No se pudieron crear los grupos mixtos")?;
+    }
+    let frames = desktop.window_frames(frame, 10.);
+    for (id, target) in frames
+        .iter()
+        .copied()
+        .chain(hidden_tab_frames(&desktop, &frames))
+    {
+        let pid = if id == hidden || id == chosen {
+            shared_pid
+        } else {
+            other_pid
+        };
+        let element = ax::window_for_id(pid, id).ok_or("Ventana AX ausente")?;
+        if !ax::set_frame(element.0, target) {
+            return Err("No se pudo superponer el fixture".into());
+        }
+        let (position, size) = ax::geometry(element.0).ok_or("Sin geometría de la pestaña")?;
+        if !near(NSRect::new(position, size), target) {
+            return Err("La ventana desechable no alcanzó el marco de su grupo".into());
+        }
+        manager.windows.insert(
+            id,
+            Managed {
+                pid,
+                space,
+                original: target,
+                original_area: frame,
+                element,
+            },
+        );
+    }
+    manager.desktops.insert(space, desktop);
+    if !ax::raise(manager.windows[&cover].element.0) {
+        return Err("No se pudo cubrir la pestaña inactiva".into());
+    }
+    writeln!(other.0.stdin.as_mut().unwrap(), "focus-last").map_err(|e| e.to_string())?;
+    let mut reply = String::new();
+    BufReader::new(other.0.stdout.as_mut().unwrap())
+        .read_line(&mut reply)
+        .map_err(|e| e.to_string())?;
+    pump(0.15);
+    if reply.trim() != "OK"
+        || front_pid() == shared_pid
+        || ax::focused_id(other_pid) != Some(previous)
+        || ws::window_above(cover, hidden) != Some(true)
+        || ws::window_above(previous, chosen) != Some(true)
+    {
+        return Err("El fixture no empezó con las dos pestañas compartidas detrás".into());
+    }
+    crate::ui::diagnostics::check_tab_focus_click(&mut manager, shared_pid, hidden, chosen)?;
+    pump(0.3);
+    if ws::window_above(chosen, previous) != Some(true) {
+        return Err("La pestaña elegida no quedó encima en el segundo bloque".into());
+    }
+    if manager.desktops[&space].tab_role(chosen) != Some(true) {
+        return Err("El modelo del segundo bloque no seleccionó la pestaña elegida".into());
+    }
+    if manager.desktops[&space].tab_role(cover) != Some(true)
+        || ws::window_above(cover, hidden) != Some(true)
+    {
+        return Err(
+            "La otra ventana de la aplicación tapó la pestaña activa del primer bloque".into(),
+        );
+    }
+    println!("PASS: la pestaña elegida subió en su bloque y la otra del mismo PID siguió detrás.");
+    Ok(())
+}
+
 fn check_shared_app_tabs(
     manager: &mut Manager,
     ids: &[u32],
@@ -342,28 +464,23 @@ fn check_shared_app_tabs(
             .ok_or("No se pudieron preparar los dos grupos de la misma app")?;
     }
     manager.desktops.insert(space, desktop);
-    let current_focus = || {
-        let front_pid: i32 = unsafe {
-            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let front: Obj = msg_send![workspace, frontmostApplication];
-            msg_send![front, processIdentifier]
-        };
-        (front_pid, ax::focused_id(pid))
-    };
-    if current_focus() != (pid, Some(ids[3])) {
+    let current_focus = || (front_pid(), ax::focused_id(pid));
+    if ax::focused_id(pid) != Some(ids[3]) {
         return Err("El fixture no obtuvo el foco inicial en el segundo grupo".into());
     }
     crate::ui::diagnostics::check_tab_focus_click(manager, pid, ids[3], ids[0])?;
     for (chosen, other) in [(ids[0], ids[3]), (ids[2], ids[0]), (ids[1], ids[2])] {
-        if chosen != ids[0] && !manager.activate_tab(chosen) {
-            return Err(format!("Pestaña rechazada: {chosen}"));
-        }
-        pump(0.15);
-        let (front_pid, focused) = current_focus();
-        if focused != Some(chosen) || front_pid != pid {
-            return Err(format!(
-                "Foco esperado {pid}/{chosen}; obtenido {front_pid}/{focused:?}"
-            ));
+        if chosen != ids[0] {
+            if !manager.activate_tab(chosen) {
+                return Err(format!("Pestaña rechazada: {chosen}"));
+            }
+            let deadline = Instant::now() + Duration::from_millis(150);
+            while current_focus() != (pid, Some(chosen)) {
+                if Instant::now() >= deadline {
+                    return Err(format!("La pestaña {chosen} no recibió foco de teclado"));
+                }
+                pump(0.01);
+            }
         }
         let desktop = &manager.desktops[&space];
         if desktop.tab_role(chosen) != Some(true) || desktop.tab_role(other) != Some(true) {
@@ -389,6 +506,9 @@ pub fn check(mode: &str) -> Result<(), String> {
         let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
         RestoreFocus(msg_send![workspace, frontmostApplication])
     };
+    if mode == "--check-tab-stacking" {
+        return check_mixed_app_tabs();
+    }
     let two_displays = scenes_only && spaces::visible_desktops().len() >= 2;
     let mut fixture = Fixture(
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)

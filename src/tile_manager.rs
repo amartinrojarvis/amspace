@@ -1272,6 +1272,34 @@ impl Manager {
             .any(|strip| contains(strip.frame, point) && strip.accepts_input())
     }
 
+    fn focus_tab_window(&self, window: &Managed, id: u32) -> bool {
+        let risks_other_group = self.active_areas.iter().any(|(space, _)| {
+            self.desktops.get(space).is_some_and(|desktop| {
+                desktop.groups().iter().any(|group| {
+                    !group.members.contains(&id)
+                        && group.members.iter().any(|member| {
+                            Some(*member) != group.leaf()
+                                && self.windows.get(member).is_some_and(|candidate| {
+                                    candidate.pid == window.pid && candidate.space == *space
+                                })
+                        })
+                })
+            })
+        });
+        if !risks_other_group {
+            return ax::focus(window.element.0, window.pid);
+        }
+        // AXFrontmost raises the entire app, including inactive windows in
+        // unrelated groups. Activate only the requested native window.
+        let front_pid: i32 = unsafe {
+            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: Obj = msg_send![workspace, frontmostApplication];
+            msg_send![front, processIdentifier]
+        };
+        (front_pid == window.pid || crate::focus::activate(window.pid, id, false))
+            && ax::focus_only_window(window.element.0)
+    }
+
     /// Only an explicit tab click activates/raises a foreign window.
     pub fn activate_tab(&mut self, id: u32) -> bool {
         if self.presentation_blocks_input()
@@ -1302,7 +1330,9 @@ impl Manager {
         {
             return false;
         }
-        if !ax::focus(window.element.0, window.pid) {
+        if !self.focus_tab_window(window, id) {
+            self.last_error =
+                Some(crate::i18n::tr("La aplicación no ha aceptado activar esta ventana.").into());
             return false;
         }
         self.select_tab_model(id);
@@ -2036,7 +2066,7 @@ impl Manager {
                 "Un cuadro de diálogo de la aplicación tiene el foco.",
             ));
         }
-        if !ax::focus(window.element.0, window.pid) {
+        if !self.focus_tab_window(window, id) {
             return Err(crate::i18n::tr(
                 "La aplicación no ha aceptado activar esta ventana.",
             ));

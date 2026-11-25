@@ -42,7 +42,10 @@ fn main() {
     } else if let Some(mode) = std::env::args().find(|a| {
         matches!(
             a.as_str(),
-            "--check-tab-close" | "--check-tab-focus" | "--check-work-scenes"
+            "--check-tab-close"
+                | "--check-tab-focus"
+                | "--check-tab-stacking"
+                | "--check-work-scenes"
         )
     }) {
         let result = objc2::rc::autoreleasepool(|_| tile_manager::close_diagnostics::check(&mode));

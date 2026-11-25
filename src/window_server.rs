@@ -451,6 +451,15 @@ fn move_border(target: u32) -> bool {
     unsafe { move_window((api.connection)(), border, &frame.origin) == 0 }
 }
 
+pub(crate) fn window_above(front: u32, back: u32) -> Option<bool> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    let mut ids = array(list.0)
+        .filter_map(window_id)
+        .filter(|id| *id == front || *id == back);
+    let first = ids.next()?;
+    ids.next().map(|_| first == front)
+}
+
 /// Geometry and clipping must come from the same compositor snapshot.
 pub fn visible_border_regions(target: u32, border: u32) -> Option<(NSRect, Vec<NSRect>)> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;

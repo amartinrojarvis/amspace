@@ -484,9 +484,15 @@ pub fn focus(window: Cf, pid: i32) -> bool {
     let Some(app) = application(pid) else {
         return false;
     };
+    // Raising a background window alone does not make its app active.
     unsafe {
-        // Raising a background window alone does not make its app active.
         AXUIElementSetAttributeValue(app.0, cf(ns_string!("AXFrontmost")), kCFBooleanTrue);
+    }
+    focus_only_window(window)
+}
+
+pub(crate) fn focus_only_window(window: Cf) -> bool {
+    unsafe {
         AXUIElementSetAttributeValue(window, cf(ns_string!("AXMain")), kCFBooleanTrue);
         AXUIElementSetAttributeValue(window, cf(ns_string!("AXFocused")), kCFBooleanTrue);
         AXUIElementPerformAction(window, cf(ns_string!("AXRaise"))) == 0

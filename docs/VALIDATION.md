@@ -1,3 +1,9 @@
+## 0.9.46/build 101 — Apilado entre grupos de pestañas mixtos
+
+- `--check-tab-stacking`, en Apple Silicon: dos procesos AppKit desechables, con dos grupos de marcos superpuestos. La ruta publicada en 0.9.45 dejó la pestaña correcta con foco pero adelantó también la ventana hermana del primer grupo. Con activación dirigida, la acción AppKit dio foco al ID elegido y WindowServer confirmó que en el otro grupo la pestaña activa seguía por delante. No se usaron ventanas de Brave, Spark ni Codex.
+- `./scripts/check.sh`: 298 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos en un checkout aislado.
+- También pasó `--check-tab-focus`, con los cuatro miembros del mismo proceso, y se compiló el bundle universal. Las pruebas nativas se ejecutaron en Apple Silicon, no en Intel.
+
 ## 0.9.45/build 100 — Foco entre grupos de pestañas de una misma app
 
 - `--check-tab-focus`, en Apple Silicon: cuatro ventanas AppKit desechables, dos por grupo. La acción de selección del controlador invalidó el objetivo del puntero anterior; Accesibilidad confirmó la ventana elegida y el otro grupo conservó su pestaña activa al alternar varias veces. Se comprobó también el PID en primer plano. No se usaron ventanas del usuario.

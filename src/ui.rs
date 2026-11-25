@@ -5581,6 +5581,8 @@ fn apply_tab_action(a: &mut App, sender: Obj, action: tab_delivery::Action) {
                 a.update_tile_timer();
                 a.settle_focus();
                 a.show_tip(4, crate::i18n::tr("En la barra reordenas; fuera eliges destino. ⌥: colocar sin apilar. Clic derecho: Colocar en… y otras acciones; ×: cierre normal."));
+            } else if let Some(error) = a.tile_manager.last_error.take() {
+                a.show_notice(&error, crate::discovery::NoticeKind::Error);
             }
         }
         tab_delivery::Action::Close => {
