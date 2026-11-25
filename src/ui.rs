@@ -1418,6 +1418,7 @@ impl App {
             || self.transfer.is_some()
             || self.switching.is_some()
             || Instant::now() < self.hover_resume
+            || self.border_space_pause.pending(Instant::now())
             || focus::secure_input()
             || crate::desktop_mode::active()
         {
@@ -1461,13 +1462,18 @@ impl App {
             if self.tile_manager.tab_strip_at(point_ax) {
                 return;
             }
-            let Some((w, pid)) = ax::window_at(point_ax.x, point_ax.y) else {
+            let workspace: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let front: Obj = msg_send![workspace, frontmostApplication];
+            let front_pid: i32 = msg_send![front, processIdentifier];
+            let Some((w, pid)) = ax::window_at(point_ax, front_pid) else {
                 return;
             };
-            let ws: Obj = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let front: Obj = msg_send![ws, frontmostApplication];
-            let front_pid: i32 = msg_send![front, processIdentifier];
-            if ax::focus_is_protected(front_pid) || focus::secure_input() {
+            if ax::pointer_focus_is_protected(front_pid) || focus::secure_input() {
+                return;
+            }
+            let current: Obj = msg_send![workspace, frontmostApplication];
+            let current_pid: i32 = msg_send![current, processIdentifier];
+            if front_pid != current_pid {
                 return;
             }
             let Some(id) = ax::window_id(w.0) else {
@@ -1522,6 +1528,7 @@ impl App {
             if self.switching.is_some()
                 || self.transfer.is_some()
                 || Instant::now() < self.hover_resume
+                || self.border_space_pause.pending(Instant::now())
                 || !self.hover_enabled
                 || !ax::trusted()
                 || self.sleeping
@@ -1531,7 +1538,6 @@ impl App {
                 || flags & (1usize << 19) != 0
                 || focus::secure_input()
                 || crate::desktop_mode::active()
-                || ax::focus_is_protected(front_pid)
             {
                 // Cancellation cannot activate or reorder the previous window.
                 return;
@@ -1543,7 +1549,7 @@ impl App {
             if self.tile_manager.tab_strip_at(point_ax) {
                 return;
             }
-            let Some((window, pid)) = ax::window_at(point_ax.x, point_ax.y) else {
+            let Some((window, pid)) = ax::window_at(point_ax, front_pid) else {
                 return;
             };
             if pid != pending.pid || ax::window_id(window.0) != Some(pending.id) {
@@ -1551,6 +1557,14 @@ impl App {
                 // pointer during the delay. Never activate the obsolete surface.
                 self.hover_probe.reset();
                 self.mouse_since = Instant::now();
+                return;
+            }
+            if ax::pointer_focus_is_protected(front_pid) || focus::secure_input() {
+                return;
+            }
+            let current: Obj = msg_send![workspace, frontmostApplication];
+            let current_pid: i32 = msg_send![current, processIdentifier];
+            if front_pid != current_pid {
                 return;
             }
             if pending.verify {
@@ -5708,8 +5722,8 @@ extern "C-unwind" fn space_changed(target: Obj, selector: Sel, _: Obj) {
     with_app_deferred(target, selector, |a| {
         a.desktop_preview.hide();
         a.pause_border_for_space();
-        a.focus_target = None;
-        a.pending_focus = None;
+        a.mouse_since = Instant::now();
+        a.hover_probe.reset();
         a.layout_picker = None;
         a.tile_manager.space_changed();
         if a.tile_timer.is_some() && !a.tiling_paused && !a.sleeping {

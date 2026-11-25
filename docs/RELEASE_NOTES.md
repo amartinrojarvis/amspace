@@ -1,10 +1,10 @@
-AMSpace 0.9.47 — Pestañas en su escritorio.
+AMSpace 0.9.48 — Foco durante vídeo a pantalla completa.
 
-- Al cambiar de escritorio, las barras de pestañas del anterior se ocultan. Al volver, reaparecen en su sitio sin esperar a que el mosaico recoloque las ventanas.
+- El foco bajo el cursor deja de cambiar de ventana mientras el navegador reproduce vídeo a pantalla completa, incluso con reproductores que no declaran ese modo a macOS. Los clics explícitos siguen funcionando.
 
 English
 
-- Tab bars stay on their own desktop and reappear in place when you return, without waiting for windows to be tiled again.
+- Focus follows mouse no longer switches windows while the foreground browser presents fullscreen video, including borderless players that do not report fullscreen to macOS. Clicking still works as usual.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

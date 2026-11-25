@@ -241,6 +241,14 @@ fn accepts_pointer_focus(window: Cf) -> bool {
 /// Modal dialogs and sheets keep keyboard ownership even when the pointer rests
 /// on another app. Secure input is checked separately and needs no AX access.
 pub fn focus_is_protected(pid: i32) -> bool {
+    protected_focus(pid, false)
+}
+
+pub(crate) fn pointer_focus_is_protected(pid: i32) -> bool {
+    protected_focus(pid, true)
+}
+
+fn protected_focus(pid: i32, preserve_fullscreen: bool) -> bool {
     let Some(app) = application(pid) else {
         return false;
     };
@@ -254,6 +262,7 @@ pub fn focus_is_protected(pid: i32) -> bool {
     }
     attr(app.0, "AXFocusedWindow").is_some_and(|window| {
         flag(window.0, "AXModal")
+            || (preserve_fullscreen && flag(window.0, "AXFullScreen"))
             || protected(window.0)
             || attr(window.0, "AXSheets").is_some_and(|sheets| array(sheets.0).next().is_some())
     })
@@ -426,7 +435,12 @@ fn decode_geometry(p: Cf, s: Cf) -> Option<(NSPoint, NSSize)> {
         && size.height > 40.)
         .then_some((point, size))
 }
-pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
+pub fn window_at(point: NSPoint, front_pid: i32) -> Option<(Owned, i32)> {
+    let hits = crate::window_server::hit_windows_at(point, Some(front_pid));
+    if hits.is_empty() {
+        return None;
+    }
+    let NSPoint { x, y } = point;
     // AX knows which overlays actually receive input (the Dock also publishes
     // a transparent full-screen window). Use it to reject menus/Mission Control,
     // then use compositor geometry to distinguish sibling application windows.
@@ -450,7 +464,7 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
     // A compositor-corroborated real window may omit its subrole or report
     // AXUnknown (including browser windows). Reject known auxiliary/modal
     // surfaces, not every value other than AXStandardWindow.
-    if !accepts_pointer_focus(hit_window.0) {
+    if !accepts_pointer_focus(hit_window.0) || flag(hit_window.0, "AXFullScreen") {
         return None;
     }
     let mut hit_pid = 0;
@@ -460,7 +474,6 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         return None;
     }
     let hit_id = window_id(hit_window.0);
-    let hits = crate::window_server::hit_windows_at(NSPoint::new(x, y));
     #[cfg(test)]
     eprintln!("AX-pointer pid={hit_pid} window={hit_id:?} native-hits={hits:?}");
     let (owner, id) = crate::focus::pointer_target(&hits, hit_pid, hit_id)?;
@@ -468,7 +481,7 @@ pub fn window_at(x: f64, y: f64) -> Option<(Owned, i32)> {
         return Some((hit_window, hit_pid));
     }
     let window = window_for_id(owner, id)?;
-    if !accepts_pointer_focus(window.0) {
+    if !accepts_pointer_focus(window.0) || flag(window.0, "AXFullScreen") {
         return None;
     }
     let mut pid = 0;

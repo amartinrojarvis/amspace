@@ -1,3 +1,8 @@
+## 0.9.48/build 103 — Foco durante vídeo a pantalla completa
+
+- La regresión geométrica distingue una superficie sin bordes que llena un monitor vertical con origen negativo de una ventana maximizada que deja libre la barra de menús, de otro monitor y de una superficie que abarca varias pantallas.
+- `./scripts/check.sh`: 299 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado. No se comprobó la reproducción en los sitios afectados ni se cambió la app instalada.
+
 ## 0.9.47/build 102 — Visibilidad de las tiras al cambiar de Space
 
 - `--check-tab-controls` reprodujo con el código anterior una tira que seguía visible al pasar al segundo contexto. Con la corrección, los paneles AppKit pasaron 20 idas y vueltas simuladas: la tira saliente se ocultó, la entrante reapareció antes de reconciliar AX y conservó el mismo panel y los mismos controles. Dos grupos que ocupaban el mismo hueco no mostraron las tiras a la vez. También se comprobó pausa, presentación, área cambiada y eliminación del grupo.

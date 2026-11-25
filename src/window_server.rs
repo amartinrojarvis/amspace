@@ -18,6 +18,8 @@ unsafe extern "C" {
     fn CGRectMakeWithDictionaryRepresentation(dict: Cf, result: *mut NSRect) -> bool;
     fn CGWindowLevelForKey(key: i32) -> i32;
     fn CGMainDisplayID() -> u32;
+    fn CGDisplayBounds(display: u32) -> NSRect;
+    fn CGGetDisplaysWithPoint(point: NSPoint, max: u32, ids: *mut u32, count: *mut u32) -> i32;
 }
 unsafe extern "C" {
     static _dispatch_main_q: c_void;
@@ -224,14 +226,16 @@ pub fn track_target(id: u32) {
 /// Find the visible window at the pointer, independently of stale AX hit tests.
 /// Our click-through border is ignored; menus and own settings block targeting.
 pub fn window_at(point: NSPoint) -> Option<(i32, u32)> {
-    hit_windows_at(point).first().map(|(pid, id)| (*pid, *id))
+    hit_windows_at(point, None).first().copied()
 }
-pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
-    let visible_spaces: Vec<_> = crate::spaces::visible_desktops()
-        .into_iter()
-        .map(|(_, space)| space)
-        .collect();
-    if visible_spaces.is_empty() {
+pub fn hit_windows_at(point: NSPoint, protect_front: Option<i32>) -> Vec<(i32, u32)> {
+    let desktops = crate::spaces::visible_desktops();
+    if protect_front.is_some()
+        && !display_at(point).is_some_and(|display| desktops.iter().any(|&(id, _)| id == display))
+    {
+        return Vec::new(); // No normal desktop under the cursor (e.g. native fullscreen).
+    }
+    if desktops.is_empty() {
         return Vec::new();
     }
     let Some(list) = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }) else {
@@ -240,6 +244,11 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
     observe_presentation(list.0);
     if crate::desktop_mode::active() || contains_menu(list.0) {
         return Vec::new(); // Menus own keyboard tracking even outside their frame.
+    }
+    if let Some(pid) = protect_front
+        && front_has_fullscreen_surface(list.0, pid)
+    {
+        return Vec::new();
     }
     let mut hits = Vec::new();
     for info in array(list.0) {
@@ -267,7 +276,8 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
         }
         if crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
             .is_some_and(|alpha| alpha <= 0.)
-            || !crate::focus::in_visible_space(crate::spaces::window_space(id), &visible_spaces)
+            || crate::spaces::window_space(id)
+                .is_some_and(|space| !desktops.iter().any(|&(_, visible)| visible == space))
         {
             continue;
         }
@@ -287,6 +297,51 @@ pub fn hit_windows_at(point: NSPoint) -> Vec<(i32, u32)> {
     }
     hits
 }
+fn display_at(point: NSPoint) -> Option<u32> {
+    let (mut id, mut count) = (0, 0);
+    (unsafe { CGGetDisplaysWithPoint(point, 1, &mut id, &mut count) } == 0 && count != 0)
+        .then_some(id)
+}
+
+fn matches_display_frame(window: NSRect, screen: NSRect) -> bool {
+    // Allow rounding to the nearest logical point, not a menu bar or Dock gap.
+    valid(window)
+        && valid(screen)
+        && (window.origin.x - screen.origin.x).abs() <= 1.
+        && (window.origin.y - screen.origin.y).abs() <= 1.
+        && (window.origin.x + window.size.width - screen.origin.x - screen.size.width).abs() <= 1.
+        && (window.origin.y + window.size.height - screen.origin.y - screen.size.height).abs() <= 1.
+}
+
+fn front_has_fullscreen_surface(list: Cf, pid: i32) -> bool {
+    array(list).any(|info| {
+        if number(get(info, ns_string!("kCGWindowOwnerPID"))) != Some(i64::from(pid))
+            || !number(get(info, ns_string!("kCGWindowLayer"))).is_some_and(|layer| layer >= 0)
+            || crate::accessibility::decimal(get(info, ns_string!("kCGWindowAlpha")))
+                .is_some_and(|alpha| alpha <= 0.)
+        {
+            return false;
+        }
+        let mut frame = NSRect::ZERO;
+        if !unsafe {
+            CGRectMakeWithDictionaryRepresentation(
+                get(info, ns_string!("kCGWindowBounds")),
+                &mut frame,
+            )
+        } || !valid(frame)
+        {
+            return false;
+        }
+        let center = NSPoint::new(
+            frame.origin.x + frame.size.width / 2.,
+            frame.origin.y + frame.size.height / 2.,
+        );
+        display_at(center).is_some_and(|display| {
+            matches_display_frame(frame, unsafe { CGDisplayBounds(display) })
+        })
+    })
+}
+
 fn contains_menu(list: Cf) -> bool {
     // kCGPopUpMenuWindowLevelKey. Menubars, tooltips and our preview are distinct.
     let menu_level = i64::from(unsafe { CGWindowLevelForKey(11) });
@@ -782,6 +837,29 @@ pub fn visible_normal_window_ids() -> Option<std::collections::HashSet<(i32, u32
 #[cfg(test)]
 mod tests {
     use super::classify_event;
+
+    #[test]
+    fn borderless_video_matches_its_physical_display_but_a_maximized_window_does_not() {
+        use super::matches_display_frame;
+        use crate::native::rect;
+        let main = rect(0., 0., 1920., 1080.);
+        let portrait = rect(-900., -150., 900., 1600.);
+        assert!(matches_display_frame(portrait, portrait));
+        assert!(matches_display_frame(
+            rect(-899.5, -150., 899.5, 1599.5),
+            portrait
+        ));
+        assert!(!matches_display_frame(portrait, main));
+        assert!(!matches_display_frame(
+            rect(-900., -126., 900., 1576.),
+            portrait
+        ));
+        assert!(!matches_display_frame(
+            rect(-900., -150., 2820., 1600.),
+            portrait
+        ));
+    }
+
     #[test]
     fn failed_window_subscription_can_recover_without_a_focus_change() {
         let mut confirmed = Some(vec![1]);

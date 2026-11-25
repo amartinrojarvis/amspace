@@ -167,12 +167,18 @@ mod tests {
         let mut previous = String::new();
         while start.elapsed() < Duration::from_secs(30) {
             objc2::rc::autoreleasepool(|_| {
+                use objc2::{class, msg_send};
+                let workspace: crate::native::Obj =
+                    unsafe { msg_send![class!(NSWorkspace), sharedWorkspace] };
+                let front: crate::native::Obj =
+                    unsafe { msg_send![workspace, frontmostApplication] };
+                let front_pid: i32 = unsafe { msg_send![front, processIdentifier] };
                 let Some(event) = ax::Owned::new(unsafe { CGEventCreate(std::ptr::null()) }) else {
                     return;
                 };
                 let point = unsafe { CGEventGetLocation(event.0) };
                 let native = ws::window_at(point);
-                let selected = ax::window_at(point.x, point.y)
+                let selected = ax::window_at(point, front_pid)
                     .and_then(|(window, pid)| ax::window_id(window.0).map(|id| (pid, id)));
                 let reported_focus = selected.and_then(|(pid, _)| ax::focused_id(pid));
                 let line = format!(
