@@ -3,6 +3,7 @@
 - `--check-tab-stacking`, en Apple Silicon: dos procesos AppKit desechables, con dos grupos de marcos superpuestos. La ruta publicada en 0.9.45 dejó la pestaña correcta con foco pero adelantó también la ventana hermana del primer grupo. Con activación dirigida, la acción AppKit dio foco al ID elegido y WindowServer confirmó que en el otro grupo la pestaña activa seguía por delante. No se usaron ventanas de Brave, Spark ni Codex.
 - `./scripts/check.sh`: 298 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos en un checkout aislado.
 - También pasó `--check-tab-focus`, con los cuatro miembros del mismo proceso, y se compiló el bundle universal. Las pruebas nativas se ejecutaron en Apple Silicon, no en Intel.
+- [CI del commit de publicación](https://github.com/amartinrojarvis/amspace/actions/runs/45557762855) aprobada. Las cinco descargas de [v0.9.46](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.46) coincidieron byte a byte; se verificaron el DMG en solo lectura y el ZIP inmutable (`78b284a`). No se instaló la actualización en la sesión del usuario.
 
 ## 0.9.45/build 100 — Foco entre grupos de pestañas de una misma app
 
