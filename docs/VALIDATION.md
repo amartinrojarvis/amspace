@@ -2,6 +2,8 @@
 
 - `--check-tab-controls` reprodujo con el código anterior una tira que seguía visible al pasar al segundo contexto. Con la corrección, los paneles AppKit pasaron 20 idas y vueltas simuladas: la tira saliente se ocultó, la entrante reapareció antes de reconciliar AX y conservó el mismo panel y los mismos controles. Dos grupos que ocupaban el mismo hueco no mostraron las tiras a la vez. También se comprobó pausa, presentación, área cambiada y eliminación del grupo.
 - `./scripts/check.sh`: 298 pruebas aprobadas, nueve ignoradas; formato, Clippy y plist correctos. Bundle universal arm64/x86_64 compilado. El diagnóstico gráfico se ejecutó en Apple Silicon; no cambió físicamente de Space ni verifica la animación del compositor, varios monitores o ejecución en Intel.
+- [CI del commit de publicación](https://github.com/amartinrojarvis/amspace/actions/runs/45575463004) aprobada. Las cinco descargas públicas de [v0.9.47](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.47) coincidieron byte a byte con los archivos firmados. El DMG montado en solo lectura conservó la disposición, la guía, el enlace a Aplicaciones y la firma del bundle 102. No se instaló la actualización en la sesión habitual.
+- La descarga HTTPS del ZIP inmutable de Sparkle (`8fdcf74`) coincidió byte a byte con el paquete firmado de GitHub Releases.
 
 ## 0.9.46/build 101 — Apilado entre grupos de pestañas mixtos
 

@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.46</title><pubDate>Wed, 25 Nov 2026 06:04:14 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.46 — Apilado independiente entre grupos de pestañas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.47</title><pubDate>Wed, 25 Nov 2026 08:20:19 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.47 — Pestañas en su escritorio.
 
-- Al elegir una pestaña, solo sube la ventana seleccionada. Si otro grupo contiene una ventana de la misma app, esta permanece detrás de la pestaña activa de su grupo.
+- Al cambiar de escritorio, las barras de pestañas del anterior se ocultan. Al volver, reaparecen en su sitio sin esperar a que el mosaico recoloque las ventanas.
 
 English
 
-- Selecting a tab raises only the chosen window. A window from the same app in another group stays behind that group’s active tab.
+- Tab bars stay on their own desktop and reappear in place when you return, without waiting for windows to be tiled again.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.46/AMSpace-universal.zip" length="3386720" type="application/octet-stream" sparkle:version="101" sparkle:shortVersionString="0.9.46" sparkle:edSignature="BOCjPCCyt1WXiUbLnLV4rww9WYgzQxIgrKzN98oehd8u4aWdbcjM2fpziXXypAjxgsucp+J6C7Xi0mXOI6j8DA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: a9hzV3OkBdznhK7cf+T6WS/WVPR44l4Jk3Ezvlf1iZU6kC0MKI68SdBpHiC2oo6nCy30rFgXeD8nLPQwRqo2CA==
-length: 1731
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.47/AMSpace-universal.zip" length="3390834" type="application/octet-stream" sparkle:version="102" sparkle:shortVersionString="0.9.47" sparkle:edSignature="vvfddV0pHV1/FjnWiAMHA2blTPKfAvTykRq8Ij2fon/VGSxzV1k6BcW2AC+eGNV9vyJGuYptOhyZfznwca26BA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: H+vSoLB73PUOv1fUOh6g/dbKJ268zuTFS9JVCdMXe7X93xcjvmsvRYPcc/9on7y22ZOwRjlF/EWT9Qq4zxMwCQ==
+length: 1693
 -->
