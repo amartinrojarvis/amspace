@@ -2,6 +2,7 @@
 
 - Una copia real de archivos desechables expuso el panel de Finder como `AXStandardWindow` redimensionable, con `AXIdentifier=Progress`. El bundle corregido confirmó `tileable=false` para el mismo ID visible en WindowServer, antes de reservar una celda. El diagnóstico fue de solo lectura; no se sustituyó la app en ejecución ni se comprobó visualmente la cuadrícula con el bundle corregido activo.
 - `./scripts/check.sh`: 299 pruebas aprobadas y nueve ignoradas; formato, Clippy y plist correctos. La regresión conserva la admisión de ventanas normales de Finder. Bundle universal arm64/x86_64 compilado; diagnóstico nativo ejecutado en Apple Silicon.
+- [CI del commit de publicación](https://github.com/amartinrojarvis/amspace/actions/runs/45949047631) aprobada. Las cinco descargas de [v0.9.49](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.49) y el ZIP inmutable de Sparkle (`5c57b58`) coincidieron con los artefactos locales firmados. El DMG montado en solo lectura conservó la disposición de Finder, la guía, el enlace a Aplicaciones y la firma del bundle 104. No se probó una primera instalación ni se sustituyó la versión instalada.
 
 ## 0.9.48/build 103 — Foco durante vídeo a pantalla completa
 
