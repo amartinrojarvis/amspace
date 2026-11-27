@@ -680,11 +680,21 @@ pub fn tileable(window: Cf) -> bool {
         }
     })
 }
-fn finder_info_identifier(bundle: Option<&str>, identifier: Cf) -> bool {
-    bundle == Some("com.apple.finder")
-        && ["Info", "Inspector"]
-            .iter()
-            .any(|name| equals_text(identifier, name))
+fn finder_utility_identifier(identifier: Cf) -> bool {
+    // Finder exposes its copy panel as a resizable AXStandardWindow.
+    unsafe {
+        CFEqual(identifier, cf(ns_string!("Info")))
+            || CFEqual(identifier, cf(ns_string!("Inspector")))
+            || CFEqual(identifier, cf(ns_string!("Progress")))
+    }
+}
+fn excluded_system_window(
+    bundle: Option<&str>,
+    identifier: impl FnOnce() -> Option<Owned>,
+) -> bool {
+    always_floating_bundle(bundle)
+        || (bundle == Some("com.apple.finder")
+            && identifier().is_some_and(|value| finder_utility_identifier(value.0)))
 }
 fn always_floating_bundle(bundle: Option<&str>) -> bool {
     // System-owned progress and panel services keep their own geometry: the
@@ -704,9 +714,7 @@ fn system_utility_window(window: Cf) -> bool {
         return true;
     }
     let bundle = crate::tile_rules::application_id(pid);
-    always_floating_bundle(bundle.as_deref())
-        || attr(window, "AXIdentifier")
-            .is_some_and(|identifier| finder_info_identifier(bundle.as_deref(), identifier.0))
+    excluded_system_window(bundle.as_deref(), || attr(window, "AXIdentifier"))
 }
 /// Temporarily suppress AppKit's own AX geometry animation, restoring the exact
 /// app attribute when this transaction ends (Rectangle PR #285).
@@ -1080,30 +1088,33 @@ mod placement_tests {
         assert!(!protected_focus_role(cf(ns_string!("AXMenuBar"))));
     }
     #[test]
-    fn finder_information_uses_stable_identifier_without_excluding_folder_windows() {
-        for identifier in ["Info", "Inspector"] {
-            let value = NSString::from_str(identifier);
-            assert!(finder_info_identifier(Some("com.apple.finder"), cf(&value)));
-            assert!(!finder_info_identifier(
-                Some("org.example.editor"),
-                cf(&value)
-            ));
-            assert!(!finder_info_identifier(None, cf(&value)));
+    fn finder_utility_windows_stay_out_of_the_grid_without_excluding_folders() {
+        fn identifier(name: &NSString) -> Owned {
+            Owned(unsafe { CFRetain(cf(name)) })
         }
-        for identifier in ["FinderWindow", "", "Information"] {
-            assert!(!finder_info_identifier(
-                Some("com.apple.finder"),
-                cf(&NSString::from_str(identifier))
-            ));
+        for name in [
+            ns_string!("Info"),
+            ns_string!("Inspector"),
+            ns_string!("Progress"),
+        ] {
+            assert!(excluded_system_window(Some("com.apple.finder"), || {
+                Some(identifier(name))
+            }));
         }
-        assert!(!finder_info_identifier(
-            Some("com.apple.finder"),
-            ptr::null()
+        for name in [ns_string!("FinderWindow"), ns_string!("Progress report")] {
+            assert!(!excluded_system_window(Some("com.apple.finder"), || {
+                Some(identifier(name))
+            }));
+        }
+        assert!(!excluded_system_window(Some("com.apple.finder"), || None));
+        assert!(!excluded_system_window(Some("org.example.editor"), || {
+            Some(identifier(ns_string!("Progress")))
+        }));
+        assert!(excluded_system_window(
+            Some("com.apple.archiveutility"),
+            || None
         ));
-        assert!(always_floating_bundle(Some("com.apple.archiveutility")));
-        assert!(!always_floating_bundle(Some("com.apple.finder")));
-        assert!(!always_floating_bundle(Some("org.example.editor")));
-        assert!(!always_floating_bundle(None));
+        assert!(!excluded_system_window(None, || None));
     }
     #[test]
     #[ignore = "metadata microbenchmark; run with --release --ignored --nocapture"]

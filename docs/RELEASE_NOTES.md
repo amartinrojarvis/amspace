@@ -1,10 +1,10 @@
-AMSpace 0.9.48 — Foco durante vídeo a pantalla completa.
+AMSpace 0.9.49 — Progreso de copia de Finder fuera del mosaico.
 
-- El foco bajo el cursor deja de cambiar de ventana mientras el navegador reproduce vídeo a pantalla completa, incluso con reproductores que no declaran ese modo a macOS. Los clics explícitos siguen funcionando.
+- El panel de progreso de copia de Finder permanece flotante y no ocupa una celda del mosaico. Las ventanas normales de Finder siguen entrando en la rejilla.
 
 English
 
-- Focus follows mouse no longer switches windows while the foreground browser presents fullscreen video, including borderless players that do not report fullscreen to macOS. Clicking still works as usual.
+- Finder’s copy progress window stays floating and does not take up a tile. Regular Finder windows still join the grid.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

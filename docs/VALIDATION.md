@@ -1,3 +1,8 @@
+## 0.9.49/build 104 — Progreso de copia de Finder
+
+- Una copia real de archivos desechables expuso el panel de Finder como `AXStandardWindow` redimensionable, con `AXIdentifier=Progress`. El bundle corregido confirmó `tileable=false` para el mismo ID visible en WindowServer, antes de reservar una celda. El diagnóstico fue de solo lectura; no se sustituyó la app en ejecución ni se comprobó visualmente la cuadrícula con el bundle corregido activo.
+- `./scripts/check.sh`: 299 pruebas aprobadas y nueve ignoradas; formato, Clippy y plist correctos. La regresión conserva la admisión de ventanas normales de Finder. Bundle universal arm64/x86_64 compilado; diagnóstico nativo ejecutado en Apple Silicon.
+
 ## 0.9.48/build 103 — Foco durante vídeo a pantalla completa
 
 - La regresión geométrica distingue una superficie sin bordes que llena un monitor vertical con origen negativo de una ventana maximizada que deja libre la barra de menús, de otro monitor y de una superficie que abarca varias pantallas.
