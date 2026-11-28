@@ -1483,8 +1483,7 @@ impl Manager {
     }
     /// Close is a native request, never an optimistic removal from the tree.
     pub fn close_tab(&mut self, id: u32) -> bool {
-        if self.presentation_blocks_input()
-            || self.space_quiet_until.is_some()
+        if self.space_quiet_until.is_some()
             || self.space_reentry.is_some()
             || !ax::trusted()
             || crate::focus::secure_input()
@@ -1499,7 +1498,10 @@ impl Manager {
         };
         // Do not move focus away from a save dialog. Explicitly selecting a
         // hidden member before closing makes its own confirmation visible.
-        if ax::focus_is_protected(window.pid) || !self.activate_tab(id) {
+        if ax::window_id(window.element.0) != Some(id)
+            || ax::focus_is_protected(window.pid)
+            || !self.activate_tab(id)
+        {
             return false;
         }
         if !ax::request_close(self.windows[&id].element.0) {
