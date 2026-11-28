@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.49</title><pubDate>Fri, 27 Nov 2026 05:59:11 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.49 — Progreso de copia de Finder fuera del mosaico.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.50</title><pubDate>Sat, 28 Nov 2026 06:38:38 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.50 — Mosaico más robusto y transiciones más fluidas.
 
-- El panel de progreso de copia de Finder permanece flotante y no ocupa una celda del mosaico. Las ventanas normales de Finder siguen entrando en la rejilla.
+- Una ventana que no cabe ya no impide colocar las demás. Si el mosaico de destino está lleno, puedes enviarla allí como flotante sin reorganizarlo.
+- Las animaciones de movimiento y tamaño mantienen su cadencia mientras se verifica otra ventana. El borde evita repintados innecesarios y el motor abandona las comprobaciones que no se estabilizan.
 
 English
 
-- Finder’s copy progress window stays floating and does not take up a tile. Regular Finder windows still join the grid.
+- A window that does not fit no longer blocks other tiles. Sending a window to a full destination leaves it floating without rearranging that layout.
+- Move and resize animations keep their cadence while another window is being verified. The border avoids unnecessary redraws, and unsettled checks no longer keep the engine running at high frequency indefinitely.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.49/AMSpace-universal.zip" length="3393306" type="application/octet-stream" sparkle:version="104" sparkle:shortVersionString="0.9.49" sparkle:edSignature="sFDPR/rx65nU6syypYd7DWEFPuGRVJiEtW8uNi8b6nDgoGuWJ6FMqJWcOlT8jFdiNh19J75L5mKG9WKLaABNBQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: +GB+EkWryVRwheUrpqAmSDPU7Fei4scD3rOmgYeu1/I1Uonl3PmTyZXScA8qPJp5br4+lmFjeVYOd3Nt0qbdBQ==
-length: 1705
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.50/AMSpace-universal.zip" length="3421935" type="application/octet-stream" sparkle:version="105" sparkle:shortVersionString="0.9.50" sparkle:edSignature="nSQlWrrOoDE17byMBl4W+f9vRI0wpbYHVnYWtPVkgfsLlSZrl0aNZgN8UQzBtxUVmAzTo/NsUaDZYnEthRN3CA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: RFd/peWRWdaqeACO1/RDHht95VPKrugbCku2RlmosprCkR1btZdkJlwIRK0eAZ2GWKofLqT2ZcNmA84KGO1MDw==
+length: 2144
 -->

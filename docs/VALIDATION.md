@@ -1,10 +1,11 @@
-## En desarrollo — Movimiento y redimensionado
+## 0.9.50/build 105 — Movimiento y redimensionado
 
 - `--check-window-motion`, compilación release en Apple Silicon: tres ventanas desechables del mismo proceso AppKit. En un lote simultáneo WindowServer mostró un marco intermedio de cada ventana (solo movimiento, solo tamaño y ambos), y AX y WindowServer confirmaron los tres destinos. Ocho pasos de animación; mediana de trabajo por paso 6,57 ms, máximo 26,23 ms; confirmación de los destinos a los 259 ms. El coste incluye las lecturas del diagnóstico. No son FPS de presentación ni una medida de CPU del sistema. No cubre apps con AX lento ni sesiones de varias horas.
 - En el bundle universal, `--check-tab-controls` completó 12.000 entregas en 16 ráfagas reentrantes. También comprobó recuperación del permiso AX, pausa, sueño/despertar y cambios de presentación mediante callbacks locales. No se suspendió físicamente el equipo ni se cambió ningún permiso.
 - Integración final: formato, Clippy, 306 pruebas aprobadas, nueve ignoradas y plist correcto (`./scripts/check.sh`). Compilado para arm64 y x86_64; `--check-border` en Apple Silicon confirmó un borde encajado y visible, sin tomar foco bajo una cubierta que deja pasar clics. No se ejecutó en hardware Intel.
+- Commit de publicación `e06809f`, sin cambios locales ajenos: 305 pruebas aprobadas, nueve ignoradas y [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/46117407419). Las cinco descargas públicas de [v0.9.50](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.50) y el ZIP inmutable de Sparkle (`22c474e`) coincidieron con los archivos firmados. Finder estaba ocupado: el DMG conservó la disposición del instalador anterior verificado y se sustituyó el bundle en una copia, sin alterar la versión anterior. El DMG descargado contenía el bundle universal firmado build 105, guía, fondo y enlace a Aplicaciones. No se instaló en la sesión habitual.
 
-## En desarrollo — Robustez del mosaico y traslados
+## 0.9.50/build 105 — Robustez del mosaico y traslados
 
 - Regresiones del modelo: 48 ventanas en Espiral y 20 reconciliaciones, descarte aislado de una ventana con mínimos incompatibles, verificación AX sin lectura y reentrada con muestras que nunca se estabilizan. Las ocho plantillas prueban que un traslado puede llegar como flotante sin reorganizar un destino que ya está lleno.
 - En la instancia publicada se observó una sesión de casi 24 horas con dos monitores, AX y el puente de traslado disponibles. Se vieron ventanas elegibles fuera de la distribución habitual, pero la inspección externa no confirmó su causa ni una fuga. No se cerró la app instalada ni se movieron ventanas de trabajo.
