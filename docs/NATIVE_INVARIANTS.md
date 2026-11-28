@@ -23,7 +23,7 @@ El puente de **traslado de ventanas** es otra operación: `window_move.rs` const
 ## El traslado tiene preparación, petición y confirmación
 
 1. Capturar ventana activa, identidad, geometría AX/WindowServer y contexto visible real. Rechazar fullscreen, modales, minimización, pertenencia ambigua, entrada segura o ratón pulsado.
-2. Resolver el destino por IDs reales en ese momento. Preparar una copia del layout y comprobar mínimos sin confirmar ni destruir el origen.
+2. Resolver el destino por IDs reales en ese momento. Preparar una copia del layout y comprobar mínimos sin confirmar ni destruir el origen. Si la ventana no cabe pero el destino es válido, proponer un traslado flotante sin modificar su distribución. La marca flotante se confirma con la llegada, no al preparar.
 3. Actualizar la pertenencia del destino, incluso si había caché, conservando plantilla y divisiones. No vetar todo el envío porque una entrada auxiliar u oculta no tenga ventana AX verificable.
 4. Solicitar una sola vez el traslado nativo. Confirmar identidad y pertenencia con dos observaciones consecutivas, con plazo global de dos segundos. Los reintentos de geometría no son reenvíos ciegos de Space.
 5. Colocar la propuesta del destino oculto sin activarlo. Confirmar el modelo después de la llegada; liberar la hoja del origen y conservar flotantes/restauración. Si falla, reconciliar con la ubicación nativa real, sin activar una propuesta no confirmada ni hacer rollback nativo a ciegas.
@@ -76,6 +76,7 @@ La comprobación física del usuario validó las combinaciones; la simulación d
 - Cambiar preferencias de Mosaico no inicia su reloj cuando está deshabilitado o pausado. Solo `configure_tiling` lo arranca tras comprobar permiso, preferencia y presentación.
 - Conceder Accesibilidad reconcilia inmediatamente las funciones previamente habilitadas y programa el primer ciclo de Mosaico sin esperar actividad de ventanas. Nunca activa una preferencia apagada ni ignora la pausa. Los avisos de permisos solo invalidan: la autoridad es `AXIsProcessTrusted`. El seguimiento temporal tiene plazo y se cancela al conceder, dormir o terminar; no crea un sondeo permanente.
 - Las escrituras AX finales se verifican; una app puede aceptar la llamada y aplicar el cambio después, o imponer un mínimo. No convertir una respuesta intermedia o rechazada en una restricción permanente.
+- Una geometría que deja de ser legible agota el plazo vigente de verificación sin reintentar a ciegas ni aprender un tamaño mínimo. La reconciliación normal puede recuperar la colocación cuando vuelva a leerla.
 - `GeometrySession` comparte y restaura el estado original de `AXEnhancedUserInterface` de la app, también al cancelar. No dejar ese cambio activado tras una transición.
 - Foco de teclado no implica `AXRaise`. Solo elevar cuando el usuario active esa función. La preview de escritorio es un panel no activable, transparente al ratón y sin captura del contenido; debe conservarse el clic para navegar.
 - El foco bajo el cursor acepta roles AX ausentes o desconocidos solo con una ventana normal corroborada por WindowServer; menús, superficies auxiliares, diálogos protegidos y controles propios no autorizan enfocar la ventana de debajo. La elegibilidad estricta para Mosaico no cambia.

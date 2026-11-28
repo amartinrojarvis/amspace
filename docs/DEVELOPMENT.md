@@ -128,6 +128,7 @@ Compila antes de usarlos. Los flags se procesan antes del bloqueo de instancia n
 |---|---|
 | `target/debug/amspace --diagnose` | Lee permisos, Spaces, ventanas y geometría; no solicita un traslado. Requiere sesión gráfica para datos útiles |
 | `target/debug/amspace --check-border` | Dibuja el borde real sobre una ventana desechable de la pantalla principal colocada bajo un panel que deja pasar clics. Comprueba que ambos están en el orden esperado, que el borde está encajado y que no toma foco; captura solo el borde en `.cache/border-under-overlay.png`. No inyecta entrada ni mueve ventanas ajenas. |
+| `target/release/amspace --check-window-motion` | Mueve una ventana, redimensiona otra y hace ambas cosas con una tercera, en un proceso AppKit desechable y sin inyectar entrada. Exige AX y un escritorio visible. Comprueba geometría intermedia de cada una en WindowServer y destino final por AX y WindowServer. Informa tiempo de trabajo por paso del diagnóstico, no FPS del compositor ni consumo global. |
 | `target/debug/amspace --check-transfer-preflight` | Planifica llegadas con caché vacía y mosaico habilitado en preferencias de registro aisladas; no mueve ventanas ni escribe preferencias persistentes. Necesita AX, una ventana normal visible y destinos reales para cubrirlos |
 | `target/debug/amspace --check-priority-shortcuts` | Instala y retira veinte taps con una combinación temporal; no inyecta teclas. Necesita AX y verifica ciclo de vida, no que el teclado físico venza a todas las apps |
 | `target/debug/amspace --check-space-transfer` | Crea otro proceso con ventana temporal, la envía a los demás escritorios y de vuelta, y verifica geometría oculta. Necesita AX y al menos dos escritorios. Modifica la ventana fixture, no documentos del usuario |
@@ -172,6 +173,8 @@ AMSPACE_TRACE_TRANSFERS=1 target/debug/amspace --check-space-transfer
 ```
 
 Las trazas ayudan con IDs y estado de las operaciones; no añadas registro de teclas arbitrarias, títulos ni contenido. No publiques logs de una sesión sin revisar los metadatos que incluyen.
+
+Si el fallo solo aparece tras horas de uso, copia el informe desde **Ajustes → General → Copiar diagnóstico** antes de reiniciar. Registra las barreras activas (`reentry`, `quiet`), los recuentos de ventanas, escritorios, animaciones y verificaciones, y las ventanas visibles conocidas que quedan fuera del mosaico. Una ventana fuera del mosaico con `floating=false` no se ha marcado explícitamente como flotante; consulta su escritorio y los demás campos antes de atribuirlo a falta de capacidad.
 
 ## Matriz de comprobación para cambios de ventanas
 

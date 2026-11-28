@@ -641,6 +641,109 @@ fn arrival_proposal(
             .all(|(_, r)| r.size.width >= 120. && r.size.height >= 90.))
     .then_some(proposed)
 }
+
+type TileFrames = Vec<(u32, NSRect)>;
+
+fn fit_scan(
+    desktop: &mut Desktop,
+    area: NSRect,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+) -> Result<TileFrames, &'static str> {
+    desktop.set_minimum_sizes(minimums);
+    desktop.fit(area, 10.);
+    let frames = desktop.window_frames(area, 10.);
+    if frames.len() != desktop.order.len() {
+        return Err(crate::i18n::tr(
+            "Esta plantilla no admite los tamaños mínimos de estas ventanas; prueba otra o deja una ventana flotante.",
+        ));
+    }
+    if frames
+        .iter()
+        .any(|(_, frame)| frame.size.width < 80. || frame.size.height < 60.)
+    {
+        return Err(crate::i18n::tr(
+            "Demasiadas ventanas para esta plantilla; usa Cuadrícula.",
+        ));
+    }
+    Ok(frames)
+}
+
+fn reconcile_scan(
+    desktop: &mut Desktop,
+    ids: &[u32],
+    area: NSRect,
+    focused: Option<u32>,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    constrained: &HashMap<u32, (NSRect, NSRect)>,
+) -> Result<(TileFrames, bool), &'static str> {
+    let owns = |d: &Desktop, id| d.order.contains(&id) || d.tab_role(id).is_some();
+    if ids.iter().all(|id| owns(desktop, *id)) {
+        desktop.reconcile_at(ids, area, 10., focused);
+        return fit_retained_scan(desktop, area, minimums, constrained)
+            .map(|(frames, excluded)| (frames, excluded.is_some()));
+    }
+
+    // Try the complete layout first: some templates distribute a batch more
+    // effectively than a series of single arrivals.
+    let mut proposed = desktop.clone();
+    proposed.reconcile_at(ids, area, 10., focused);
+    if let Ok(frames) = fit_scan(&mut proposed, area, minimums) {
+        *desktop = proposed;
+        return Ok((frames, false));
+    }
+
+    // Do not let one infeasible arrival prevent the existing tiles from
+    // being arranged. Unadmitted windows remain eligible on the next scan.
+    let (mut admitted, arrivals): (Vec<_>, Vec<_>) =
+        ids.iter().copied().partition(|id| owns(desktop, *id));
+    desktop.reconcile_at(&admitted, area, 10., focused);
+    let (mut frames, excluded) = fit_retained_scan(desktop, area, minimums, constrained)?;
+    if let Some(id) = excluded {
+        admitted.retain(|known| *known != id);
+    }
+    let mut overflow = excluded.is_some();
+    for id in arrivals {
+        let mut proposed = desktop.clone();
+        admitted.push(id);
+        proposed.reconcile_at(&admitted, area, 10., focused);
+        if let Ok(accepted) = fit_scan(&mut proposed, area, minimums) {
+            *desktop = proposed;
+            frames = accepted;
+        } else {
+            admitted.pop();
+            overflow = true;
+        }
+    }
+    Ok((frames, overflow))
+}
+
+fn fit_retained_scan(
+    desktop: &mut Desktop,
+    area: NSRect,
+    minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    constrained: &HashMap<u32, (NSRect, NSRect)>,
+) -> Result<(TileFrames, Option<u32>), &'static str> {
+    let error = match fit_scan(desktop, area, minimums) {
+        Ok(frames) => return Ok((frames, None)),
+        Err(error) => error,
+    };
+    // AX may learn an app minimum only after its first placement. If one
+    // constrained standalone window is enough to unblock the layout, leave
+    // only that window out. Never discard a tab group to repair capacity.
+    for id in desktop.order.iter().rev().copied() {
+        if !constrained.contains_key(&id) || desktop.tab_role(id).is_some() {
+            continue;
+        }
+        let mut proposed = desktop.clone();
+        proposed.remove(id);
+        if let Ok(frames) = fit_scan(&mut proposed, area, minimums) {
+            *desktop = proposed;
+            return Ok((frames, Some(id)));
+        }
+    }
+    Err(error)
+}
+
 impl Drag {
     fn update_float_zone(
         &mut self,
@@ -816,7 +919,16 @@ impl Verification {
             accepted: false,
         }
     }
-    fn step(&mut self, actual: NSRect, now: Instant) -> VerificationStep {
+    fn step(&mut self, actual: Option<NSRect>, now: Instant) -> VerificationStep {
+        let Some(actual) = actual else {
+            // An unreadable frame is not an app size limit. Release the fast
+            // verifier at its deadline and let a normal scan recover geometry.
+            return if now < self.due {
+                VerificationStep::Wait
+            } else {
+                VerificationStep::Rejected
+            };
+        };
         if near(actual, self.target) {
             return VerificationStep::Complete;
         }
@@ -870,25 +982,30 @@ impl ReentrySample {
 struct SpaceReentry {
     anchor: Option<(ReentrySample, Instant)>,
     incomplete: u8,
+    attempts: u8,
 }
 impl SpaceReentry {
     fn observe(&mut self, sample: Option<ReentrySample>, now: Instant) -> bool {
+        // Changing but readable frames can also prevent agreement forever.
+        // Fall back to guarded reconciliation with a fresh snapshot.
+        self.attempts = self.attempts.saturating_add(1);
+        let exhausted = self.attempts >= 16;
         let Some(sample) = sample else {
             // None is an incomplete read, not an empty desktop, so the anchor
             // restarts. A bounded burst of them still resumes the normal scan
             // from a fresh list instead of keeping the fast timer forever.
             self.anchor = None;
             self.incomplete += 1;
-            return self.incomplete >= 8;
+            return self.incomplete >= 8 || exhausted;
         };
         self.incomplete = 0;
         if let Some((previous, since)) = &self.anchor {
             if previous.agrees(&sample) {
-                return now.duration_since(*since) >= Duration::from_millis(60);
+                return now.duration_since(*since) >= Duration::from_millis(60) || exhausted;
             }
         }
         self.anchor = Some((sample, now));
-        false
+        exhausted
     }
 }
 impl Transition {
@@ -1175,6 +1292,7 @@ pub struct KeyboardTransfer {
     desktop: Option<Desktop>,
     tracked: bool,
     floating: bool,
+    capacity_fallback: bool,
 }
 pub struct KeyboardPlacement {
     pub pid: i32,
@@ -1183,12 +1301,40 @@ pub struct KeyboardPlacement {
     pub target: NSRect,
 }
 impl KeyboardTransfer {
+    pub fn floats_for_capacity(&self) -> bool {
+        self.capacity_fallback
+    }
+
     /// Only a validated tiled proposal may resize the hidden destination.
     pub fn background_frames(&self) -> Vec<(u32, NSRect)> {
         self.desktop
             .as_ref()
             .map(|desktop| desktop.window_frames(self.destination_area, 10.))
             .unwrap_or_default()
+    }
+
+    fn plan_tiled_arrival(
+        &mut self,
+        base: &Desktop,
+        id: u32,
+        minimums: &HashMap<u32, objc2_foundation::NSSize>,
+    ) {
+        let area = self.destination_area;
+        let proposed = arrival_proposal(base, id, None, area, Some(minimums));
+        if let Some(desktop) = proposed
+            && let Some((_, frame)) = desktop
+                .window_frames(area, 10.)
+                .into_iter()
+                .find(|(window, _)| *window == id)
+        {
+            self.target = frame;
+            self.desktop = Some(desktop);
+        } else {
+            // Space membership does not require a slot. Preserve the native
+            // frame and do not apply any new geometry to the destination.
+            self.floating = true;
+            self.capacity_fallback = true;
+        }
     }
 }
 impl Manager {
@@ -2112,10 +2258,14 @@ impl Manager {
     }
     pub fn diagnostic_report(&self) -> String {
         let mut report = format!(
-            "\nMosaic paused={:?} reentry={} quiet={}\n",
+            "\nMosaic paused={:?} reentry={} quiet={} tracked={} cached_workspaces={} animations={} verifications={}\n",
             self.presentation,
             self.space_reentry.is_some(),
-            self.space_quiet_until.is_some()
+            self.space_quiet_until.is_some(),
+            self.windows.len(),
+            self.desktops.len(),
+            self.transitions.len(),
+            self.verifications.len()
         );
         let mut keys: Vec<_> = self.desktops.keys().copied().collect();
         keys.sort_unstable();
@@ -2146,23 +2296,57 @@ impl Manager {
                     report.push_str(&format!("Window {id} pid={} native={:?} AX={:?} applied={:?} constrained={:?} minimum={:?} transition={} verification={}\n",window.pid,spaces::window_space(*id),ax::geometry(window.element.0),self.applied.get(id),self.constrained.get(id),self.minimum_sizes.get(id),self.transitions.contains_key(id),self.verifications.contains_key(id)));
                 }
             }
+            let mut outside: Vec<_> = self
+                .windows
+                .iter()
+                .filter_map(|(&id, window)| {
+                    (window.space == key
+                        && !desktop.order.contains(&id)
+                        && !desktop.is_hidden_tab(id)
+                        && !self.inactive_tabs.contains(&id)
+                        && self
+                            .last_visible_windows
+                            .as_ref()
+                            .is_some_and(|visible| visible.contains(&(window.pid, id))))
+                    .then_some((id, self.floating.contains(&id)))
+                })
+                .collect();
+            if !outside.is_empty() {
+                outside.sort_unstable();
+                report.push_str(&format!(
+                    "Visible outside grid (id, floating): {outside:?}\n"
+                ));
+            }
         }
         report
     }
     pub fn keyboard_transfer_windows(&self, plan: &KeyboardTransfer) -> Vec<KeyboardPlacement> {
+        let frames = plan.background_frames();
+        if frames.is_empty() {
+            return Vec::new();
+        }
         let Some(identities) = ws::all_window_ids() else {
             return Vec::new();
         };
-        plan.background_frames()
+        let owners: HashMap<_, _> = identities.into_iter().map(|(pid, id)| (id, pid)).collect();
+        let mut app_windows = HashMap::new();
+        frames
             .into_iter()
             .filter_map(|(id, target)| {
-                let (pid, _) = *identities.iter().find(|(_, window)| *window == id)?;
+                let pid = *owners.get(&id)?;
                 let element = self
                     .windows
                     .get(&id)
                     .filter(|window| window.pid == pid)
                     .map(|window| window.element.clone())
-                    .or_else(|| ax::window_for_id(pid, id))?;
+                    .or_else(|| {
+                        app_windows
+                            .entry(pid)
+                            .or_insert_with(|| ax::application_windows(pid))
+                            .as_ref()?
+                            .get(&id)
+                            .cloned()
+                    })?;
                 Some(KeyboardPlacement {
                     pid,
                     id,
@@ -2474,6 +2658,8 @@ impl Manager {
         // The burst samples every window twice or thrice; one native read per
         // id keeps this frame's membership self-consistent and cheap.
         let mut space_of: HashMap<u32, Option<u64>> = HashMap::new();
+        let mut app_windows = HashMap::new();
+        let mut checked_tab_groups = HashMap::new();
         let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let expected: Vec<_> = self
             .desktops
@@ -2487,17 +2673,14 @@ impl Manager {
                     && !self.desktop_floating.contains(&(w.pid, *id))
             })
             .collect();
-        let all: HashSet<_> = snapshot.iter().map(|w| (w.pid, w.id)).collect();
+        let layers: HashMap<_, _> = snapshot.iter().map(|w| ((w.pid, w.id), w.layer)).collect();
         let mut absent = Vec::new();
         let expected_ids: HashSet<_> = expected.iter().map(|(id, w)| (w.pid, *id)).collect();
         for (id, w) in expected {
             if visible.contains(&(w.pid, id)) {
                 continue;
             }
-            if snapshot
-                .iter()
-                .any(|entry| entry.pid == w.pid && entry.id == id && entry.layer != 0)
-            {
+            if layers.get(&(w.pid, id)).is_some_and(|layer| *layer != 0) {
                 continue;
             }
             let ordered = ws::ordered_in(id);
@@ -2523,15 +2706,26 @@ impl Manager {
                     {
                         return false;
                     }
-                    let other_group = self.tab_groups.get(other).cloned().or_else(|| {
-                        let element = self
-                            .windows
-                            .get(other)
-                            .map(|w| w.element.clone())
-                            .or_else(|| ax::window_for_id(*pid, *other))?;
-                        ax::native_tab_group(element.0)
-                    });
-                    other_group.is_some_and(|other| unsafe { ax::CFEqual(group.0, other.0) })
+                    let other_group =
+                        checked_tab_groups.entry((*pid, *other)).or_insert_with(|| {
+                            let known = self.windows.get(other).filter(|w| w.pid == *pid);
+                            if known.is_some()
+                                && let Some(group) = self.tab_groups.get(other)
+                            {
+                                return Some(group.clone());
+                            }
+                            let element = known.map(|w| &w.element).or_else(|| {
+                                app_windows
+                                    .entry(*pid)
+                                    .or_insert_with(|| ax::application_windows(*pid))
+                                    .as_ref()?
+                                    .get(other)
+                            })?;
+                            ax::native_tab_group(element.0)
+                        });
+                    other_group
+                        .as_ref()
+                        .is_some_and(|other| unsafe { ax::CFEqual(group.0, other.0) })
                 });
                 if replaced {
                     continue;
@@ -2547,7 +2741,10 @@ impl Manager {
             if hidden || ax::flag(w.element.0, "AXMinimized") {
                 continue;
             }
-            if ordered == Some(true) || ws::bounds(id).is_some() || all.contains(&(w.pid, id)) {
+            if ordered == Some(true)
+                || layers.contains_key(&(w.pid, id))
+                || ws::bounds(id).is_some()
+            {
                 return None;
             }
             absent.push((w.pid, id));
@@ -2584,7 +2781,11 @@ impl Manager {
             if hidden {
                 continue;
             }
-            let element = ax::window_for_id(entry.pid, entry.id)?;
+            let element = app_windows
+                .entry(entry.pid)
+                .or_insert_with(|| ax::application_windows(entry.pid))
+                .as_ref()?
+                .get(&entry.id)?;
             if ax::tileable(element.0) {
                 return None;
             }
@@ -2611,7 +2812,11 @@ impl Manager {
                 // AX wrappers can expire while inactive. Use the same fresh-ID
                 // recovery as reconciliation instead of waiting on a dead one.
                 let (p, s) = ax::geometry(w.element.0).or_else(|| {
-                    let fresh = ax::window_for_id(pid, id)?;
+                    let fresh = app_windows
+                        .entry(pid)
+                        .or_insert_with(|| ax::application_windows(pid))
+                        .as_ref()?
+                        .get(&id)?;
                     ax::tileable(fresh.0).then(|| ax::geometry(fresh.0))?
                 })?;
                 Some(NSRect::new(p, s))
@@ -2664,6 +2869,13 @@ impl Manager {
         }
         self.transitions.clear();
         self.verifications.clear();
+    }
+    fn missed_placement_snapshot(&mut self, now: Instant) {
+        // A failed WindowServer query is not an empty desktop. Keep its tree
+        // and identities, but never replay unverified geometry after the gap.
+        self.cancel_placements();
+        self.dirty = false;
+        self.last_scan = Some(now);
     }
     pub fn cancel_drag(&mut self) {
         self.cancel_placements();
@@ -3067,7 +3279,18 @@ impl Manager {
         let floating = self.floating.contains(&id) || crate::tile_rules::floats(defaults, pid);
         let tiled =
             tracked && pref(defaults, &format!("tile.off.{}", destination.1)) == 0 && !floating;
-        let desktop = if tiled {
+        let mut plan = KeyboardTransfer {
+            source,
+            destination,
+            target: restoration_frame(frame, source_area, destination_area),
+            source_area,
+            destination_area,
+            desktop: None,
+            tracked,
+            floating,
+            capacity_fallback: false,
+        };
+        if tiled {
             let layout = layout_pref(defaults, destination, destination_area);
             let mut base = self.desktops.get(&destination).cloned().unwrap_or_else(|| {
                 Desktop::configured(
@@ -3110,10 +3333,14 @@ impl Manager {
                         })
                 })
                 .collect();
+            let mut app_windows = HashMap::new();
             for window in snapshot
                 .into_iter()
                 .filter(|w| w.layer == 0 && w.pid != std::process::id() as i32 && w.id != id)
             {
+                if ids.contains(&window.id) {
+                    continue;
+                }
                 if window.frame.is_none_or(|frame| {
                     overlap(frame, destination_area) <= frame.size.width * frame.size.height * 0.5
                 }) {
@@ -3135,7 +3362,14 @@ impl Manager {
                     .get(&window.id)
                     .filter(|managed| managed.pid == window.pid)
                     .map(|managed| managed.element.clone())
-                    .or_else(|| ax::window_for_id(window.pid, window.id));
+                    .or_else(|| {
+                        app_windows
+                            .entry(window.pid)
+                            .or_insert_with(|| ax::application_windows(window.pid))
+                            .as_ref()?
+                            .get(&window.id)
+                            .cloned()
+                    });
                 let eligible = match element {
                     Some(element) => {
                         ax::window_id(element.0) == Some(window.id)
@@ -3147,30 +3381,14 @@ impl Manager {
                     // Preserve its slot while native membership holds.
                     None => base.order.contains(&window.id),
                 };
-                if eligible && !ids.contains(&window.id) {
+                if eligible {
                     ids.push(window.id);
                 }
             }
             ids.sort_unstable();
             base.reconcile_at(&ids, destination_area, 10., None);
-            Some(
-                arrival_proposal(&base, id, None, destination_area, Some(&self.minimum_sizes))
-                    .ok_or(crate::i18n::tr(
-                        "La ventana no cabe en la distribución de destino; no se ha movido nada.",
-                    ))?,
-            )
-        } else {
-            None
-        };
-        let target = desktop
-            .as_ref()
-            .and_then(|d| {
-                d.window_frames(destination_area, 10.)
-                    .into_iter()
-                    .find(|(window, _)| *window == id)
-                    .map(|(_, frame)| frame)
-            })
-            .unwrap_or_else(|| restoration_frame(frame, source_area, destination_area));
+            plan.plan_tiled_arrival(&base, id, &self.minimum_sizes);
+        }
         self.cancel_drag();
         let affected: Vec<_> = self
             .windows
@@ -3181,16 +3399,7 @@ impl Manager {
         for id in affected {
             self.cancel_window_placement(id);
         }
-        Ok(KeyboardTransfer {
-            source,
-            destination,
-            target,
-            source_area,
-            destination_area,
-            desktop,
-            tracked,
-            floating,
-        })
+        Ok(plan)
     }
     /// Commit only after native arrival and the bounded background placement.
     /// Normal reentry still reconciles windows that refused hidden AX writes.
@@ -3599,28 +3808,22 @@ impl Manager {
     fn animate(
         &mut self,
         active: &[(Workspace, NSRect)],
-        candidates: &[(i32, u32, NSRect)],
+        visible: &HashMap<(i32, u32), NSRect>,
         space_of: &mut HashMap<u32, Option<u64>>,
     ) {
         if self.transitions.is_empty() {
             return;
         }
-        // The tick's single compositor snapshot replaces synchronous AX flag
-        // reads per frame/window.
-        let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
-        let mut done = vec![];
         let now = Instant::now();
-        for (id, t) in &mut self.transitions {
+        self.transitions.retain(|id, t| {
             let Some(w) = self.windows.get(id) else {
-                done.push(*id);
-                continue;
+                return false;
             };
             if !active.iter().any(|(space, _)| *space == w.space)
+                || !visible.contains_key(&(w.pid, *id))
                 || window_space_cached(*id, space_of) != Some(w.space.1)
-                || !visible.contains(&(w.pid, *id))
             {
-                done.push(*id);
-                continue;
+                return false;
             }
             let (frame, complete) = t.sample(now);
             let accepted = if complete {
@@ -3634,52 +3837,48 @@ impl Manager {
                 let mut verification = Verification::new(t.to);
                 verification.accepted = accepted;
                 self.verifications.insert(*id, verification);
-                done.push(*id);
             }
-        }
-        for id in done {
-            self.transitions.remove(&id);
-        }
+            !complete
+        });
     }
     fn verify_placements(
         &mut self,
         active: &[(Workspace, NSRect)],
-        candidates: &[(i32, u32, NSRect)],
+        visible: &HashMap<(i32, u32), NSRect>,
         settling: bool,
         space_of: &mut HashMap<u32, Option<u64>>,
     ) {
         if self.verifications.is_empty() {
             return;
         }
-        let visible: HashSet<_> = candidates.iter().map(|(pid, id, _)| (*pid, *id)).collect();
         let now = Instant::now();
         for id in self.verifications.keys().copied().collect::<Vec<_>>() {
             let Some(w) = self.windows.get(&id) else {
                 self.verifications.remove(&id);
                 continue;
             };
+            let Some(&frame) = visible.get(&(w.pid, id)) else {
+                self.verifications.remove(&id);
+                continue;
+            };
             if !active.iter().any(|(key, _)| *key == w.space)
                 || window_space_cached(id, space_of) != Some(w.space.1)
-                || !visible.contains(&(w.pid, id))
             {
                 self.verifications.remove(&id);
+                continue;
+            }
+            let verification = self.verifications[&id];
+            // Before the repair deadline AX can only confirm early success.
+            // Do not interrupt a sibling's animation to read a still-moving tile.
+            if now < verification.due && !near(frame, verification.target) {
                 continue;
             }
             if self.floating.contains(&id) {
                 // A float must keep its native gesture baseline even when the
                 // next full scan isn't due. Never retry its automatic placement.
-                let verification = self.verifications[&id];
-                let observed = candidates
-                    .iter()
-                    .find(|(pid, candidate, _)| *pid == w.pid && *candidate == id)
-                    .and_then(|(_, _, frame)| {
-                        (near(*frame, verification.target) || now >= verification.due)
-                            .then_some(*frame)
-                    })
-                    .and_then(|frame| {
-                        let (p, s) = ax::geometry(w.element.0)?;
-                        near(frame, NSRect::new(p, s)).then_some(frame)
-                    });
+                let observed = ax::geometry(w.element.0)
+                    .filter(|&(p, s)| near(frame, NSRect::new(p, s)))
+                    .map(|_| frame);
                 if let Some(frame) = observed
                     && let Some((_, area)) = active.iter().find(|(key, _)| *key == w.space)
                 {
@@ -3698,26 +3897,27 @@ impl Manager {
                 }
                 continue;
             }
-            let Some((position, size)) = ax::geometry(w.element.0) else {
-                continue;
-            };
-            let actual = NSRect::new(position, size);
+            let actual =
+                ax::geometry(w.element.0).map(|(position, size)| NSRect::new(position, size));
             // During the bounded settle window the compositor can still report
             // the pre-slide frame. The destination already committed owns the
             // window, so neither the duplicate write nor its learned limit is
             // evidence yet; the verification resumes on the first scan after
             // the window expires, where a real drift still repairs itself.
-            if committed_during_settling(
-                settling,
-                self.applied.get(&id).copied(),
-                self.verifications[&id].target,
-            ) {
+            if actual.is_some()
+                && committed_during_settling(
+                    settling,
+                    self.applied.get(&id).copied(),
+                    self.verifications[&id].target,
+                )
+            {
                 continue;
             }
             let verification = self.verifications.get_mut(&id).unwrap();
             match verification.step(actual, now) {
                 VerificationStep::Wait => {}
                 VerificationStep::Complete => {
+                    let actual = actual.unwrap();
                     self.verifications.remove(&id);
                     self.constrained.remove(&id);
                     if let Some((_, area)) = active.iter().find(|(key, _)| *key == w.space) {
@@ -3755,6 +3955,7 @@ impl Manager {
                     self.verifications.remove(&id);
                 }
                 VerificationStep::Limited => {
+                    let actual = actual.unwrap();
                     if trace_tiling() {
                         eprintln!(
                             "tiling limit: id={id} requested={:?} actual={actual:?}",
@@ -4106,18 +4307,17 @@ impl Manager {
         // cadence cannot postpone a scan, and every notification, gesture or
         // dirty flag still resumes a fast timer on the very tick it is set.
         let animated = self.animated.unwrap_or(true);
-        if self.space_reentry.is_some()
-            || self.space_quiet_until.is_some()
-            || self.dirty
+        if self.space_reentry.is_some() || self.space_quiet_until.is_some() {
+            0.08
+        } else if animated && !self.transitions.is_empty() {
+            1. / 60.
+        } else if self.dirty
             || !self.verifications.is_empty()
             || self.tab_drag.is_some()
             || (!animated && !self.transitions.is_empty())
         {
             0.08
-        } else if animated && !self.transitions.is_empty()
-            || !self.gesture_candidates.is_empty()
-            || self.pending_drop.is_some()
-        {
+        } else if !self.gesture_candidates.is_empty() || self.pending_drop.is_some() {
             1. / 60.
         } else {
             0.25
@@ -4914,6 +5114,9 @@ impl Manager {
         // membership for this tick: the same data three times over, instead of
         // three lists that can disagree during a native slide.
         let Some(candidates) = ws::try_tile_windows() else {
+            if place_windows && !crate::desktop_mode::active() {
+                self.missed_placement_snapshot(Instant::now());
+            }
             return;
         };
         self.finish_desktop_reentry(&candidates, Instant::now());
@@ -4933,9 +5136,13 @@ impl Manager {
         let settling = self.settling_space();
         let mut space_of: HashMap<u32, Option<u64>> = HashMap::new();
         // Short, bounded reconciliation burst while macOS publishes the arriving windows.
-        if place_windows {
-            self.verify_placements(&active, &candidates, settling, &mut space_of);
-            self.animate(&active, &candidates, &mut space_of);
+        if place_windows && (!self.transitions.is_empty() || !self.verifications.is_empty()) {
+            let visible = candidates
+                .iter()
+                .map(|&(pid, id, frame)| ((pid, id), frame))
+                .collect();
+            self.verify_placements(&active, &visible, settling, &mut space_of);
+            self.animate(&active, &visible, &mut space_of);
         }
         if !self.transitions.is_empty() {
             // Do not interleave full AX enumeration with the 160 ms animation.
@@ -5329,24 +5536,24 @@ impl Manager {
             } else {
                 None
             };
-            d.reconcile_at(ids, r, 10., insertion_focus);
-            d.set_minimum_sizes(&self.minimum_sizes);
-            d.fit(r, 10.);
-            let frames = d.window_frames(r, 10.);
-            if frames.len() != d.order.len() {
-                self.last_error = Some(crate::i18n::tr("Esta plantilla no admite los tamaños mínimos de estas ventanas; prueba otra o deja una ventana flotante.").into());
-                continue;
-            }
-            // Do not create unusably small tiles; retain the layout until space is available.
-            if frames
-                .iter()
-                .any(|(_, r)| r.size.width < 80. || r.size.height < 60.)
-            {
+            let (frames, overflow) = match reconcile_scan(
+                d,
+                ids,
+                r,
+                insertion_focus,
+                &self.minimum_sizes,
+                &self.constrained,
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.last_error = Some(error.into());
+                    continue;
+                }
+            };
+            if overflow {
                 self.last_error = Some(
-                    crate::i18n::tr("Demasiadas ventanas para esta plantilla; usa Cuadrícula.")
-                        .into(),
+                    crate::i18n::tr("Algunas ventanas quedan fuera del mosaico porque no caben en esta plantilla.").into(),
                 );
-                continue;
             }
             let hidden = hidden_tab_frames(d, &frames);
             if !d.groups().is_empty() {
@@ -7340,6 +7547,7 @@ mod tests {
                             desktop: Some(proposed),
                             tracked: true,
                             floating: false,
+                            capacity_fallback: false,
                         };
                         assert_eq!(plan.background_frames().len(), 4);
                         manager.commit_keyboard_transfer_model(
@@ -7378,6 +7586,7 @@ mod tests {
                             desktop: Some(proposed),
                             tracked: true,
                             floating: false,
+                            capacity_fallback: false,
                         };
                         manager.commit_keyboard_transfer_model(
                             plan,
@@ -7428,6 +7637,7 @@ mod tests {
                     desktop: None,
                     tracked,
                     floating,
+                    capacity_fallback: false,
                 };
                 assert!(plan.background_frames().is_empty());
                 manager.commit_keyboard_transfer_model(plan, 42, 1, element.clone(), original);
@@ -7502,17 +7712,120 @@ mod tests {
         }
     }
     #[test]
-    fn impossible_keyboard_arrival_leaves_destination_unchanged() {
+    fn full_destination_receives_a_float_without_reshaping_its_grid() {
         let area = rect(0., 0., 1200., 800.);
+        let original = rect(30., 40., 560., 430.);
+        let source = (1, 6);
+        let destination = (1, 7);
+        let minimums = HashMap::from([(99, objc2_foundation::NSSize::new(1190., 790.))]);
         for layout in Layout::ALL {
-            let mut destination = Desktop::configured(layout, None);
-            destination.reconcile_at(&[1, 2, 3], area, 10., None);
-            let before = destination.save_distribution(area);
-            let minimums = HashMap::from([(99, objc2_foundation::NSSize::new(5000., 5000.))]);
-            assert!(arrival_proposal(&destination, 99, None, area, Some(&minimums)).is_none());
-            assert_eq!(destination.save_distribution(area), before);
+            let mut before = Desktop::configured(layout, None);
+            before.reconcile(&[1, 2, 3], area, 10.);
+            let mut plan = KeyboardTransfer {
+                source,
+                destination,
+                target: original,
+                source_area: area,
+                destination_area: area,
+                desktop: None,
+                tracked: true,
+                floating: false,
+                capacity_fallback: false,
+            };
+            plan.plan_tiled_arrival(&before, 99, &minimums);
+            assert!(plan.floats_for_capacity());
+            assert_eq!(plan.target, original);
+            assert!(plan.background_frames().is_empty());
+            let mut manager = Manager::default();
+            manager.desktops.insert(destination, before.clone());
+            let pid = std::process::id() as i32;
+            manager.commit_keyboard_transfer_model(
+                plan,
+                pid,
+                99,
+                ax::application(pid).unwrap(),
+                original,
+            );
+            assert!(manager.floating.contains(&99));
+            assert_eq!(manager.windows[&99].space, destination);
+            assert!(manager.desktops[&destination] == before);
         }
     }
+
+    #[test]
+    fn overflowing_arrivals_do_not_block_other_tiles_and_can_rejoin() {
+        let area = rect(0., 0., 1200., 800.);
+        let minimums = HashMap::from([(2, objc2_foundation::NSSize::new(1190., 790.))]);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1], area, 10.);
+        let (frames, overflow) = reconcile_scan(
+            &mut desktop,
+            &[1, 2, 3],
+            area,
+            None,
+            &minimums,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(overflow);
+        assert_eq!(desktop.order, [1, 3]);
+        assert_eq!(frames.len(), 2);
+        let (frames, overflow) =
+            reconcile_scan(&mut desktop, &[2], area, None, &minimums, &HashMap::new()).unwrap();
+        assert!(!overflow);
+        assert_eq!(frames, [(2, area)]);
+    }
+
+    #[test]
+    fn full_spiral_keeps_usable_slots_across_repeated_scans() {
+        let area = rect(0., 0., 1200., 800.);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        let windows: Vec<_> = (1..=48).collect();
+        let minimums = HashMap::new();
+        let constrained = HashMap::new();
+        let (initial, overflow) =
+            reconcile_scan(&mut desktop, &windows, area, None, &minimums, &constrained).unwrap();
+        assert!(overflow);
+        assert!(initial.len() > 1);
+        for _ in 0..20 {
+            let (frames, overflow) =
+                reconcile_scan(&mut desktop, &windows, area, None, &minimums, &constrained)
+                    .unwrap();
+            assert!(overflow);
+            assert_eq!(frames, initial);
+        }
+        let waiting = *windows
+            .iter()
+            .find(|id| !desktop.order.contains(id))
+            .unwrap();
+        let (frames, overflow) = reconcile_scan(
+            &mut desktop,
+            &[waiting],
+            area,
+            None,
+            &minimums,
+            &constrained,
+        )
+        .unwrap();
+        assert!(!overflow);
+        assert_eq!(frames, [(waiting, area)]);
+    }
+
+    #[test]
+    fn a_late_native_minimum_does_not_freeze_the_other_tiles() {
+        let area = rect(0., 0., 1200., 800.);
+        let minimums = HashMap::from([(2, objc2_foundation::NSSize::new(1190., 790.))]);
+        let mut desktop = Desktop::configured(Layout::Spiral, None);
+        desktop.reconcile(&[1, 2], area, 10.);
+        let requested = desktop.window_frames(area, 10.)[1].1;
+        let constrained = HashMap::from([(2, (requested, area))]);
+        let (frames, overflow) =
+            reconcile_scan(&mut desktop, &[1, 2], area, None, &minimums, &constrained).unwrap();
+        assert!(overflow);
+        assert_eq!(frames, [(1, area)]);
+        assert_eq!(desktop.order, [1]);
+    }
+
     #[test]
     #[ignore = "read-only reentry diagnostic; requires a stable interactive desktop"]
     fn inspect_destination_reentry_sample() {
@@ -7701,6 +8014,29 @@ mod tests {
         assert!(!barrier.observe(Some(sample.clone()), now + Duration::from_millis(59)));
         assert!(barrier.observe(Some(sample), now + Duration::from_millis(60)));
     }
+
+    #[test]
+    fn continuously_changing_reentry_releases_the_fast_timer() {
+        let now = Instant::now();
+        let key = (1, 7);
+        let area = rect(10., 41., 1660., 947.);
+        let mut manager = Manager::default();
+        manager.space_changed_with_visible_at(now, &[key]);
+        for tick in 0..16u32 {
+            let mut moving = area;
+            moving.origin.x += f64::from(tick) * 10.;
+            let sample = reentry_observation(key, area, &[(1, moving)]);
+            assert_eq!(
+                manager.observe_reentry(
+                    Some(sample),
+                    now + Duration::from_millis(u64::from(tick) * 40)
+                ),
+                tick == 15
+            );
+        }
+        assert!(manager.space_reentry.is_none());
+    }
+
     #[test]
     fn a_settled_frame_clamps_a_grown_minimum_without_losing_the_floor() {
         // A Limited step once observed a wider frame than the tile can hold.
@@ -9081,32 +9417,49 @@ mod tests {
         let mut verification = Verification::new(target);
         let due = verification.due;
         assert_eq!(
-            verification.step(old, due - Duration::from_millis(1)),
+            verification.step(Some(old), due - Duration::from_millis(1)),
             VerificationStep::Wait
         );
-        assert_eq!(verification.step(old, due), VerificationStep::Retry);
+        assert_eq!(verification.step(Some(old), due), VerificationStep::Retry);
         assert_eq!(
-            verification.step(old, due + Duration::from_millis(30)),
+            verification.step(Some(old), due + Duration::from_millis(30)),
             VerificationStep::Wait
         );
         assert_eq!(
-            verification.step(target, due + Duration::from_millis(60)),
+            verification.step(Some(target), due + Duration::from_millis(60)),
             VerificationStep::Complete
         );
     }
+
+    #[test]
+    fn unreadable_geometry_expires_without_learning_a_size_limit() {
+        let mut verification = Verification::new(rect(0., 0., 400., 300.));
+        verification.accepted = true;
+        let due = verification.due;
+        assert_eq!(
+            verification.step(None, due - Duration::from_millis(1)),
+            VerificationStep::Wait
+        );
+        assert_eq!(verification.step(None, due), VerificationStep::Rejected);
+        assert!(!verification.retried);
+    }
+
     #[test]
     fn application_constraints_have_only_one_bounded_retry() {
         let mut verification = Verification::new(rect(0., 0., 400., 300.));
         verification.accepted = true;
         let actual = rect(0., 0., 600., 500.);
         let due = verification.due;
-        assert_eq!(verification.step(actual, due), VerificationStep::Retry);
         assert_eq!(
-            verification.step(actual, due + Duration::from_millis(120)),
+            verification.step(Some(actual), due),
+            VerificationStep::Retry
+        );
+        assert_eq!(
+            verification.step(Some(actual), due + Duration::from_millis(120)),
             VerificationStep::Limited
         );
         assert_eq!(
-            verification.step(actual, due + Duration::from_secs(1)),
+            verification.step(Some(actual), due + Duration::from_secs(1)),
             VerificationStep::Limited
         );
     }
@@ -9116,14 +9469,14 @@ mod tests {
         let mut verification = Verification::new(rect(10., 41., 825., 947.));
         let old = rect(10., 41., 1660., 947.);
         let due = verification.due;
-        assert_eq!(verification.step(old, due), VerificationStep::Retry);
+        assert_eq!(verification.step(Some(old), due), VerificationStep::Retry);
         assert_eq!(
-            verification.step(old, due + Duration::from_secs(1)),
+            verification.step(Some(old), due + Duration::from_secs(1)),
             VerificationStep::Rejected
         );
         verification.accepted = true; // A fresh AX proxy recovers transport.
         assert_eq!(
-            verification.step(verification.target, due + Duration::from_secs(2)),
+            verification.step(Some(verification.target), due + Duration::from_secs(2)),
             VerificationStep::Complete
         );
     }
@@ -10005,6 +10358,12 @@ mod tests {
             },
         );
         assert_eq!(manager.tick_interval(), 1. / 60.);
+        manager.dirty = true;
+        manager.verifications.insert(2, Verification::new(to));
+        assert_eq!(manager.tick_interval(), 1. / 60.);
+        manager.space_reentry = Some(SpaceReentry::default());
+        assert_eq!(manager.tick_interval(), 0.08);
+        manager.space_reentry = None;
         manager.cancel_drag();
         assert_eq!(manager.tick_interval(), 0.08);
     }
@@ -10060,6 +10419,27 @@ mod tests {
         assert!(needs_placement(to, Some(from), None, None));
         assert!(!needs_placement(to, Some(to), None, None));
         assert!(!needs_placement(to, Some(from), Some(to), None));
+    }
+    #[test]
+    fn failed_snapshot_releases_fast_timer_without_erasing_the_layout() {
+        let mut manager = Manager::default();
+        let area = rect(0., 0., 1200., 800.);
+        let key = (1, 7);
+        manager
+            .desktops
+            .entry(key)
+            .or_default()
+            .reconcile(&[1, 2], area, 10.);
+        manager.applied.insert(1, area);
+        manager.applied.insert(2, area);
+        manager.transition_from(1, rect(10., 10., 400., 300.), area);
+        manager.verifications.insert(2, Verification::new(area));
+        let now = Instant::now();
+        manager.missed_placement_snapshot(now);
+        assert_eq!(manager.desktops[&key].order, [1, 2]);
+        assert!(manager.applied.is_empty());
+        assert_eq!(manager.tick_interval(), 0.25);
+        assert_eq!(manager.last_scan, Some(now));
     }
     #[test]
     fn geometry_drift_is_repaired_but_app_limits_do_not_loop() {
@@ -10125,7 +10505,7 @@ mod tests {
         assert!(manager.verifications.is_empty());
         // A committed write verifies complete on its first check: no retry pair.
         assert_eq!(
-            Verification::new(target).step(target, Instant::now()),
+            Verification::new(target).step(Some(target), Instant::now()),
             VerificationStep::Complete
         );
     }

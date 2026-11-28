@@ -44,6 +44,7 @@ fn main() {
             a.as_str(),
             "--check-tab-close"
                 | "--check-tab-focus"
+                | "--check-window-motion"
                 | "--check-tab-stacking"
                 | "--check-work-scenes"
         )

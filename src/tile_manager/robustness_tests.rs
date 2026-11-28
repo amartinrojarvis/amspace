@@ -57,18 +57,21 @@ fn placement_faults_are_bounded_and_repeated_notifications_do_not_restart_limits
             };
             let now = start + Duration::from_millis(delay);
             assert_eq!(
-                verification.step(limited, now),
+                verification.step(Some(limited), now),
                 if delay < 60 {
                     VerificationStep::Wait
                 } else {
                     VerificationStep::Retry
                 }
             );
-            assert_eq!(verification.step(target, now), VerificationStep::Complete);
-            let retry = start + Duration::from_millis(delay.max(60));
-            verification.step(limited, retry);
             assert_eq!(
-                verification.step(limited, retry + Duration::from_millis(59)),
+                verification.step(Some(target), now),
+                VerificationStep::Complete
+            );
+            let retry = start + Duration::from_millis(delay.max(60));
+            verification.step(Some(limited), retry);
+            assert_eq!(
+                verification.step(Some(limited), retry + Duration::from_millis(59)),
                 VerificationStep::Wait
             );
             let final_step = if accepted {
@@ -78,7 +81,7 @@ fn placement_faults_are_bounded_and_repeated_notifications_do_not_restart_limits
             };
             for later in [60, 61, 1000, 60000] {
                 assert_eq!(
-                    verification.step(limited, retry + Duration::from_millis(later)),
+                    verification.step(Some(limited), retry + Duration::from_millis(later)),
                     final_step
                 );
                 cases += 1;
@@ -303,6 +306,7 @@ fn exhaustive_edited_template_transfer_matrix() {
                                             desktop: Some(proposal),
                                             tracked: true,
                                             floating: false,
+                                            capacity_fallback: false,
                                         },
                                         42,
                                         id,
@@ -712,6 +716,7 @@ fn seeded_sessions_mix_manual_edits_transfers_templates_and_native_faults() {
                                     desktop,
                                     tracked: true,
                                     floating: owner.slot == Slot::Floating,
+                                    capacity_fallback: false,
                                 };
                                 session.manager.commit_keyboard_transfer_model(
                                     plan,

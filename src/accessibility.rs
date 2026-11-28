@@ -833,6 +833,13 @@ pub fn set_frame_step(
     previous: objc2_foundation::NSRect,
     next: objc2_foundation::NSRect,
 ) -> bool {
+    let next = integral_frame(next);
+    let changed = frame_changes(integral_frame(previous), next);
+    if changed == (false, false) {
+        // The first sample and rounded easing endpoints often coincide. No
+        // native write means no need to enumerate WindowServer for permission.
+        return true;
+    }
     crate::desktop_mode::refresh();
     if crate::desktop_mode::active() {
         return false;
@@ -840,10 +847,8 @@ pub fn set_frame_step(
     unsafe extern "C" {
         fn AXValueCreate(kind: u32, value: *const c_void) -> Cf;
     }
-    let previous = integral_frame(previous);
-    let next = integral_frame(next);
     apply_changed_frame(
-        frame_changes(previous, next),
+        changed,
         || !crate::desktop_mode::active(),
         || {
             let Some(value) =

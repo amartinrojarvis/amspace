@@ -1,10 +1,12 @@
-AMSpace 0.9.49 — Progreso de copia de Finder fuera del mosaico.
+AMSpace 0.9.50 — Mosaico más robusto y transiciones más fluidas.
 
-- El panel de progreso de copia de Finder permanece flotante y no ocupa una celda del mosaico. Las ventanas normales de Finder siguen entrando en la rejilla.
+- Una ventana que no cabe ya no impide colocar las demás. Si el mosaico de destino está lleno, puedes enviarla allí como flotante sin reorganizarlo.
+- Las animaciones de movimiento y tamaño mantienen su cadencia mientras se verifica otra ventana. El borde evita repintados innecesarios y el motor abandona las comprobaciones que no se estabilizan.
 
 English
 
-- Finder’s copy progress window stays floating and does not take up a tile. Regular Finder windows still join the grid.
+- A window that does not fit no longer blocks other tiles. Sending a window to a full destination leaves it floating without rearranging that layout.
+- Move and resize animations keep their cadence while another window is being verified. The border avoids unnecessary redraws, and unsettled checks no longer keep the engine running at high frequency indefinitely.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

@@ -412,9 +412,10 @@ impl Pending {
                 "Traslado interrumpido por un gesto de ratón.",
             ));
         }
-        if spaces::destination(self.plan.destination.1).is_none()
-            || tile_manager::area(self.plan.destination.0).is_none()
-        {
+        let Some(area) = tile_manager::area(self.plan.destination.0) else {
+            return Progress::Failed(crate::i18n::tr("El destino ya no está disponible."));
+        };
+        if spaces::destination(self.plan.destination.1).is_none() {
             return Progress::Failed(crate::i18n::tr("El destino ya no está disponible."));
         }
         if ax::window_id(self.element.0) != Some(self.id)
@@ -425,15 +426,9 @@ impl Pending {
                 "La ventana ha cambiado durante el traslado.",
             ));
         }
-        if !self.arrived() {
+        if spaces::window_space(self.id) != Some(self.plan.destination.1) {
             self.confirmation.observe(false);
-            return if self.started.elapsed() > Duration::from_secs(2) {
-                Progress::Failed(crate::i18n::tr(
-                    "macOS no confirmó el traslado; no se ha aplicado una distribución nueva.",
-                ))
-            } else {
-                Progress::Waiting
-            };
+            return Progress::Waiting;
         }
         if self.monitor {
             let now = Instant::now();
@@ -451,11 +446,6 @@ impl Pending {
             let Some(frame) = ws::bounds(self.id) else {
                 self.confirmation.observe(false);
                 return Progress::Waiting;
-            };
-            let Some(area) = tile_manager::area(self.plan.destination.0) else {
-                return Progress::Failed(crate::i18n::tr(
-                    "La pantalla de destino se ha desconectado.",
-                ));
             };
             if overlap(frame, area) < frame.size.width * frame.size.height * 0.5 {
                 self.confirmation.observe(false);

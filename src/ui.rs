@@ -1328,6 +1328,12 @@ impl App {
                 .border_clip
                 .as_ref()
                 .is_none_or(|(window, frame, old)| {
+                    // Unoccluded windows all use the same nil layer mask.
+                    // The overlay can follow a move without a CA commit just
+                    // to clear a mask that was already absent.
+                    if old.as_slice() == [*frame] && regions.as_slice() == [target.frame] {
+                        return false;
+                    }
                     *window != target.id || *frame != target.frame || *old != regions
                 });
             if geometry_changed {
@@ -2044,6 +2050,7 @@ impl App {
                     matches!(result, crate::window_move::Progress::Arrived) && pending.arrived();
                 let follow = pending.follow && arrived;
                 let destination = pending.plan.destination.1;
+                let capacity_fallback = pending.plan.floats_for_capacity();
                 self.record_transfer(&format!("Confirmación {result:?}; llegada={arrived}; ventana={} native={:?} AX={:?}",pending.id,spaces::window_space(pending.id),ax::geometry(pending.element.0)),false);
                 if arrived {
                     self.tile_manager.commit_keyboard_transfer(
@@ -2062,7 +2069,14 @@ impl App {
                 if let crate::window_move::Progress::Failed(message) = result {
                     self.record_transfer(message, true);
                 } else if arrived {
-                    self.record_transfer(crate::i18n::tr("Ventana enviada al destino."), true);
+                    let message = if capacity_fallback {
+                        crate::i18n::tr(
+                            "Ventana enviada como flotante: no cabe en el mosaico de destino.",
+                        )
+                    } else {
+                        crate::i18n::tr("Ventana enviada al destino.")
+                    };
+                    self.record_transfer(message, true);
                 } else {
                     self.record_transfer(
                         crate::i18n::tr(
@@ -5666,9 +5680,9 @@ fn apply_tab_drag(a: &mut App, view: Obj, state: isize, location: NSPoint, indep
         a.show_notice(&error, crate::discovery::NoticeKind::Error);
     }
 }
-extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, _: Obj) {
+extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, timer: Obj) {
     autoreleasepool(|_| {
-        with_app_deferred(target, selector, |a| {
+        let delivered = try_with_app(|a| {
             if a.tile_timer.is_none()
                 || a.tiling_paused
                 || a.tab_menu.is_some()
@@ -5699,7 +5713,13 @@ extern "C-unwind" fn tile_tick(target: Obj, selector: Sel, _: Obj) {
                     a.feedback(&error);
                 }
             }
-        })
+        });
+        // A repeating NSTimer already schedules the next sample. Replaying
+        // a missed frame after AX reentry only adds work between two ticks.
+        // The explicit kick after permission recovery is a one-shot (nil).
+        if !delivered && timer.is_null() {
+            schedule_app_callback(target, selector, 0.01);
+        }
     });
 }
 extern "C-unwind" fn hover(_: Obj, _: Sel, _: Obj) {

@@ -161,6 +161,12 @@ pub(super) fn english(text: &str) -> Option<&'static str> {
         "Demasiadas ventanas para esta plantilla; usa Cuadrícula." => {
             "Too many windows for this layout; use Grid."
         }
+        "Algunas ventanas quedan fuera del mosaico porque no caben en esta plantilla." => {
+            "Some windows are left out of the grid because they do not fit this layout."
+        }
+        "Ventana enviada como flotante: no cabe en el mosaico de destino." => {
+            "Window moved as floating: it does not fit the destination grid."
+        }
         "No hay espacio suficiente para separar esta pestaña respetando los tamaños mínimos." => {
             "There is not enough room to detach this tab while respecting minimum sizes."
         }

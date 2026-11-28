@@ -1,3 +1,15 @@
+## En desarrollo — Movimiento y redimensionado
+
+- `--check-window-motion`, compilación release en Apple Silicon: tres ventanas desechables del mismo proceso AppKit. En un lote simultáneo WindowServer mostró un marco intermedio de cada ventana (solo movimiento, solo tamaño y ambos), y AX y WindowServer confirmaron los tres destinos. Ocho pasos de animación; mediana de trabajo por paso 6,57 ms, máximo 26,23 ms; confirmación de los destinos a los 259 ms. El coste incluye las lecturas del diagnóstico. No son FPS de presentación ni una medida de CPU del sistema. No cubre apps con AX lento ni sesiones de varias horas.
+- En el bundle universal, `--check-tab-controls` completó 12.000 entregas en 16 ráfagas reentrantes. También comprobó recuperación del permiso AX, pausa, sueño/despertar y cambios de presentación mediante callbacks locales. No se suspendió físicamente el equipo ni se cambió ningún permiso.
+- Integración final: formato, Clippy, 306 pruebas aprobadas, nueve ignoradas y plist correcto (`./scripts/check.sh`). Compilado para arm64 y x86_64; `--check-border` en Apple Silicon confirmó un borde encajado y visible, sin tomar foco bajo una cubierta que deja pasar clics. No se ejecutó en hardware Intel.
+
+## En desarrollo — Robustez del mosaico y traslados
+
+- Regresiones del modelo: 48 ventanas en Espiral y 20 reconciliaciones, descarte aislado de una ventana con mínimos incompatibles, verificación AX sin lectura y reentrada con muestras que nunca se estabilizan. Las ocho plantillas prueban que un traslado puede llegar como flotante sin reorganizar un destino que ya está lleno.
+- En la instancia publicada se observó una sesión de casi 24 horas con dos monitores, AX y el puente de traslado disponibles. Se vieron ventanas elegibles fuera de la distribución habitual, pero la inspección externa no confirmó su causa ni una fuga. No se cerró la app instalada ni se movieron ventanas de trabajo.
+- `./scripts/check.sh` pasó en una copia aislada: 304 pruebas aprobadas, nueve ignoradas, formato, Clippy y plist correctos. Se compiló el bundle universal arm64/x86_64. En Apple Silicon, `--check-transfer-preflight` aceptó los destinos reales 1, 3 y 4 con caché vacía, sin mover ventanas. Quedan sin comprobar el traslado completo entre Spaces y una sesión prolongada con el bundle corregido.
+
 ## 0.9.49/build 104 — Progreso de copia de Finder
 
 - Una copia real de archivos desechables expuso el panel de Finder como `AXStandardWindow` redimensionable, con `AXIdentifier=Progress`. El bundle corregido confirmó `tileable=false` para el mismo ID visible en WindowServer, antes de reservar una celda. El diagnóstico fue de solo lectura; no se sustituyó la app en ejecución ni se comprobó visualmente la cuadrícula con el bundle corregido activo.

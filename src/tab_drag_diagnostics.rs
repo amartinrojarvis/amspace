@@ -13,10 +13,10 @@ fn geometry(manager: &Manager, id: u32) -> Result<NSRect, String> {
 fn finish_placements(manager: &mut Manager, expected: &[(u32, NSRect)]) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        let candidates: Vec<_> = manager
+        let candidates: HashMap<_, _> = manager
             .windows
             .iter()
-            .filter_map(|(id, w)| ws::bounds(*id).map(|frame| (w.pid, *id, frame)))
+            .filter_map(|(id, w)| ws::bounds(*id).map(|frame| ((w.pid, *id), frame)))
             .collect();
         let active = manager.active_areas.clone();
         let mut spaces = HashMap::new();

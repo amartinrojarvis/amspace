@@ -491,6 +491,67 @@ fn check_shared_app_tabs(
     Ok(())
 }
 
+fn check_window_motion(manager: &mut Manager, ids: &[u32], area: NSRect) -> Result<(), String> {
+    // Three different workloads in one batch: translate, resize, and both.
+    let active = manager.active_areas.clone();
+    let mut paths = Vec::new();
+    for (index, &id) in ids.iter().enumerate() {
+        let from = manager.windows[&id].original;
+        let mut to = from;
+        if index != 1 {
+            to.origin.x = area.origin.x + 20.;
+            to.origin.y = area.origin.y + 40.;
+        }
+        if index != 0 {
+            to.size.width -= 80.;
+            to.size.height -= 60.;
+        }
+        manager.transition_from(id, from, to);
+        paths.push((id, from, to, false));
+    }
+    let started = Instant::now();
+    let mut costs = Vec::new();
+    while started.elapsed() < Duration::from_secs(3) {
+        let tick = Instant::now();
+        let mut visible = HashMap::new();
+        for (id, from, to, intermediate) in &mut paths {
+            let frame = ws::bounds(*id).ok_or("WindowServer perdió el fixture")?;
+            *intermediate |= !near(frame, *from) && !near(frame, *to);
+            visible.insert((manager.windows[id].pid, *id), frame);
+        }
+        let mut spaces = HashMap::new();
+        manager.verify_placements(&active, &visible, false, &mut spaces);
+        if !manager.transitions.is_empty() {
+            manager.animate(&active, &visible, &mut spaces);
+            costs.push(tick.elapsed());
+        }
+        if manager.transitions.is_empty() && manager.verifications.is_empty() {
+            for (id, _, to, intermediate) in paths {
+                let (p, s) = ax::geometry(manager.windows[&id].element.0).ok_or("Sin marco AX")?;
+                if !intermediate
+                    || !near(NSRect::new(p, s), to)
+                    || !ws::bounds(id).is_some_and(|f| near(f, to))
+                {
+                    return Err(format!(
+                        "Movimiento intermedio o destino sin confirmar: {id}"
+                    ));
+                }
+            }
+            costs.sort_unstable();
+            println!(
+                "Tres ventanas: {} pasos; trabajo mediano {:?}, máximo {:?}; destino AX y WindowServer confirmado en {:?}.",
+                costs.len(),
+                costs[costs.len() / 2],
+                costs[costs.len() - 1],
+                started.elapsed()
+            );
+            return Ok(());
+        }
+        pump((manager.tick_interval() - tick.elapsed().as_secs_f64()).max(0.));
+    }
+    Err("Las transiciones del fixture no se asentaron.".into())
+}
+
 pub fn check(mode: &str) -> Result<(), String> {
     let scenes_only = mode == "--check-work-scenes";
     let focus_only = mode == "--check-tab-focus";
@@ -568,6 +629,9 @@ pub fn check(mode: &str) -> Result<(), String> {
                 element,
             },
         );
+    }
+    if mode == "--check-window-motion" {
+        return check_window_motion(&mut manager, &ids, area);
     }
     let send = |command: &str,
                 input: &mut std::process::ChildStdin,
