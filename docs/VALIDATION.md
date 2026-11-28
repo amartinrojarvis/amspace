@@ -2,6 +2,9 @@
 
 - En Apple Silicon, `--check-floating-tabs` confirmó en WindowServer el orden flotante → tira → ventana del grupo, tanto al crear la tira como al restaurarla. En el solapamiento, la tira no capturó el punto y la flotante mantuvo el foco AX. Pasaron también `--check-tab-stacking` y `--check-tab-controls`.
 - `--check-floating-transfer` envió una ventana AppKit desechable de tamaño fijo entre dos Spaces reales de la misma pantalla. Con `--resizable-float` envió otra redimensionable marcada como flotante. En ambos casos se confirmó su identidad y pertenencia al destino, sin reservar un hueco, alterar su marco ni salir del escritorio de origen. Se invocó la acción del atajo, no la combinación física de teclas. No se movieron ventanas de trabajo ni se probó hardware Intel.
+- Publicación desde `f82503b` con [CI aprobada](https://github.com/amartinrojarvis/amspace/actions/runs/46125552252). En un árbol aislado: 305 pruebas aprobadas, nueve ignoradas, formato, Clippy y plist correctos; bundle universal arm64/x86_64. En el bundle firmado pasaron los dos casos de traslado, la oclusión de la tira y el apilado entre grupos.
+- Las cinco descargas de [v0.9.51](https://github.com/amartinrojarvis/amspace/releases/tag/v0.9.51) y el ZIP inmutable de Sparkle (`ee58362`) coincidieron con los archivos locales firmados. El DMG descargado conservó la disposición de Finder, la guía, el fondo y el enlace a Aplicaciones. La firma del bundle build 106 se verificó y su ejecutable coincidió con el de las pruebas. No se sustituyó la app instalada ni se probó la primera instalación o la actualización desde el cliente anterior.
+- El catálogo anunciado en `ec162de` devolvió los bytes firmados tanto sin compresión como con las cabeceras de Sparkle. Ambas firmas públicas se verificaron.
 
 ## 0.9.50/build 105 — Movimiento y redimensionado
 
