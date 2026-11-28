@@ -675,7 +675,9 @@ pub fn check(mode: &str) -> Result<(), String> {
             .ok_or("Se necesitan dos escritorios en el monitor del fixture")?;
         let manual = std::env::args().any(|arg| arg == "--resizable-float");
         if ax::resizable(manager.windows[&float].element.0) != manual {
-            return Err("La capacidad AX de redimensionar no coincide con el caso de prueba".into());
+            return Err(
+                "La capacidad AX de redimensionar no coincide con el caso de prueba".into(),
+            );
         }
         if manual {
             manager.floating.insert(float);
