@@ -1,3 +1,8 @@
+## 0.9.51/build 106 — Flotantes sobre pestañas y envío entre escritorios
+
+- En Apple Silicon, `--check-floating-tabs` confirmó en WindowServer el orden flotante → tira → ventana del grupo, tanto al crear la tira como al restaurarla. En el solapamiento, la tira no capturó el punto y la flotante mantuvo el foco AX. Pasaron también `--check-tab-stacking` y `--check-tab-controls`.
+- `--check-floating-transfer` envió una ventana AppKit desechable de tamaño fijo entre dos Spaces reales de la misma pantalla. Con `--resizable-float` envió otra redimensionable marcada como flotante. En ambos casos se confirmó su identidad y pertenencia al destino, sin reservar un hueco, alterar su marco ni salir del escritorio de origen. Se invocó la acción del atajo, no la combinación física de teclas. No se movieron ventanas de trabajo ni se probó hardware Intel.
+
 ## 0.9.50/build 105 — Movimiento y redimensionado
 
 - `--check-window-motion`, compilación release en Apple Silicon: tres ventanas desechables del mismo proceso AppKit. En un lote simultáneo WindowServer mostró un marco intermedio de cada ventana (solo movimiento, solo tamaño y ambos), y AX y WindowServer confirmaron los tres destinos. Ocho pasos de animación; mediana de trabajo por paso 6,57 ms, máximo 26,23 ms; confirmación de los destinos a los 259 ms. El coste incluye las lecturas del diagnóstico. No son FPS de presentación ni una medida de CPU del sistema. No cubre apps con AX lento ni sesiones de varias horas.

@@ -661,24 +661,24 @@ extern "C" fn desktop_changed(_: Cf, _: Cf, notification: Cf, _: *mut c_void) {
 
 /// Only standard, movable/resizable windows participate. Dialogs stay floating.
 pub fn tileable(window: Cf) -> bool {
+    movable_standard(window) && resizable(window)
+}
+pub fn resizable(window: Cf) -> bool {
+    settable(window, ns_string!("AXSize"))
+}
+fn settable(window: Cf, name: &NSString) -> bool {
     unsafe extern "C" {
         fn AXUIElementIsAttributeSettable(element: Cf, name: Cf, result: *mut bool) -> i32;
     }
-    if !attr(window, "AXSubrole").is_some_and(|v| equals_text(v.0, "AXStandardWindow"))
-        || flag(window, "AXModal")
-        || system_utility_window(window)
-        || geometry(window).is_none()
-    {
-        return false;
-    }
-    ["AXPosition", "AXSize"].iter().all(|name| {
-        let mut settable = false;
-        unsafe {
-            AXUIElementIsAttributeSettable(window, cf(&NSString::from_str(name)), &mut settable)
-                == 0
-                && settable
-        }
-    })
+    let mut result = false;
+    unsafe { AXUIElementIsAttributeSettable(window, cf(name), &mut result) == 0 && result }
+}
+pub fn movable_standard(window: Cf) -> bool {
+    attr(window, "AXSubrole").is_some_and(|v| equals_text(v.0, "AXStandardWindow"))
+        && !flag(window, "AXModal")
+        && !system_utility_window(window)
+        && geometry(window).is_some()
+        && settable(window, ns_string!("AXPosition"))
 }
 fn finder_utility_identifier(identifier: Cf) -> bool {
     // Finder exposes its copy panel as a resizable AXStandardWindow.

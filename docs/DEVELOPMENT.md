@@ -151,6 +151,8 @@ Con dos pantallas que muestran escritorios normales, `--check-work-scenes` crea 
 
 `--check-tab-stacking` crea dos grupos de ventanas físicamente superpuestas de dos procesos desechables. La app seleccionada tiene una pestaña oculta en cada grupo. WindowServer confirma que solo sube la elegida y que la activa del otro grupo sigue cubriendo a su compañera. También comprueba el PID de primer plano y el foco AX. No requiere cerrar AMSpace.
 
+`--check-floating-tabs` comprueba orden, foco y detección del ratón al cubrir una tira con otra ventana. `--check-floating-transfer` envía una ventana desechable de tamaño fijo a otro escritorio de la misma pantalla, sin seguirla. Requiere Accesibilidad y dos escritorios; rechaza cualquier ventana activa cuyo PID e ID no coincidan con el fixture.
+
 `--space-transfer-fixture` y `--tab-group-fixture` son entradas internas de diagnósticos, no segundas apps de uso diario. Las pruebas ignoradas del código incluyen diagnósticos interactivos y benchmarks; lee su atributo `#[ignore]` y su implementación antes de ejecutar una concreta.
 
 El diagnóstico de controles también recorre las zonas de soltado: agrupación, intercambio, grupo no disponible y hueco compacto. Comprueba que el panel ignora el ratón y que moverlo o cruzar el separador reutiliza sus vistas mientras cambia el resaltado. Guarda `.cache/drop-zones-group.png`, `.cache/drop-zones-swap.png`, `.cache/drop-zones-unavailable.png` y `.cache/drop-zones-compact.png`.

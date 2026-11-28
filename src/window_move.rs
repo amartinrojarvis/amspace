@@ -240,6 +240,14 @@ impl Pending {
         defaults: Obj,
         destination: Destination,
     ) -> Result<Self, &'static str> {
+        Self::start_expected(manager, defaults, destination, None)
+    }
+    pub(crate) fn start_expected(
+        manager: &mut Manager,
+        defaults: Obj,
+        destination: Destination,
+        expected: Option<(i32, u32)>,
+    ) -> Result<Self, &'static str> {
         if !ax::trusted() {
             return Err(crate::i18n::tr(
                 "Concede Accesibilidad para usar los atajos de ventanas.",
@@ -265,10 +273,13 @@ impl Pending {
                     "Selecciona una ventana normal de otra aplicación.",
                 ));
             }
-            let id = ax::focused_id(pid).ok_or(crate::i18n::tr("No hay una ventana activa."))?;
-            let element = ax::window_for_id(pid, id)
+            let element = ax::application(pid)
+                .and_then(|app| ax::attr(app.0, "AXFocusedWindow"))
+                .ok_or(crate::i18n::tr("No hay una ventana activa."))?;
+            let id = ax::window_id(element.0)
                 .ok_or(crate::i18n::tr("La ventana activa ya no está disponible."))?;
-            if !ax::tileable(element.0)
+            if expected.is_some_and(|key| key != (pid, id))
+                || !ax::movable_standard(element.0)
                 || ax::flag(element.0, "AXFullScreen")
                 || ax::flag(element.0, "AXMinimized")
             {
@@ -276,6 +287,10 @@ impl Pending {
             }
             (pid, id, element)
         };
+        let fixed = !ax::resizable(element.0);
+        if fixed && matches!(destination, Destination::Monitor(_)) {
+            return Err(crate::i18n::tr("Esta ventana no admite traslados."));
+        }
         let (position, size) = ax::geometry(element.0).ok_or(crate::i18n::tr(
             "No se puede leer la geometría de la ventana activa.",
         ))?;
@@ -340,8 +355,14 @@ impl Pending {
                 "Esta versión de macOS no ofrece el traslado seguro entre escritorios.",
             ));
         }
-        let plan =
-            manager.prepare_keyboard_transfer(defaults, pid, id, source, destination, original)?;
+        let plan = manager.prepare_keyboard_transfer(
+            defaults,
+            (pid, id),
+            source,
+            destination,
+            original,
+            fixed,
+        )?;
         let background_windows = manager.keyboard_transfer_windows(&plan);
         if destination.1 != source.1 && !request(id, destination.1) {
             return Err("macOS no ha aceptado la solicitud de traslado.");
@@ -506,11 +527,11 @@ pub fn check_transfer_preflight() -> Result<(), String> {
         let plan = manager
             .prepare_keyboard_transfer(
                 Retained::as_ptr(&defaults) as Obj,
-                pid,
-                id,
+                (pid, id),
                 source,
                 (source.0, space),
                 frame,
+                false,
             )
             .map_err(|e| format!("Desktop {}: {e}", index + 1))?;
         if !plan

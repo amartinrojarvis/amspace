@@ -1,12 +1,12 @@
-AMSpace 0.9.50 — Mosaico más robusto y transiciones más fluidas.
+AMSpace 0.9.51 — Ventanas flotantes y pestañas.
 
-- Una ventana que no cabe ya no impide colocar las demás. Si el mosaico de destino está lleno, puedes enviarla allí como flotante sin reorganizarlo.
-- Las animaciones de movimiento y tamaño mantienen su cadencia mientras se verifica otra ventana. El borde evita repintados innecesarios y el motor abandona las comprobaciones que no se estabilizan.
+- Las ventanas flotantes en primer plano cubren las pestañas del mosaico, también al volver a un escritorio. La tira ya no intercepta los clics en la parte cubierta.
+- Puedes enviar una ventana flotante a otro escritorio de la misma pantalla, aunque sea de tamaño fijo. Conserva su posición y tamaño sin ocupar una celda en el destino.
 
 English
 
-- A window that does not fit no longer blocks other tiles. Sending a window to a full destination leaves it floating without rearranging that layout.
-- Move and resize animations keep their cadence while another window is being verified. The border avoids unnecessary redraws, and unsettled checks no longer keep the engine running at high frequency indefinitely.
+- Floating windows in front cover tiling tabs, including when returning to a desktop. The tab strip no longer intercepts clicks in the covered area.
+- You can send a floating window to another desktop on the same display, even if it cannot be resized. It keeps its position and size without taking a tiling slot at the destination.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:

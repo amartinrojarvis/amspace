@@ -1064,22 +1064,38 @@ struct TabStrip {
     active: usize,
     built: NSRect,
     frame: NSRect,
+    anchor: Option<(i32, u32)>,
 }
 impl TabStrip {
-    fn show_at(&mut self, frame: NSRect, primary: f64) {
+    fn show_at(&mut self, frame: NSRect, primary: f64, stack: Option<&[(i32, u32)]>) {
         unsafe {
             if self.frame != frame {
                 let _: () = msg_send![&*self.panel,setFrame:appkit(frame, primary),display:true];
                 self.frame = frame;
             }
-            self.show();
+            self.show(stack);
         }
     }
-    fn show(&self) {
+    fn show(&self, stack: Option<&[(i32, u32)]>) {
         unsafe {
             let visible: bool = msg_send![&*self.panel, isVisible];
+            if let Some(anchor) = self.anchor {
+                if let Some(stack) = stack {
+                    let Some(rank) = stack.iter().position(|&window| window == anchor) else {
+                        self.hide();
+                        return;
+                    };
+                    let panel: isize = msg_send![&*self.panel, windowNumber];
+                    if !visible || rank.checked_sub(1).map(|i| stack[i].1) != Some(panel as u32) {
+                        let _: () = msg_send![&*self.panel, orderWindow:1isize, relativeTo:anchor.1 as isize];
+                    }
+                } else if !visible {
+                    return;
+                }
+            } else if !visible {
+                let _: () = msg_send![&*self.panel, orderBack:ptr::null::<AnyObject>()];
+            }
             if !visible {
-                let _: () = msg_send![&*self.panel, orderFrontRegardless];
                 let root: Obj = msg_send![&*self.panel, contentView];
                 sync_strip_hover(&*root);
             }
@@ -1386,9 +1402,17 @@ impl Manager {
     }
 
     pub(crate) fn tab_strip_at(&self, point: NSPoint) -> bool {
-        self.strips
-            .iter()
-            .any(|strip| contains(strip.frame, point) && strip.accepts_input())
+        self.strips.iter().any(|strip| {
+            if !contains(strip.frame, point) || !strip.accepts_input() {
+                return false;
+            }
+            unsafe {
+                let location = NSPoint::new(point.x, primary_height() - point.y);
+                let hit: isize = msg_send![class!(NSWindow), windowNumberAtPoint:location, belowWindowWithWindowNumber:0isize];
+                let panel: isize = msg_send![&*strip.panel, windowNumber];
+                hit == panel
+            }
+        })
     }
 
     fn focus_tab_window(&self, window: &Managed, id: u32) -> bool {
@@ -2542,6 +2566,7 @@ impl Manager {
         if self.presentation != crate::desktop_mode::Mode::Normal || crate::desktop_mode::active() {
             return;
         }
+        let stack = std::cell::LazyCell::new(ws::visible_stack);
         for strip in &self.strips {
             let current = visible.contains(&strip.space)
                 && self.desktops.get(&strip.space).is_some_and(|desktop| {
@@ -2555,7 +2580,7 @@ impl Manager {
                     .area
                     .is_some_and(|saved| area(strip.space.0) == Some(saved));
             if current {
-                strip.show();
+                strip.show(stack.as_deref());
             } else {
                 strip.hide();
             }
@@ -3042,6 +3067,7 @@ impl Manager {
             .iter()
             .find_map(|(key, area)| (*key == space).then_some(*area));
         let groups: &[Group] = desktop.groups();
+        let stack = std::cell::LazyCell::new(ws::visible_stack);
         for group in groups {
             if group.members.len() < 2 {
                 continue;
@@ -3078,7 +3104,7 @@ impl Manager {
                 let total = strip_width(strip.signature.iter().map(|(name, _)| tab_width(name)));
                 let panel = tab_bar_frame(*slot, total, centered);
                 if strip.built.size == panel.size {
-                    strip.show_at(panel, primary);
+                    strip.show_at(panel, primary, None);
                     used += 1;
                     continue;
                 }
@@ -3142,13 +3168,15 @@ impl Manager {
                         strip.active = group.active;
                         strip.built = panel;
                     }
-                    strip.show_at(panel, primary);
+                    strip.anchor = self.windows.get(&leaf).map(|w| (w.pid, leaf));
+                    strip.show_at(panel, primary, stack.as_deref());
                 }
                 None => {
                     let panel_obj = unsafe { new_overlay(panel, primary) };
                     // The overlay can join any Space; Manager scopes its
                     // visibility to the workspace that owns the group.
                     unsafe {
+                        let _: () = msg_send![&panel_obj, setLevel:0isize];
                         let _: () = msg_send![&panel_obj, setHidesOnDeactivate:false];
                     }
                     let root = unsafe {
@@ -3166,8 +3194,6 @@ impl Manager {
                         // The compositor supplies the strip's compact native shadow.
                         let _: () = msg_send![&panel_obj,setHasShadow:true];
                         let _: () = msg_send![&panel_obj,setContentView:&*root];
-                        let _: () = msg_send![&panel_obj, orderFrontRegardless];
-                        sync_strip_hover(&root);
                     }
                     self.strips.insert(
                         used,
@@ -3182,8 +3208,10 @@ impl Manager {
                             active: group.active,
                             built: panel,
                             frame: panel,
+                            anchor: self.windows.get(&leaf).map(|w| (w.pid, leaf)),
                         },
                     );
+                    self.strips[used].show(stack.as_deref());
                 }
             }
             used += 1;
@@ -3256,12 +3284,13 @@ impl Manager {
     pub fn prepare_keyboard_transfer(
         &mut self,
         defaults: Obj,
-        pid: i32,
-        id: u32,
+        identity: (i32, u32),
         source: Workspace,
         destination: Workspace,
         frame: NSRect,
+        fixed: bool,
     ) -> Result<KeyboardTransfer, &'static str> {
+        let (pid, id) = identity;
         let tracked = pref(defaults, "tile.enabled") != 0;
         if self.presentation_blocks_input()
             || (tracked && (self.space_reentry.is_some() || self.waiting_for_space(Instant::now())))
@@ -3276,7 +3305,10 @@ impl Manager {
         let destination_area = area(destination.0).ok_or(crate::i18n::tr(
             "La pantalla de destino ya no está disponible.",
         ))?;
-        let floating = self.floating.contains(&id) || crate::tile_rules::floats(defaults, pid);
+        let floating = fixed
+            || self.desktop_floating.contains(&identity)
+            || (self.floating.contains(&id) && self.windows.get(&id).is_some_and(|w| w.pid == pid))
+            || crate::tile_rules::floats(defaults, pid);
         let tiled =
             tracked && pref(defaults, &format!("tile.off.{}", destination.1)) == 0 && !floating;
         let mut plan = KeyboardTransfer {

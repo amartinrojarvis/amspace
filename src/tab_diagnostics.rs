@@ -312,6 +312,7 @@ pub fn check_controls() -> Result<(), String> {
                 active: 1,
                 built: frame,
                 frame,
+                anchor: None,
             }],
             ..Manager::default()
         };

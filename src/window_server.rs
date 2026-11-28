@@ -506,6 +506,20 @@ fn move_border(target: u32) -> bool {
     unsafe { move_window((api.connection)(), border, &frame.origin) == 0 }
 }
 
+pub(crate) fn visible_stack() -> Option<Vec<(i32, u32)>> {
+    let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
+    Some(
+        array(list.0)
+            .filter_map(|info| {
+                Some((
+                    number(get(info, ns_string!("kCGWindowOwnerPID")))? as i32,
+                    window_id(info)?,
+                ))
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn window_above(front: u32, back: u32) -> Option<bool> {
     let list = Owned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) })?;
     let mut ids = array(list.0)

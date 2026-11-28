@@ -2,6 +2,7 @@
 use super::diagnostics::{Fixture, pump};
 use super::*;
 use objc2::runtime::Bool;
+use objc2_foundation::ns_string;
 use std::{
     cell::{Cell, RefCell},
     io::{BufRead, BufReader, Write},
@@ -67,9 +68,10 @@ pub fn run_fixture() {
     unsafe {
         let four_windows = std::env::args().any(|arg| arg == "--shared-app-tabs");
         let mixed = std::env::args().any(|arg| arg == "--mixed-app-tabs");
+        let fixed = std::env::args().any(|arg| arg == "--float-overlap-fixture");
+        let manual = std::env::args().any(|arg| arg == "--resizable-float");
         let app: Obj = msg_send![class!(NSApplication), sharedApplication];
-        let _: bool =
-            msg_send![app, setActivationPolicy:if four_windows || mixed { 0isize } else { 1isize }];
+        let _: bool = msg_send![app, setActivationPolicy:if four_windows || mixed || fixed { 0isize } else { 1isize }];
         let _: () = msg_send![app, finishLaunching];
         let mut builder = ClassBuilder::new(c"AMSpaceCloseFixture", class!(NSObject)).unwrap();
         builder.add_method(
@@ -113,9 +115,9 @@ pub fn run_fixture() {
                     420.,
                     280.,
                 );
-                let window: Retained<AnyObject> = msg_send![window, initWithContentRect:frame, styleMask:15usize, backing:2usize, defer:false];
+                let window: Retained<AnyObject> = msg_send![window, initWithContentRect:frame, styleMask:if fixed && !manual { 3usize } else { 15usize }, backing:2usize, defer:false];
                 let _: () = msg_send![&window, setReleasedWhenClosed:false];
-                let _: () = msg_send![&window, setLevel:3isize];
+                let _: () = msg_send![&window, setLevel:if fixed && !manual { 0isize } else { 3isize }];
                 let _: () = msg_send![&window, setTabbingMode:2isize];
                 let _: () = msg_send![&window, setDelegate:&*delegate];
                 let _: () = msg_send![&window, setTitle:&*NSString::from_str(&format!("AMSpace · cierre temporal {index}"))];
@@ -576,6 +578,15 @@ pub fn check(mode: &str) -> Result<(), String> {
             .arg("--tab-close-fixture")
             .args(two_displays.then_some("--second-scene-display"))
             .args(focus_only.then_some("--shared-app-tabs"))
+            .args(
+                matches!(mode, "--check-floating-tabs" | "--check-floating-transfer")
+                    .then_some("--float-overlap-fixture"),
+            )
+            .args(
+                (mode == "--check-floating-transfer"
+                    && std::env::args().any(|arg| arg == "--resizable-float"))
+                .then_some("--resizable-float"),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -600,9 +611,17 @@ pub fn check(mode: &str) -> Result<(), String> {
     if ids.len() != expected {
         return Err("El fixture no creó todas las ventanas previstas".into());
     }
-    pump(0.15);
     let pid = fixture.0.id() as i32;
-    let first = ax::window_for_id(pid, ids[0]).ok_or("AX no encontró el fixture")?;
+    let start = Instant::now();
+    let first = loop {
+        if let Some(first) = ax::window_for_id(pid, ids[0]) {
+            break first;
+        }
+        if start.elapsed() >= Duration::from_secs(2) {
+            return Err("AX no encontró el fixture".into());
+        }
+        pump(0.05);
+    };
     let (position, size) = ax::geometry(first.0).ok_or("Sin geometría AX")?;
     let native_space = spaces::window_space(ids[0]).ok_or("Sin Space del fixture")?;
     let (space, area) = spaces::visible_desktops()
@@ -646,6 +665,109 @@ pub fn check(mode: &str) -> Result<(), String> {
         pump(0.12);
         Ok(())
     };
+    if mode == "--check-floating-transfer" {
+        use crate::window_move::{Destination, Pending, Progress};
+        let float = *ids.last().ok_or("Falta la flotante del fixture")?;
+        let destination = spaces::desktop_ids_for_display(space.0)
+            .into_iter()
+            .enumerate()
+            .find(|(_, other)| *other != space.1)
+            .ok_or("Se necesitan dos escritorios en el monitor del fixture")?;
+        let manual = std::env::args().any(|arg| arg == "--resizable-float");
+        if ax::resizable(manager.windows[&float].element.0) != manual {
+            return Err("La capacidad AX de redimensionar no coincide con el caso de prueba".into());
+        }
+        if manual {
+            manager.floating.insert(float);
+        }
+        send("focus-last", &mut input, &mut output)?;
+        let original = manager.windows[&float].original;
+        let suite = NSString::from_str(&format!("amspace.float-transfer.{}", std::process::id()));
+        let prefs: Retained<AnyObject> = unsafe {
+            let alloc: Allocated<AnyObject> = msg_send![class!(NSUserDefaults), alloc];
+            let prefs: Retained<AnyObject> = msg_send![alloc, initWithSuiteName:&*suite];
+            let yes: Obj = msg_send![class!(NSNumber), numberWithInt:1i32];
+            let values: Obj = msg_send![class!(NSDictionary), dictionaryWithObject:yes, forKey:ns_string!("tile.enabled")];
+            let _: () = msg_send![&prefs, registerDefaults:values];
+            prefs
+        };
+        let defaults = Retained::as_ptr(&prefs) as Obj;
+        let mut pending = Pending::start_expected(
+            &mut manager,
+            defaults,
+            Destination::Space(destination.0),
+            Some((pid, float)),
+        )?;
+        if !pending.plan.background_frames().is_empty() {
+            return Err("El envío flotante preparó escrituras de mosaico".into());
+        }
+        loop {
+            match pending.poll() {
+                Progress::Waiting => pump(0.05),
+                Progress::Failed(reason) => return Err(reason.into()),
+                Progress::Arrived => break,
+            }
+        }
+        if !pending.arrived() || spaces::window_space(float) != Some(destination.1) {
+            return Err("WindowServer no confirmó el escritorio solicitado".into());
+        }
+        manager.commit_keyboard_transfer(pending.plan, pid, float, pending.element, original);
+        if !manager.floating.contains(&float)
+            || manager.windows[&float].space != (space.0, destination.1)
+            || !ws::bounds(float).is_some_and(|actual| near(actual, original))
+            || !spaces::visible_desktops().contains(&space)
+        {
+            return Err("Se alteró el marco, el estado flotante o el escritorio de origen".into());
+        }
+        println!(
+            "PASS: flotante {float} enviada de {} a {} sin cambiar de escritorio, marco ni mosaico.",
+            space.1, destination.1
+        );
+        return Ok(());
+    }
+    if mode == "--check-floating-tabs" {
+        let [first, active, float] = ids[..] else {
+            return Err("Faltan ventanas del fixture".into());
+        };
+        let mut desktop = Desktop::default();
+        desktop.reconcile_at(&[first], area, 10., None);
+        let desktop = desktop
+            .proposed_drop(active, DropIntent::Group(first), area, 10.)
+            .ok_or("Sin grupo de prueba")?;
+        manager.desktops.insert(space, desktop);
+        manager.floating.insert(float);
+        // Put the header in the middle of the floating window.
+        let front = manager.windows[&float].original;
+        let mut slot = front;
+        slot.origin.y += front.size.height / 2.;
+        send("focus-last", &mut input, &mut output)?;
+        let frames = [(active, slot)];
+        manager.draw_strips(space, &frames, primary_height(), 0, false);
+        for restore in [false, true] {
+            if restore {
+                manager.strips[0].hide();
+                manager.restore_space_strips(&[space]);
+            }
+            pump(0.08);
+            let strip = &manager.strips[0];
+            let panel: isize = unsafe { msg_send![&*strip.panel, windowNumber] };
+            let p = NSPoint::new(strip.frame.origin.x + 12., strip.frame.origin.y + 8.);
+            if !contains(front, p)
+                || ws::window_above(float, panel as u32) != Some(true)
+                || ws::window_above(panel as u32, active) != Some(true)
+                || manager.tab_strip_at(p)
+                || ax::focused_id(pid) != Some(float)
+            {
+                return Err(format!(
+                    "Orden o foco incorrecto al cubrir la tira: restauración={restore}, flotante={float}, tira={panel}, activa={active}"
+                ));
+            }
+        }
+        println!(
+            "PASS: flotante delante de la tira, foco y hit-test correctos al crearla y restaurarla."
+        );
+        return Ok(());
+    }
     if focus_only {
         send("focus-last", &mut input, &mut output)?;
         return check_shared_app_tabs(&mut manager, &ids, pid, space, area);
