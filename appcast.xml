@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.50</title><pubDate>Sat, 28 Nov 2026 06:38:38 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.50 — Mosaico más robusto y transiciones más fluidas.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>AMSpace</title><link>https://github.com/amartinrojarvis/amspace</link><language>es</language><item><title>AMSpace 0.9.51</title><pubDate>Sat, 28 Nov 2026 08:24:04 +0000</pubDate><description sparkle:format="plain-text">AMSpace 0.9.51 — Ventanas flotantes y pestañas.
 
-- Una ventana que no cabe ya no impide colocar las demás. Si el mosaico de destino está lleno, puedes enviarla allí como flotante sin reorganizarlo.
-- Las animaciones de movimiento y tamaño mantienen su cadencia mientras se verifica otra ventana. El borde evita repintados innecesarios y el motor abandona las comprobaciones que no se estabilizan.
+- Las ventanas flotantes en primer plano cubren las pestañas del mosaico, también al volver a un escritorio. La tira ya no intercepta los clics en la parte cubierta.
+- Puedes enviar una ventana flotante a otro escritorio de la misma pantalla, aunque sea de tamaño fijo. Conserva su posición y tamaño sin ocupar una celda en el destino.
 
 English
 
-- A window that does not fit no longer blocks other tiles. Sending a window to a full destination leaves it floating without rearranging that layout.
-- Move and resize animations keep their cadence while another window is being verified. The border avoids unnecessary redraws, and unsettled checks no longer keep the engine running at high frequency indefinitely.
+- Floating windows in front cover tiling tabs, including when returning to a desktop. The tab strip no longer intercepts clicks in the covered area.
+- You can send a floating window to another desktop on the same display, even if it cannot be resized. It keeps its position and size without taking a tiling slot at the destination.
 
 Universal Apple Silicon/Intel, macOS 13+. Firma ad hoc, sin Developer ID ni notarización / Ad hoc signed, no Developer ID or notarization.
 Pruebas realizadas y límites físicos / Executed checks and physical limits:
 https://github.com/amartinrojarvis/amspace/blob/main/docs/VALIDATION.md
-</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.50/AMSpace-universal.zip" length="3421935" type="application/octet-stream" sparkle:version="105" sparkle:shortVersionString="0.9.50" sparkle:edSignature="nSQlWrrOoDE17byMBl4W+f9vRI0wpbYHVnYWtPVkgfsLlSZrl0aNZgN8UQzBtxUVmAzTo/NsUaDZYnEthRN3CA=="></enclosure></item></channel></rss><!-- sparkle-signatures:
-edSignature: RFd/peWRWdaqeACO1/RDHht95VPKrugbCku2RlmosprCkR1btZdkJlwIRK0eAZ2GWKofLqT2ZcNmA84KGO1MDw==
-length: 2144
+</description><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion><enclosure url="https://raw.githubusercontent.com/amartinrojarvis/amspace/updates/0.9.51/AMSpace-universal.zip" length="3427525" type="application/octet-stream" sparkle:version="106" sparkle:shortVersionString="0.9.51" sparkle:edSignature="1okPXRX8lyZ0tBQeCPP0EBUJXzs4ly8UEQFX/U+LNmDFzwWfo/c/CoP3o3ZV8oYVcJ0a2A4z41Dv7uaBhL3gDQ=="></enclosure></item></channel></rss><!-- sparkle-signatures:
+edSignature: nE00rA7i+xhRKXJKOEFSl+Qx2ODoME3a9ksTlcjD5j5HIfd1HjCKvj4oqN1IssYFxlW6daQ/UR8gx43AzWYrDQ==
+length: 2083
 -->
